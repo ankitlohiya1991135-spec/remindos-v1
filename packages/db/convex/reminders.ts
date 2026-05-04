@@ -106,6 +106,49 @@ export const listForUser = query({
   },
 });
 
+/**
+ * Optimised query for the chat API.
+ * Uses the by_user_status_dueAt compound index to fetch only pending reminders,
+ * plus a small window of recently-done ones for context — avoiding a full table scan.
+ * Shared (participant) reminders are still fetched and filtered in JS since they
+ * don't have a user-level compound index.
+ */
+export const listForChat = query({
+  args: { userId: v.string() },
+  handler: async (ctx, args) => {
+    // All pending owned reminders (index-efficient)
+    const pendingOwned = await ctx.db
+      .query("reminders")
+      .withIndex("by_user_status_dueAt", (q) =>
+        q.eq("userId", args.userId).eq("status", "pending")
+      )
+      .collect();
+
+    // Recently done (last 7 days) — for "did I already do X?" queries
+    const weekAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const recentDone = await ctx.db
+      .query("reminders")
+      .withIndex("by_user_status_dueAt", (q) =>
+        q.eq("userId", args.userId).eq("status", "done")
+      )
+      .filter((q) => q.gte(q.field("updatedAt"), weekAgo))
+      .collect();
+
+    // Shared reminders (participant role) — fetch all, filter out archived in JS
+    const participation = await ctx.db
+      .query("reminderParticipants")
+      .withIndex("by_user", (q) => q.eq("userId", args.userId))
+      .collect();
+    const shared: typeof pendingOwned = [];
+    for (const p of participation) {
+      const r = await ctx.db.get(p.reminderId);
+      if (r && r.status !== "archived") shared.push(r);
+    }
+
+    return { owned: [...pendingOwned, ...recentDone], shared };
+  },
+});
+
 export const listForTask = query({
   args: { userId: v.string(), taskId: v.id("tasks") },
   handler: async (ctx, args) => {

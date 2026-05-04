@@ -751,7 +751,8 @@ export function tryGroundedReminderAnswer(
   const listScope = inferListScopeFromMessage(message);
   if (listScope) {
     if (listScope === "today") {
-      const today = filterToday(reminders, now).slice(0, 5);
+      // Pass timeZone so "today" is evaluated in the user's local calendar, not UTC
+      const today = filterToday(reminders, now, options?.timeZone).slice(0, 5);
       if (today.length === 0) return "You have no reminders for today.";
       return [
         today.length === 1 ? "Here is your reminder for today:" : "Here are your reminders for today:",

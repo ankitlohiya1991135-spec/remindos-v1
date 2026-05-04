@@ -499,6 +499,20 @@ function parseDateTimeFromInput(input: string, timeZone?: string) {
     if (relativeResult) return relativeResult;
     const absoluteResult = parseAbsoluteDate(input, timeZone);
     if (absoluteResult) return absoluteResult;
+
+    // No date hint at all — try time-only.
+    // If the extracted time is still in the future TODAY, use today (the natural expectation
+    // when a user says "remind me at 3pm" mid-afternoon). If the time has already passed,
+    // schedule for tomorrow so the reminder is always in the future.
+    const timeOnly = parseTimeFromInput(input);
+    if (timeOnly) {
+      const todayIso = calendarDateTimeToIso(day, timeOnly, timeZone);
+      if (todayIso && new Date(todayIso).getTime() >= Date.now() - 60_000) {
+        return todayIso; // still in the future today
+      }
+      // time already passed — bump to tomorrow
+      return calendarDateTimeToIso(addDaysToCalendarDate(day, 1), timeOnly, timeZone);
+    }
     return null;
   }
   const time = parseTimeFromInput(input);
@@ -548,8 +562,13 @@ function extractTitleFromCreateInput(input: string) {
   const normalized = working
     .replace(/^(?:called|named|titled)\s+/i, "")
     .replace(/\b(for|about|called|named|titled|के लिए|साठी)\b/gi, " ")
+    // Strip date/time keywords that are never part of the reminder *title*.
+    // NOTE: morning|afternoon|evening|night are intentionally kept here because they
+    // ARE valid parts of a title (e.g. "morning standup", "evening walk").
+    // Time extraction uses parseTimeFromInput() on the original raw input, so removing
+    // them from the title does not affect time resolution.
     .replace(
-      /\b(today|tomorrow|tomorow|tommarow|tmrw|day after tomorrow|after tomorrow|आज|कल|उद्या|परसों|परवा|at|on|by|noon|midnight|morning|afternoon|evening|night|next|this|coming|every|in|बजे|वाजता|वाजले|सुबह|सकाळी|दोपहर|दुपारी|शाम|सायंकाळी|रात|sunday|monday|tuesday|wednesday|thursday|friday|saturday|january|february|march|april|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)\b/gi,
+      /\b(today|tomorrow|tomorow|tommarow|tmrw|day after tomorrow|after tomorrow|आज|कल|उद्या|परसों|परवा|at|on|by|noon|midnight|next|this|coming|every|in|बजे|वाजता|वाजले|सुबह|सकाळी|दोपहर|दुपारी|शाम|सायंकाळी|रात|sunday|monday|tuesday|wednesday|thursday|friday|saturday|january|february|march|april|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)\b/gi,
       " "
     )
     .replace(/\bin\s+\d+\s*(hour|hr|minute|min|day|week)s?\b/gi, " ")
@@ -927,8 +946,10 @@ function fromDbTask(item: Record<string, unknown>): TaskItem {
 async function loadRemindersForChat(userId: string, fallback: ReminderItem[]): Promise<ReminderItem[]> {
   try {
     const client = getConvexClient();
-    const raw = await client.query(api.reminders.listForUser, { userId });
-    // BUG-6 fix: deduplicate owned+shared by id
+    // Bug 1+6 fix: use listForChat which fetches only pending + last-7-days-done
+    // via the by_user_status_dueAt index — avoids full table scans and ensures
+    // a just-marked-done reminder no longer appears as pending.
+    const raw = await client.query(api.reminders.listForChat, { userId });
     const seen = new Set<string>();
     const dbReminders = [...raw.owned, ...raw.shared]
       .filter((item) => {
@@ -1681,7 +1702,11 @@ export async function POST(request: Request) {
         }
       }
 
-      if (tasks && tasks.length > 0 && !parsed.action.linkedTaskId) {
+      // Only offer task-linking when the user's message itself contains task-related language.
+      // Without this guard every LLM-path reminder creation interrupts with a task-link
+      // question even for completely standalone intents ("remind me to drink water at 6pm").
+      const hasTaskHint = /\b(task|project|link(ed)?|attach|connect|related\s+to|for\s+the\s+task)\b/i.test(effectiveMessage);
+      if (tasks && tasks.length > 0 && !parsed.action.linkedTaskId && hasTaskHint) {
         const pendingTasks = tasks.filter((t) => (t as unknown as Record<string, unknown>).status === "pending");
         if (pendingTasks.length > 0) {
           // Fix 3: check if the last assistant message was already the task-link question.
