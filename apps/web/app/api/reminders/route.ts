@@ -111,6 +111,16 @@ export async function POST(request: Request) {
         entityTitle: body.title.trim(),
         ...(body.domain ? { domain: body.domain } : {}),
       }).catch(() => {});
+
+      // Wiki ingest: rebuild wiki pages after every new reminder (fire-and-forget)
+      fetch(`${process.env.NEXT_PUBLIC_APP_URL ?? ""}/api/wiki/sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId,
+          secret: process.env.WIKI_SYNC_SECRET ?? "",
+        }),
+      }).catch(() => {});
     }
     return NextResponse.json(result);
   } catch (err) {

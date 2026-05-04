@@ -975,6 +975,71 @@ async function loadTasksForChat(userId: string, fallback: TaskItem[]): Promise<T
   }
 }
 
+/**
+ * Load all user wiki pages from Convex.
+ * Returns a formatted multi-page string ready to inject into the LLM prompt.
+ * If wiki is empty or stale (oldest page > WIKI_STALE_MS), triggers a background
+ * rebuild via /api/wiki/sync so the next chat turn benefits from fresh pages.
+ *
+ * Falls back to "" on any error — never blocks the chat response.
+ */
+const WIKI_STALE_MS = 60 * 60 * 1000; // 1 hour
+
+async function loadUserWiki(userId: string): Promise<string> {
+  try {
+    const client = getConvexClient();
+    const [wikiMap, oldestUpdatedAt] = await Promise.all([
+      client.query(api.userWiki.getAll, { userId }),
+      client.query(api.userWiki.getOldestUpdatedAt, { userId }),
+    ]);
+
+    const pages = wikiMap as Record<string, { content: string; updatedAt: number }>;
+    const pageCount = Object.keys(pages).length;
+
+    // If wiki is empty or stale, trigger a background rebuild (fire-and-forget)
+    const isStale = oldestUpdatedAt === 0 || Date.now() - oldestUpdatedAt > WIKI_STALE_MS;
+    if (isStale) {
+      fetch(`${process.env.NEXT_PUBLIC_APP_URL ?? ""}/api/wiki/sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId,
+          secret: process.env.WIKI_SYNC_SECRET ?? "",
+        }),
+      }).catch(() => {});
+      // If no pages exist yet, return empty so this turn isn't blocked
+      if (pageCount === 0) return "";
+    }
+
+    // Assemble pages in priority order: recent_week first (most current),
+    // then behavior_summary, then domains, then avoidance.
+    const ORDER = [
+      "recent_week",
+      "behavior_summary",
+      "domain_health",
+      "domain_finance",
+      "domain_career",
+      "domain_hobby",
+      "domain_fun",
+      "avoidance_patterns",
+    ];
+
+    const parts: string[] = [];
+    for (const key of ORDER) {
+      if (pages[key]?.content) parts.push(pages[key]!.content);
+    }
+    // Any extra pages not in the order list
+    for (const [key, val] of Object.entries(pages)) {
+      if (!ORDER.includes(key) && val.content) parts.push(val.content);
+    }
+
+    if (parts.length === 0) return "";
+    return `--- USER KNOWLEDGE WIKI ---\n${parts.join("\n\n")}`;
+  } catch {
+    return "";
+  }
+}
+
 // FLAW-5: limit reminders sent to LLM — pending only, most relevant first, max 50
 function filterRemindersForLLM(reminders: ReminderItem[]): ReminderItem[] {
   const now = Date.now();
@@ -1619,20 +1684,33 @@ export async function POST(request: Request) {
     // BUG-5 fix: only pending+recent-done reminders in JSON sent to LLM
     const llmReminders = filterRemindersForLLM(reminders);
     const digest = buildLifeOsContextBlock(llmReminders, tasks, new Date(), displayOptions);
-    const behaviorCtx = await buildBehaviorContext(userId);
+
+    // Load wiki + behavior context in parallel (both are best-effort)
+    const [wikiCtx, behaviorCtx] = await Promise.all([
+      loadUserWiki(userId),
+      buildBehaviorContext(userId),
+    ]);
 
     // BUG-1 / MISSING-1 fix: inject recent conversation history (already loaded above)
     const recentHistory = history
       .filter((m) => m.role === "user" || m.role === "assistant")
       .slice(-MAX_HISTORY_TURNS);
 
+    // Build the user turn content — wiki comes first (rich synthesised knowledge),
+    // then the live digest (current reminders), then behaviorCtx (raw stats fallback),
+    // then the machine-readable JSON for precise CRUD actions.
+    const contextParts = [
+      effectiveMessage,
+      wikiCtx ? `\n\n${wikiCtx}` : "",
+      `\n\n--- LIFE OS DIGEST (authoritative) ---\n${digest}`,
+      behaviorCtx ? `\n\n${behaviorCtx}` : "",
+      `\n\n--- LIFE OS JSON (same data, machine-readable) ---\n${JSON.stringify({ reminders: llmReminders, tasks })}`,
+    ].join("");
+
     const nimMessages = [
       { role: "system" as const, content: systemPrompt },
       ...recentHistory.map((m) => ({ role: m.role as "user" | "assistant", content: m.content })),
-      {
-        role: "user" as const,
-        content: `${effectiveMessage}\n\n--- LIFE OS DIGEST (authoritative) ---\n${digest}${behaviorCtx ? `\n\n${behaviorCtx}` : ""}\n\n--- LIFE OS JSON (same data, machine-readable) ---\n${JSON.stringify({ reminders: llmReminders, tasks })}`,
-      },
+      { role: "user" as const, content: contextParts },
     ];
 
     const nimResponse = await fetch(`${NIM_BASE_URL}/chat/completions`, {

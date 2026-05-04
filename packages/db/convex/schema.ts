@@ -162,6 +162,31 @@ const userEvents = defineTable({
   .index("by_user_created", ["userId", "createdAt"])
   .index("by_user_type", ["userId", "eventType"]);
 
+/**
+ * Persistent user knowledge wiki — one document per "page".
+ * Pages are written deterministically (no LLM cost) after every
+ * ingest event and read by the chat route to give the LLM rich,
+ * pre-synthesised context about the user.
+ *
+ * Page types:
+ *   behavior_summary   — overall completion rates, streaks, activity patterns
+ *   domain_health      — health reminder habits
+ *   domain_finance     — finance reminder habits
+ *   domain_career      — career reminder habits
+ *   domain_hobby       — hobby reminder habits
+ *   domain_fun         — fun reminder habits
+ *   avoidance_patterns — reminders repeatedly created but never completed
+ *   recent_week        — rolling 7-day summary (most current context)
+ */
+const userWiki = defineTable({
+  userId: v.string(),
+  pageType: v.string(),   // one of the page types listed above
+  content: v.string(),    // plain-text wiki page — max ~150 words
+  updatedAt: v.number(),
+})
+  .index("by_user", ["userId"])
+  .index("by_user_page", ["userId", "pageType"]);
+
 export default defineSchema({
   reminders,
   reminderInvites,
@@ -174,4 +199,5 @@ export default defineSchema({
   chatMessages,
   userProfiles,
   userEvents,
+  userWiki,
 });
