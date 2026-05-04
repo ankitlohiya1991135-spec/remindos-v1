@@ -4479,6 +4479,26 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   }, [showSnapshotOverlay]);
 
   useEffect(() => {
+    const openCreateTask = () => showTasksOverlay("create", true);
+    const openImport = () => showImportOverlay();
+    const openBatch = () => showBatchOverlay();
+    const exportChat = () => handleExportChat();
+    const openNext2h = () => openNextTwoHoursFromSnapshot();
+    window.addEventListener("dashboard:create-task", openCreateTask);
+    window.addEventListener("dashboard:open-import", openImport);
+    window.addEventListener("dashboard:open-batch", openBatch);
+    window.addEventListener("dashboard:export-chat", exportChat);
+    window.addEventListener("dashboard:open-next-two-hours", openNext2h);
+    return () => {
+      window.removeEventListener("dashboard:create-task", openCreateTask);
+      window.removeEventListener("dashboard:open-import", openImport);
+      window.removeEventListener("dashboard:open-batch", openBatch);
+      window.removeEventListener("dashboard:export-chat", exportChat);
+      window.removeEventListener("dashboard:open-next-two-hours", openNext2h);
+    };
+  }, [showTasksOverlay, showImportOverlay, showBatchOverlay, handleExportChat, openNextTwoHoursFromSnapshot]);
+
+  useEffect(() => {
     const o = searchParams?.get("open");
     if (o !== "reminders" && o !== "tasks" && o !== "create") return;
     if (typeof window !== "undefined") {
@@ -5938,82 +5958,203 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
 
       {isSnapshotOpen && (
         <div
-          className="fixed inset-0 z-50 bg-black/40"
+          className="fixed inset-0 z-50 bg-black/50"
           onClick={closeSnapshotOverlay}
         >
           <aside
-            className="absolute right-0 top-0 flex h-full w-[92%] max-w-sm flex-col overflow-hidden border-l border-slate-200 bg-white shadow-xl dark:border-slate-800 dark:bg-slate-900"
+            className="absolute right-0 top-0 flex h-full w-[min(22rem,92vw)] flex-col overflow-hidden border-l border-slate-100 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-950"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="flex shrink-0 items-center justify-between border-b border-slate-200 bg-white px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] dark:border-slate-800 dark:bg-slate-950">
-              <h2 className="text-lg font-semibold text-slate-900 dark:text-slate-100">
-                Menu
-              </h2>
+            {/* ── Header ── */}
+            <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-5 pb-3 pt-[max(1rem,env(safe-area-inset-top))] dark:border-slate-800">
+              <span className="text-[11px] font-extrabold uppercase tracking-[0.2em] text-violet-600 dark:text-violet-400">
+                Workspace
+              </span>
               <button
                 type="button"
                 onClick={closeSnapshotOverlay}
-                className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold text-slate-800 dark:border-slate-600 dark:text-slate-100"
+                className="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
+                aria-label="Close"
               >
-                Close
+                <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
+                  <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22z" />
+                </svg>
               </button>
             </div>
+
+            {/* ── Scrollable body ── */}
             <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-4">
-              <div className="grid grid-cols-3 gap-1.5">
-                <div className="flex min-h-[3rem] flex-col items-center justify-center rounded-lg border border-slate-200/90 bg-gradient-to-b from-slate-50 to-slate-100/90 px-1 py-1.5 text-center dark:border-slate-700 dark:from-slate-900 dark:to-slate-950">
-                  <span className="text-lg font-bold tabular-nums leading-none text-slate-900 dark:text-white">
-                    {snapshot.pending}
+
+              {/* Stats row */}
+              <div className="grid grid-cols-3 gap-2">
+                <div className="flex flex-col items-center justify-center rounded-xl border border-rose-100 bg-rose-50 px-1 py-2.5 text-center dark:border-rose-900/40 dark:bg-rose-950/30">
+                  <span className="text-xl font-extrabold tabular-nums leading-none text-rose-600 dark:text-rose-400">
+                    {snapshot.missed}
                   </span>
-                  <span className="mt-0.5 text-[9px] font-semibold uppercase leading-tight tracking-wide text-slate-500 dark:text-slate-400">
-                    Left
+                  <span className="mt-0.5 text-[9px] font-bold uppercase tracking-widest text-rose-500/80 dark:text-rose-400/70">
+                    Missed
                   </span>
                 </div>
-                <div className="flex min-h-[3rem] flex-col items-center justify-center rounded-lg border border-slate-200/90 bg-gradient-to-b from-slate-50 to-slate-100/90 px-1 py-1.5 text-center dark:border-slate-700 dark:from-slate-900 dark:to-slate-950">
-                  <span className="text-lg font-bold tabular-nums leading-none text-slate-900 dark:text-white">
+                <div className="flex flex-col items-center justify-center rounded-xl border border-amber-100 bg-amber-50 px-1 py-2.5 text-center dark:border-amber-900/40 dark:bg-amber-950/30">
+                  <span className="text-xl font-extrabold tabular-nums leading-none text-amber-600 dark:text-amber-400">
                     {snapshot.today}
                   </span>
-                  <span className="mt-0.5 text-[9px] font-semibold uppercase leading-tight tracking-wide text-slate-500 dark:text-slate-400">
+                  <span className="mt-0.5 text-[9px] font-bold uppercase tracking-widest text-amber-500/80 dark:text-amber-400/70">
                     Today
                   </span>
                 </div>
-                <div className="flex min-h-[3rem] flex-col items-center justify-center rounded-lg border border-slate-200/90 bg-gradient-to-b from-slate-50 to-slate-100/90 px-1 py-1.5 text-center dark:border-slate-700 dark:from-slate-900 dark:to-slate-950">
-                  <span className="text-lg font-bold tabular-nums leading-none text-slate-900 dark:text-white">
-                    {snapshot.missed}
+                <div className="flex flex-col items-center justify-center rounded-xl border border-slate-200 bg-slate-50 px-1 py-2.5 text-center dark:border-slate-700 dark:bg-slate-900">
+                  <span className="text-xl font-extrabold tabular-nums leading-none text-slate-700 dark:text-slate-300">
+                    {snapshot.pending}
                   </span>
-                  <span className="mt-0.5 text-[9px] font-semibold uppercase leading-tight tracking-wide text-slate-500 dark:text-slate-400">
-                    Late
+                  <span className="mt-0.5 text-[9px] font-bold uppercase tracking-widest text-slate-400">
+                    Left
                   </span>
                 </div>
               </div>
 
-              <label className="mt-3 flex cursor-pointer items-center gap-2 rounded-lg border border-slate-200 bg-slate-50/90 px-2.5 py-2 text-xs text-slate-800 dark:border-slate-700 dark:bg-slate-950/80 dark:text-slate-100">
-                <input
-                  type="checkbox"
-                  className="mt-0.5 shrink-0"
-                  checked={showSuggestedQuestions}
-                  onChange={(e) => {
-                    const on = e.target.checked;
-                    setShowSuggestedQuestions(on);
-                    try {
-                      localStorage.setItem(
-                        SHOW_SUGGESTED_QUESTIONS_KEY,
-                        on ? "1" : "0",
-                      );
-                    } catch {
-                      /* ignore */
-                    }
-                  }}
-                />
-                <span>Suggested questions in chat</span>
-              </label>
+              {/* Quick actions grid */}
+              <p className="mb-2.5 mt-5 text-[10px] font-extrabold uppercase tracking-[0.18em] text-slate-400">
+                Quick Actions
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                {([
+                  {
+                    icon: "⏱",
+                    label: "Next 2 Hours",
+                    onClick: openNextTwoHoursFromSnapshot,
+                    color: "from-amber-500 to-orange-600 ring-1 ring-amber-400/25",
+                  },
+                  {
+                    icon: "+",
+                    label: "New Reminder",
+                    onClick: () => showCreateOverlay(),
+                    color: "from-violet-500 to-violet-700 ring-1 ring-violet-400/25",
+                  },
+                  {
+                    icon: "☰",
+                    label: "All Reminders",
+                    onClick: () => showReminderListOverlay(),
+                    color: "from-violet-500 to-violet-700 ring-1 ring-violet-400/25",
+                  },
+                  {
+                    icon: "✓",
+                    label: "Create Task",
+                    onClick: () => showTasksOverlay("create"),
+                    color: "from-violet-500 to-violet-700 ring-1 ring-violet-400/25",
+                  },
+                  {
+                    icon: "≣",
+                    label: "All Tasks",
+                    onClick: openAllTasksFromSnapshot,
+                    color: "from-teal-500 to-teal-700 ring-1 ring-teal-400/25",
+                  },
+                  {
+                    icon: "✦",
+                    label: "Run Briefing",
+                    onClick: () => {
+                      closeSnapshotOverlay();
+                      runBriefingStream();
+                    },
+                    color: "from-cyan-500 to-cyan-700 ring-1 ring-cyan-400/25",
+                  },
+                ] as { icon: string; label: string; onClick: () => void; color: string }[]).map(
+                  (action) => (
+                    <button
+                      key={action.label}
+                      type="button"
+                      onClick={action.onClick}
+                      className={`flex min-h-[3rem] flex-col items-center justify-center gap-0.5 rounded-xl bg-gradient-to-b px-2 py-2 text-center text-[10px] font-bold uppercase tracking-wide text-white shadow-sm transition hover:brightness-110 active:scale-[0.97] ${action.color}`}
+                    >
+                      <span className="text-sm leading-none opacity-90">{action.icon}</span>
+                      <span className="mt-0.5 leading-tight">{action.label}</span>
+                    </button>
+                  )
+                )}
+              </div>
 
-              <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50/90 p-2 text-xs dark:border-slate-700 dark:bg-slate-950/80">
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <label className="flex cursor-pointer items-center gap-2 text-slate-800 dark:text-slate-100">
+              {/* Import / Export / Batch */}
+              <div className="mt-3 grid grid-cols-3 gap-2">
+                <button
+                  type="button"
+                  onClick={() => showImportOverlay()}
+                  className="flex min-h-[2.25rem] items-center justify-center rounded-xl border border-slate-200 bg-slate-50/90 text-xs font-semibold text-slate-700 transition hover:bg-white hover:shadow-sm active:scale-[0.97] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                >
+                  Import
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    closeSnapshotOverlay();
+                    handleExportChat();
+                  }}
+                  disabled={isLoading || messages.length === 0}
+                  className="flex min-h-[2.25rem] items-center justify-center rounded-xl border border-slate-200 bg-slate-50/90 text-xs font-semibold text-slate-700 transition hover:bg-white hover:shadow-sm active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-45 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                >
+                  Export
+                </button>
+                <button
+                  type="button"
+                  onClick={() => showBatchOverlay()}
+                  disabled={isBatchRunning || isLoading}
+                  className="flex min-h-[2.25rem] items-center justify-center rounded-xl border border-slate-200 bg-slate-50/90 text-xs font-semibold text-slate-700 transition hover:bg-white hover:shadow-sm active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-45 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+                >
+                  Batch
+                </button>
+              </div>
+
+              {/* Quick settings */}
+              <p className="mb-1 mt-5 text-[10px] font-extrabold uppercase tracking-[0.18em] text-slate-400">
+                Quick Settings
+              </p>
+              <div className="overflow-hidden rounded-2xl border border-slate-100 dark:border-slate-800">
+                {/* Suggested questions toggle */}
+                <label className="flex cursor-pointer items-center justify-between gap-3 border-b border-slate-100 px-4 py-3 dark:border-slate-800">
+                  <span className="text-sm font-medium text-slate-800 dark:text-slate-200">
+                    Suggested questions
+                  </span>
+                  <div className="relative shrink-0">
                     <input
                       type="checkbox"
-                      className="shrink-0"
+                      className="sr-only"
+                      checked={showSuggestedQuestions}
+                      onChange={(e) => {
+                        const on = e.target.checked;
+                        setShowSuggestedQuestions(on);
+                        try {
+                          localStorage.setItem(
+                            SHOW_SUGGESTED_QUESTIONS_KEY,
+                            on ? "1" : "0",
+                          );
+                        } catch {
+                          /* ignore */
+                        }
+                      }}
+                    />
+                    <div
+                      className={`h-6 w-11 rounded-full transition-colors ${
+                        showSuggestedQuestions ? "bg-violet-600" : "bg-slate-200 dark:bg-slate-700"
+                      }`}
+                    />
+                    <div
+                      className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
+                        showSuggestedQuestions ? "translate-x-6" : "translate-x-1"
+                      }`}
+                    />
+                  </div>
+                </label>
+                {/* Push notifications toggle */}
+                <label className="flex cursor-pointer items-center justify-between gap-3 border-b border-slate-100 px-4 py-3 dark:border-slate-800">
+                  <span className="text-sm font-medium text-slate-800 dark:text-slate-200">
+                    Push notifications
+                  </span>
+                  <div className="relative shrink-0">
+                    <input
+                      type="checkbox"
+                      className="sr-only"
                       checked={
                         dueNotifPrefs.enabled &&
+                        typeof Notification !== "undefined" &&
                         Notification.permission === "granted"
                       }
                       onChange={(e) => {
@@ -6026,161 +6167,98 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                         Notification.permission === "denied"
                       }
                     />
-                    <span>Due-time alerts</span>
-                  </label>
-                  {typeof Notification !== "undefined" &&
-                  Notification.permission === "default" ? (
-                    <button
-                      type="button"
-                      onClick={() => void requestDueNotificationPermission()}
-                      className="shrink-0 rounded-full bg-violet-600 px-2.5 py-1 text-[11px] font-semibold text-white hover:bg-violet-500"
-                    >
-                      Allow
-                    </button>
-                  ) : null}
-                </div>
-                <details className="mt-1.5 border-t border-slate-200 pt-1.5 dark:border-slate-700">
-                  <summary className="cursor-pointer text-[11px] text-slate-600 dark:text-slate-400">
-                    More alert options
-                  </summary>
-                  <div className="mt-2 space-y-1.5 pl-0.5">
-                    <label className="flex cursor-pointer items-start gap-2 text-slate-800 dark:text-slate-100">
-                      <input
-                        type="checkbox"
-                        className="mt-0.5 shrink-0"
-                        checked={dueNotifPrefs.notifyWhenForeground}
-                        onChange={(e) =>
-                          persistDueNotifPrefs({
-                            notifyWhenForeground: e.target.checked,
-                          })
-                        }
-                        disabled={
-                          !dueNotifPrefs.enabled ||
-                          Notification.permission !== "granted"
-                        }
-                      />
-                      <span>Also when this tab is visible</span>
-                    </label>
-                    <label className="flex cursor-pointer items-start gap-2 text-slate-800 dark:text-slate-100">
-                      <input
-                        type="checkbox"
-                        className="mt-0.5 shrink-0"
-                        checked={dueNotifPrefs.desktopEnabled}
-                        onChange={(e) =>
-                          persistDueNotifPrefs({
-                            desktopEnabled: e.target.checked,
-                          })
-                        }
-                        disabled={
-                          !dueNotifPrefs.enabled ||
-                          Notification.permission !== "granted"
-                        }
-                      />
-                      <span>On large / desktop screens</span>
-                    </label>
+                    <div
+                      className={`h-6 w-11 rounded-full transition-colors ${
+                        dueNotifPrefs.enabled &&
+                        typeof Notification !== "undefined" &&
+                        Notification.permission === "granted"
+                          ? "bg-violet-600"
+                          : "bg-slate-200 dark:bg-slate-700"
+                      }`}
+                    />
+                    <div
+                      className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
+                        dueNotifPrefs.enabled &&
+                        typeof Notification !== "undefined" &&
+                        Notification.permission === "granted"
+                          ? "translate-x-6"
+                          : "translate-x-1"
+                      }`}
+                    />
                   </div>
-                </details>
-                {typeof Notification !== "undefined" &&
-                Notification.permission === "denied" ? (
-                  <p className="mt-1.5 text-[10px] text-amber-700 dark:text-amber-300">
-                    Notifications blocked—enable in browser settings.
-                  </p>
-                ) : null}
+                </label>
+                {/* Morning briefing toggle */}
+                <label className="flex cursor-pointer items-center justify-between gap-3 border-b border-slate-100 px-4 py-3 dark:border-slate-800">
+                  <span className="text-sm font-medium text-slate-800 dark:text-slate-200">
+                    Morning briefing
+                  </span>
+                  <div className="relative shrink-0">
+                    <input
+                      type="checkbox"
+                      className="sr-only"
+                      checked={dueNotifPrefs.morningBriefingEnabled}
+                      onChange={(e) =>
+                        persistDueNotifPrefs({ morningBriefingEnabled: e.target.checked })
+                      }
+                    />
+                    <div
+                      className={`h-6 w-11 rounded-full transition-colors ${
+                        dueNotifPrefs.morningBriefingEnabled ? "bg-violet-600" : "bg-slate-200 dark:bg-slate-700"
+                      }`}
+                    />
+                    <div
+                      className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
+                        dueNotifPrefs.morningBriefingEnabled ? "translate-x-6" : "translate-x-1"
+                      }`}
+                    />
+                  </div>
+                </label>
+                {/* Sound alerts toggle */}
+                <label className="flex cursor-pointer items-center justify-between gap-3 px-4 py-3">
+                  <span className="text-sm font-medium text-slate-800 dark:text-slate-200">
+                    Sound alerts
+                  </span>
+                  <div className="relative shrink-0">
+                    <input
+                      type="checkbox"
+                      className="sr-only"
+                      checked={dueNotifPrefs.soundEnabled}
+                      onChange={(e) => persistDueNotifPrefs({ soundEnabled: e.target.checked })}
+                    />
+                    <div
+                      className={`h-6 w-11 rounded-full transition-colors ${
+                        dueNotifPrefs.soundEnabled ? "bg-violet-600" : "bg-slate-200 dark:bg-slate-700"
+                      }`}
+                    />
+                    <div
+                      className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
+                        dueNotifPrefs.soundEnabled ? "translate-x-6" : "translate-x-1"
+                      }`}
+                    />
+                  </div>
+                </label>
               </div>
 
-              {/* Extended notification preferences panel */}
-              <div className="mt-3">
-                <NotificationPrefsPanel
-                  prefs={dueNotifPrefs}
-                  onChange={(next) => {
-                    setDueNotifPrefs(next);
-                  }}
-                  onRequestPermission={() => void requestDueNotificationPermission()}
-                />
-              </div>
+              {/* Full prefs panel (collapsed by default) */}
+              <details className="mt-2">
+                <summary className="cursor-pointer rounded-xl border border-slate-100 px-4 py-2.5 text-xs font-semibold text-slate-500 hover:bg-slate-50 dark:border-slate-800 dark:text-slate-400 dark:hover:bg-slate-900">
+                  More notification options…
+                </summary>
+                <div className="mt-2">
+                  <NotificationPrefsPanel
+                    prefs={dueNotifPrefs}
+                    onChange={(next) => {
+                      setDueNotifPrefs(next);
+                    }}
+                    onRequestPermission={() => void requestDueNotificationPermission()}
+                  />
+                </div>
+              </details>
 
-              <div className="mt-3 grid grid-cols-2 gap-1.5">
-                <button
-                  type="button"
-                  onClick={openNextTwoHoursFromSnapshot}
-                  className="flex min-h-[2.65rem] flex-col items-center justify-center rounded-lg bg-gradient-to-b from-amber-500 to-orange-600 px-1.5 py-1.5 text-center text-[10px] font-bold uppercase tracking-wide text-white shadow-[inset_0_1px_0_0_rgba(255,255,255,0.12)] ring-1 ring-amber-400/25 transition hover:brightness-110 active:scale-[0.98]"
-                >
-                  <span aria-hidden className="text-sm leading-none opacity-90">
-                    ⏱
-                  </span>
-                  <span className="mt-0.5 leading-tight">Next 2 Hours</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => showCreateOverlay()}
-                  className="flex min-h-[2.65rem] flex-col items-center justify-center rounded-lg bg-gradient-to-b from-violet-500 to-violet-700 px-1.5 py-1.5 text-center text-[10px] font-bold uppercase tracking-wide text-white shadow-[inset_0_1px_0_0_rgba(255,255,255,0.12)] ring-1 ring-violet-400/25 transition hover:brightness-110 active:scale-[0.98]"
-                >
-                  <span aria-hidden className="text-sm leading-none opacity-90">
-                    ＋
-                  </span>
-                  <span className="mt-0.5 leading-tight">Create reminder</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => showReminderListOverlay()}
-                  className="flex min-h-[2.65rem] flex-col items-center justify-center rounded-lg bg-gradient-to-b from-violet-500 to-violet-700 px-1.5 py-1.5 text-center text-[10px] font-bold uppercase tracking-wide text-white shadow-[inset_0_1px_0_0_rgba(255,255,255,0.12)] ring-1 ring-violet-400/25 transition hover:brightness-110 active:scale-[0.98]"
-                >
-                  <span aria-hidden className="text-sm leading-none opacity-90">
-                    ☰
-                  </span>
-                  <span className="mt-0.5 leading-tight">All reminders</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => showTasksOverlay("create")}
-                  className="flex min-h-[2.65rem] flex-col items-center justify-center rounded-lg bg-gradient-to-b from-violet-500 to-violet-700 px-1.5 py-1.5 text-center text-[10px] font-bold uppercase tracking-wide text-white shadow-[inset_0_1px_0_0_rgba(255,255,255,0.12)] ring-1 ring-violet-400/25 transition hover:brightness-110 active:scale-[0.98]"
-                >
-                  <span aria-hidden className="text-sm leading-none opacity-90">
-                    ✓
-                  </span>
-                  <span className="mt-0.5 leading-tight">Create task</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={openAllTasksFromSnapshot}
-                  className="flex min-h-[2.65rem] flex-col items-center justify-center rounded-lg bg-gradient-to-b from-teal-500 to-teal-700 px-1.5 py-1.5 text-center text-[10px] font-bold uppercase tracking-wide text-white shadow-[inset_0_1px_0_0_rgba(255,255,255,0.12)] ring-1 ring-teal-400/25 transition hover:brightness-110 active:scale-[0.98]"
-                >
-                  <span aria-hidden className="text-sm leading-none opacity-90">
-                    ≣
-                  </span>
-                  <span className="mt-0.5 leading-tight">All tasks</span>
-                </button>
-              </div>
+              {/* Divider */}
+              <div className="my-4 h-px bg-slate-100 dark:bg-slate-800" />
 
-              <div className="mt-1.5 grid grid-cols-3 gap-1.5">
-                <button
-                  type="button"
-                  onClick={() => showImportOverlay()}
-                  className="flex min-h-[2.35rem] flex-col items-center justify-center rounded-lg border border-slate-300/90 bg-slate-50/90 px-1.5 py-1 text-center text-[10px] font-semibold leading-tight text-slate-800 shadow-sm transition hover:bg-white dark:border-slate-600 dark:bg-slate-900/80 dark:text-slate-100 dark:hover:bg-slate-800"
-                >
-                  Import
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    closeSnapshotOverlay();
-                    handleExportChat();
-                  }}
-                  disabled={isLoading || messages.length === 0}
-                  className="flex min-h-[2.35rem] flex-col items-center justify-center rounded-lg border border-slate-300/90 bg-slate-50/90 px-1.5 py-1 text-center text-[10px] font-semibold leading-tight text-slate-800 shadow-sm transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-45 dark:border-slate-600 dark:bg-slate-900/80 dark:text-slate-100 dark:hover:bg-slate-800"
-                >
-                  Export
-                </button>
-                <button
-                  type="button"
-                  onClick={() => showBatchOverlay()}
-                  disabled={isBatchRunning || isLoading}
-                  className="flex min-h-[2.35rem] flex-col items-center justify-center rounded-lg border border-slate-300/90 bg-slate-50/90 px-1.5 py-1 text-center text-[10px] font-semibold leading-tight text-slate-800 shadow-sm transition hover:bg-white disabled:cursor-not-allowed disabled:opacity-45 dark:border-slate-600 dark:bg-slate-900/80 dark:text-slate-100 dark:hover:bg-slate-800"
-                >
-                  Batch
-                </button>
-              </div>
-
+              {/* Clear chat */}
               <button
                 type="button"
                 onClick={() => {
@@ -6188,9 +6266,9 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                   void handleClearChat();
                 }}
                 disabled={isClearingChat || isLoading}
-                className="mt-3 w-full rounded-xl border border-rose-200 bg-rose-50/80 py-2 text-center text-xs font-semibold text-rose-800 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-45 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-100 dark:hover:bg-rose-950/60"
+                className="w-full rounded-xl border border-rose-200 bg-rose-50/80 py-2.5 text-center text-xs font-semibold text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-45 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-400 dark:hover:bg-rose-950/60"
               >
-                {isClearingChat ? "Clearing…" : "Clear chat"}
+                {isClearingChat ? "Clearing…" : "Clear Chat History"}
               </button>
             </div>
           </aside>
@@ -7047,57 +7125,112 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
 
       {isImportOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 sm:items-center"
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 sm:items-center sm:p-4"
           onClick={closeImportOverlay}
         >
           <div
-            className="my-auto flex max-h-[min(92vh,760px)] w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900"
+            className="flex w-full max-w-lg flex-col overflow-hidden rounded-t-[28px] bg-white shadow-2xl sm:rounded-[28px] dark:bg-slate-900"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="border-b border-slate-200 px-5 py-4 dark:border-slate-800">
-              <h3 className="text-lg font-semibold">Import reminders and tasks JSON</h3>
-              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                Paste reminders only, or an object with <code>tasks</code> and <code>reminders</code>.
-              </p>
+            {/* Handle (mobile) */}
+            <div className="flex justify-center pt-2.5 pb-1 sm:hidden">
+              <div className="h-1 w-10 rounded-full bg-slate-200 dark:bg-slate-700" />
             </div>
-            <form
-              className="min-h-0 overflow-y-auto"
-              onSubmit={handleJsonImport}
-            >
-              <div className="grid gap-4 px-5 py-5">
+
+            <div className="max-h-[90vh] overflow-y-auto px-6 pb-8 pt-4">
+              {/* Header */}
+              <div className="mb-5 flex items-center gap-3">
+                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-violet-100 dark:bg-violet-900/40">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4.5 w-4.5 h-[18px] w-[18px]">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="17 8 12 3 7 8" />
+                    <line x1="12" y1="3" x2="12" y2="15" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-[17px] font-extrabold text-slate-900 dark:text-slate-100">
+                    Import Data
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    CSV or JSON — reminders &amp; tasks
+                  </p>
+                </div>
+              </div>
+
+              <form onSubmit={handleJsonImport} className="space-y-4">
+                {/* Drop zone */}
+                <div className="flex flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center dark:border-slate-700 dark:bg-slate-800/50">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="h-8 w-8 text-slate-300 dark:text-slate-600">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                    <polyline points="17 8 12 3 7 8" />
+                    <line x1="12" y1="3" x2="12" y2="15" />
+                  </svg>
+                  <p className="text-sm font-medium text-slate-600 dark:text-slate-400">
+                    Drop CSV or JSON here
+                  </p>
+                  <p className="text-xs text-slate-400 dark:text-slate-500">
+                    .csv · .json accepted
+                  </p>
+                </div>
+
+                {/* Separator */}
+                <div className="flex items-center gap-3">
+                  <div className="h-px flex-1 bg-slate-100 dark:bg-slate-800" />
+                  <span className="text-[10px] font-bold uppercase tracking-widest text-slate-400">
+                    Or paste JSON / CSV
+                  </span>
+                  <div className="h-px flex-1 bg-slate-100 dark:bg-slate-800" />
+                </div>
+
+                {/* Textarea */}
                 <textarea
                   value={importJson}
                   onChange={(event) => setImportJson(event.target.value)}
-                  rows={12}
-                  placeholder='{"tasks":[{"ref":"task-1","title":"Test task"}],"reminders":[{"title":"Test reminder 1","dueAt":"2026-04-12T08:00:00.000Z","taskRef":"task-1"}]}'
-                  className="min-h-[18rem] w-full rounded-xl border border-slate-300 px-3 py-2 font-mono text-sm dark:border-slate-700 dark:bg-slate-950"
+                  rows={7}
+                  placeholder={'{\n  "tasks": [{"ref":"task-1","title":"Test task"}],\n  "reminders": [{"title":"Test reminder","dueAt":"2026-04-12T08:00:00.000Z"}]\n}'}
+                  className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 font-mono text-xs text-slate-800 placeholder-slate-400 focus:border-violet-400 focus:outline-none focus:ring-2 focus:ring-violet-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:placeholder-slate-600"
                 />
+
+                {/* Expected format card */}
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 dark:border-amber-800/40 dark:bg-amber-900/20">
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-300">
+                    Expected Format
+                  </p>
+                  <p className="mt-1 font-mono text-[11px] leading-relaxed text-amber-800 dark:text-amber-200">
+                    {`{ "reminders": [...] }`} or{" "}
+                    {`{ "tasks": [...], "reminders": [...] }`}
+                  </p>
+                </div>
+
+                {/* Status */}
                 {importStatus ? (
-                  <p className="text-sm text-slate-600 dark:text-slate-300">
+                  <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
                     {importStatus}
                   </p>
                 ) : null}
-                <div className="mt-1 flex gap-2">
-                  <button
-                    type="submit"
-                    disabled={!importJson.trim() || isImporting}
-                    className="rounded-full bg-violet-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {isImporting ? "Importing..." : "Import"}
-                  </button>
+
+                {/* Buttons */}
+                <div className="flex gap-2 pt-1">
                   <button
                     type="button"
                     onClick={() => {
                       setImportStatus(null);
                       closeImportOverlay();
                     }}
-                    className="rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold"
+                    className="flex-1 rounded-2xl border border-slate-200 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300"
                   >
-                    Close
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={!importJson.trim() || isImporting}
+                    className="flex-1 rounded-2xl bg-violet-600 py-3 text-sm font-semibold text-white shadow-md transition hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {isImporting ? "Importing…" : "Import"}
                   </button>
                 </div>
-              </div>
-            </form>
+              </form>
+            </div>
           </div>
         </div>
       )}
@@ -7262,58 +7395,99 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
 
       {isBatchOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/40 p-4 sm:items-center"
+          className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 sm:items-center sm:p-4"
           onClick={closeBatchOverlay}
         >
           <div
-            className="my-auto flex max-h-[min(92vh,760px)] w-full max-w-2xl flex-col overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900"
+            className="flex w-full max-w-lg flex-col overflow-hidden rounded-t-[28px] bg-white shadow-2xl sm:rounded-[28px] dark:bg-slate-900"
             onClick={(event) => event.stopPropagation()}
           >
-            <div className="border-b border-slate-200 px-5 py-4 dark:border-slate-800">
-              <h3 className="text-lg font-semibold">Batch questions</h3>
-              <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-                Paste an array of questions or an object with{" "}
-                <code>questions</code>.
-              </p>
+            {/* Handle (mobile) */}
+            <div className="flex justify-center pt-2.5 pb-1 sm:hidden">
+              <div className="h-1 w-10 rounded-full bg-slate-200 dark:bg-slate-700" />
             </div>
-            <form
-              className="min-h-0 overflow-y-auto"
-              onSubmit={handleBatchQuestions}
-            >
-              <div className="grid gap-4 px-5 py-5">
+
+            <div className="max-h-[90vh] overflow-y-auto px-6 pb-8 pt-4">
+              {/* Header */}
+              <div className="mb-5 flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setBatchStatus(null);
+                    closeBatchOverlay();
+                  }}
+                  className="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800"
+                  aria-label="Close"
+                >
+                  <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
+                    <path fillRule="evenodd" d="M12.79 5.23a.75.75 0 0 1-.02 1.06L8.832 10l3.938 3.71a.75.75 0 1 1-1.04 1.08l-4.5-4.25a.75.75 0 0 1 0-1.08l4.5-4.25a.75.75 0 0 1 1.06.02z" clipRule="evenodd" />
+                  </svg>
+                </button>
+                <div>
+                  <h3 className="text-[17px] font-extrabold text-slate-900 dark:text-slate-100">
+                    Batch Questions
+                  </h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    Run multiple questions in one go
+                  </p>
+                </div>
+              </div>
+
+              <form onSubmit={handleBatchQuestions} className="space-y-4">
+                {/* Info card */}
+                <div className="rounded-xl border border-cyan-200 bg-cyan-50 p-3 dark:border-cyan-800/40 dark:bg-cyan-900/20">
+                  <p className="text-[11px] font-bold uppercase tracking-wider text-cyan-700 dark:text-cyan-300">
+                    What is this?
+                  </p>
+                  <p className="mt-1 text-xs leading-relaxed text-cyan-800 dark:text-cyan-200">
+                    Paste an array of questions and the AI will answer each one
+                    sequentially, saving you time when reviewing multiple reminders.
+                  </p>
+                </div>
+
+                {/* Label */}
+                <p className="text-[10px] font-extrabold uppercase tracking-[0.18em] text-slate-400">
+                  Questions JSON
+                </p>
+
+                {/* Code textarea */}
                 <textarea
                   value={batchJson}
                   onChange={(event) => setBatchJson(event.target.value)}
-                  rows={12}
-                  placeholder='{"questions":["What is due today?","Show missed reminders","What is next?"]}'
-                  className="min-h-[18rem] w-full rounded-xl border border-slate-300 px-3 py-2 font-mono text-sm dark:border-slate-700 dark:bg-slate-950"
+                  rows={8}
+                  placeholder={'{\n  "questions": [\n    "What is due today?",\n    "Show missed reminders",\n    "What is next?"\n  ]\n}'}
+                  className="w-full rounded-2xl border border-slate-700 bg-[#1a1625] px-4 py-3 font-mono text-xs text-slate-200 placeholder-slate-600 focus:border-violet-500 focus:outline-none focus:ring-2 focus:ring-violet-900/40"
                 />
+
+                {/* Status */}
                 {batchStatus ? (
-                  <p className="text-sm text-slate-600 dark:text-slate-300">
+                  <p className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
                     {batchStatus}
                   </p>
                 ) : null}
-                <div className="mt-1 flex gap-2">
-                  <button
-                    type="submit"
-                    disabled={!batchJson.trim() || isBatchRunning}
-                    className="rounded-full bg-indigo-600 px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
-                  >
-                    {isBatchRunning ? "Running..." : "Run batch"}
-                  </button>
+
+                {/* Buttons */}
+                <div className="flex gap-2 pt-1">
                   <button
                     type="button"
                     onClick={() => {
                       setBatchStatus(null);
                       closeBatchOverlay();
                     }}
-                    className="rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold"
+                    className="flex-1 rounded-2xl border border-slate-200 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300"
                   >
-                    Close
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={!batchJson.trim() || isBatchRunning}
+                    className="flex-1 rounded-2xl bg-indigo-600 py-3 text-sm font-semibold text-white shadow-md transition hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {isBatchRunning ? "Running…" : "Run Batch"}
                   </button>
                 </div>
-              </div>
-            </form>
+              </form>
+            </div>
           </div>
         </div>
       )}
