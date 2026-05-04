@@ -1,8 +1,8 @@
 "use client";
 
+import { useState } from "react";
 import type { FormEvent } from "react";
 import type { LifeDomain, ReminderItem } from "@repo/reminder";
-import { StarRating, priorityStarsLabel } from "./star-rating";
 
 export interface TaskRow {
   id: string;
@@ -65,58 +65,36 @@ interface TaskFormOverlayProps {
   onCreateLinkedReminder: () => void;
 }
 
-function formatTaskDate(iso?: string) {
+// ─── helpers ──────────────────────────────────────────────────────────────────
+
+const DOMAIN_COLORS: Record<string, { bg: string; text: string; border: string }> = {
+  health:  { bg: "#d1fae5", text: "#065f46", border: "#6ee7b7" },
+  finance: { bg: "#cffafe", text: "#155e75", border: "#67e8f9" },
+  career:  { bg: "#e0e7ff", text: "#3730a3", border: "#a5b4fc" },
+  hobby:   { bg: "#ede9fe", text: "#5b21b6", border: "#c4b5fd" },
+  fun:     { bg: "#fef3c7", text: "#78350f", border: "#fcd34d" },
+};
+
+function domainStyle(domain?: string) {
+  if (!domain) return {};
+  const c = DOMAIN_COLORS[domain];
+  if (!c) return {};
+  return { background: c.bg, color: c.text, border: `1px solid ${c.border}` };
+}
+
+function formatShortDate(iso?: string) {
   if (!iso) return null;
+  const d = new Date(iso);
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function formatReminderTime(iso: string | number) {
   return new Date(iso).toLocaleString(undefined, {
-    month: "long",
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
+    month: "short", day: "numeric", hour: "numeric", minute: "2-digit",
   });
 }
 
-function TaskHeader({
-  title,
-  description,
-  onViewReminders,
-  onClose,
-}: {
-  title: string;
-  description?: string;
-  onViewReminders: () => void;
-  onClose: () => void;
-}) {
-  return (
-    <div className="flex shrink-0 items-start justify-between gap-3 border-b border-slate-200 px-4 py-3 dark:border-slate-800">
-      <div>
-        <h3 className="text-base font-semibold sm:text-lg">{title}</h3>
-        {description ? (
-          <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
-            {description}
-          </p>
-        ) : null}
-      </div>
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={onViewReminders}
-          data-testid="task-panel-view-reminders"
-          className="rounded-full border border-violet-300 bg-violet-50 px-3 py-1 text-xs font-semibold text-violet-900 transition hover:bg-violet-100 dark:border-violet-700 dark:bg-violet-950/50 dark:text-violet-100 dark:hover:bg-violet-900/40"
-        >
-          View reminders
-        </button>
-        <button
-          type="button"
-          onClick={onClose}
-          data-testid="task-panel-close"
-          className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold dark:border-slate-600"
-        >
-          Close
-        </button>
-      </div>
-    </div>
-  );
-}
+// ─── TaskListCard ─────────────────────────────────────────────────────────────
 
 function TaskListCard({
   task,
@@ -128,7 +106,6 @@ function TaskListCard({
   onReminderMarkDone,
   onReminderEdit,
   onReminderReschedule,
-  onReminderDelete,
 }: {
   task: TaskRow;
   reminders: ReminderItem[];
@@ -141,145 +118,201 @@ function TaskListCard({
   onReminderReschedule: (reminder: ReminderItem) => void;
   onReminderDelete: (reminder: ReminderItem) => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
+
   const linkedAll = reminders.filter((r) => r.linkedTaskId === task.id);
   const linkedPending = linkedAll.filter((r) => r.status === "pending");
   const linkedDone = linkedAll.filter(
     (r) => r.status === "done" || r.status === "archived",
   );
+  const isDone = task.status === "done";
+  const stars = task.priority ?? 0;
 
   return (
-    <details
-      className="group rounded-xl border border-slate-200 bg-white shadow-sm open:bg-slate-50/60 dark:border-slate-700 dark:bg-slate-900 dark:open:bg-slate-950/40"
+    <div
+      className="overflow-hidden rounded-2xl border border-slate-100 bg-white shadow-sm"
       data-testid="task-card"
       data-task-id={task.id}
     >
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-3 text-left outline-none [&::-webkit-details-marker]:hidden">
-        <div className="min-w-0 flex-1">
-          <p className="truncate font-semibold text-slate-950 dark:text-slate-100">
-            {task.title}
-          </p>
+      {/* ── Main card ── */}
+      <div className="px-4 py-3.5">
+        {/* Title row */}
+        <div className="flex items-start gap-3">
+          {/* Checkbox */}
+          <div
+            className={`mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded border-2 transition ${
+              isDone ? "border-emerald-500 bg-emerald-500" : "border-slate-300"
+            }`}
+          >
+            {isDone && (
+              <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3">
+                <path d="m5 12 4 4 10-10" />
+              </svg>
+            )}
+          </div>
+
+          {/* Title + expand button */}
+          <div className="min-w-0 flex-1">
+            <div className="flex items-start justify-between gap-2">
+              <p className={`font-bold leading-snug text-slate-900 ${isDone ? "text-slate-400 line-through" : ""}`}>
+                {task.title}
+              </p>
+              <button
+                type="button"
+                onClick={() => setExpanded((v) => !v)}
+                className="shrink-0 text-slate-400 transition"
+                aria-label={expanded ? "Collapse" : "Expand"}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className={`h-4 w-4 transition-transform ${expanded ? "rotate-180" : ""}`}>
+                  <path d="m6 9 6 6 6-6" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Stars + domain + due date */}
+            <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+              {stars > 0 && (
+                <span className="text-[12px] text-amber-400">{"★".repeat(stars)}{"☆".repeat(5 - stars)}</span>
+              )}
+              {task.domain && (
+                <span
+                  className="rounded-full px-2 py-0.5 text-[10px] font-bold"
+                  style={domainStyle(task.domain)}
+                >
+                  {task.domain}
+                </span>
+              )}
+              {task.dueAt && (
+                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold text-slate-500">
+                  Due {formatShortDate(task.dueAt)}
+                </span>
+              )}
+            </div>
+
+            {/* Reminder count badges */}
+            {linkedAll.length > 0 && (
+              <div className="mt-2 flex gap-2">
+                {linkedPending.length > 0 && (
+                  <span className="rounded-full bg-violet-50 px-2.5 py-0.5 text-[10px] font-semibold text-violet-600">
+                    {linkedPending.length} reminder{linkedPending.length > 1 ? "s" : ""}
+                  </span>
+                )}
+                {linkedDone.length > 0 && (
+                  <span className="rounded-full bg-emerald-50 px-2.5 py-0.5 text-[10px] font-semibold text-emerald-600">
+                    {linkedDone.length} done
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
         </div>
-        <svg
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          className="h-4 w-4 shrink-0 text-slate-400 transition group-open:rotate-180 dark:text-slate-500"
-          aria-hidden="true"
-        >
-          <path d="m6 9 6 6 6-6" />
-        </svg>
-      </summary>
-      <div className="border-t border-slate-200 px-3 py-3 dark:border-slate-700">
-        <div className="flex flex-wrap items-center gap-2 text-[11px] font-medium text-slate-500 dark:text-slate-400">
-          <span>{task.status === "done" ? "Completed task" : "Task details"}</span>
-          <span className="text-amber-500">{priorityStarsLabel(task.priority)}</span>
-          {task.domain ? (
-            <span className="rounded-full bg-emerald-100 px-2 py-0.5 text-[10px] font-medium text-emerald-900 dark:bg-emerald-900/50 dark:text-emerald-100">
-              {task.domain}
-            </span>
-          ) : null}
-        </div>
-        {task.dueAt ? (
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-            {task.status === "done" ? "Completed due: " : "Due: "}
-            {formatTaskDate(task.dueAt)}
-          </p>
-        ) : (
-          <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">No due date</p>
-        )}
-        {task.notes ? (
-          <p className="mt-1 text-sm text-slate-600 dark:text-slate-300">
-            {task.notes}
-          </p>
-        ) : null}
-        <div className="mt-3 flex flex-wrap gap-2">
+
+        {/* Action buttons */}
+        <div className="mt-3 flex flex-wrap gap-1.5">
           <button
             type="button"
             onClick={() => onCreateLinkedReminder(task)}
             data-testid="task-create-linked-reminder-button"
-            className="rounded-full border border-violet-300 bg-violet-50 px-3 py-1 text-xs font-semibold text-violet-900 transition hover:bg-violet-100 dark:border-violet-700 dark:bg-violet-950/50 dark:text-violet-100 dark:hover:bg-violet-900/40"
+            className="rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-[11px] font-bold text-violet-700"
           >
-            + Add Reminder
+            + Reminder
           </button>
           <button
             type="button"
             onClick={() => onEditTask(task)}
             data-testid="task-edit-button"
-            className="rounded-full bg-amber-500 px-3 py-1 text-xs font-semibold text-white"
+            className="rounded-full border border-slate-200 px-3 py-1 text-[11px] font-bold text-slate-600"
           >
             Edit
           </button>
-          {task.status === "pending" ? (
+          {isDone ? (
             <button
               type="button"
               onClick={() => onToggleStatus(task)}
               data-testid="task-status-button"
-              className="rounded-full bg-emerald-600 px-3 py-1 text-xs font-semibold text-white"
+              className="rounded-full border border-slate-200 px-3 py-1 text-[11px] font-bold text-slate-500"
             >
-              Mark done
+              Reopen
             </button>
           ) : (
             <button
               type="button"
               onClick={() => onToggleStatus(task)}
               data-testid="task-status-button"
-              className="rounded-full border border-slate-300 px-3 py-1 text-xs font-semibold dark:border-slate-600"
+              className="flex items-center gap-1 rounded-full bg-emerald-500 px-3 py-1 text-[11px] font-bold text-white"
             >
-              Reopen
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="h-3 w-3"><path d="m5 12 4 4 10-10"/></svg>
+              Done
             </button>
           )}
           <button
             type="button"
             onClick={() => onDeleteTask(task)}
             data-testid="task-delete-button"
-            className="rounded-full bg-rose-600 px-3 py-1 text-xs font-semibold text-white"
+            className="rounded-full border border-rose-100 bg-rose-50 px-3 py-1 text-[11px] font-bold text-rose-600"
           >
             Delete
           </button>
         </div>
-        {linkedAll.length > 0 ? (
-          <div className="mt-3 space-y-2">
-            {linkedPending.length > 0 ? (
-              <div className="rounded-xl border border-violet-200/90 bg-gradient-to-b from-violet-50/95 to-white px-2.5 py-2 dark:border-violet-800/80 dark:from-violet-950/50 dark:to-slate-900/90">
-                <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-violet-800 dark:text-violet-200">
-                  Linked reminders
+      </div>
+
+      {/* ── Expanded detail (Screen 09 style) ── */}
+      {expanded && (
+        <div className="border-t border-slate-100">
+          {/* Notes */}
+          {task.notes && (
+            <div className="px-4 py-3 text-[13px] leading-relaxed text-slate-500">
+              {task.notes}
+            </div>
+          )}
+
+          {/* Linked reminders — pending */}
+          {linkedPending.length > 0 && (
+            <div className="border-t border-slate-100 px-4 py-3">
+              <div className="mb-3 flex items-center justify-between">
+                <p className="text-[10px] font-extrabold uppercase tracking-widest text-violet-600">
+                  LINKED REMINDERS ({linkedPending.length} PENDING)
                 </p>
-                <ul className="space-y-1.5">
-                  {linkedPending.map((r) => (
-                    <li
-                      key={r.id}
-                      className="rounded-lg border border-white/70 bg-white/90 px-2 py-1.5 text-xs shadow-sm dark:border-slate-700 dark:bg-slate-900/90"
+                <button
+                  type="button"
+                  onClick={() => onCreateLinkedReminder(task)}
+                  className="rounded-full bg-violet-600 px-3 py-1 text-[10px] font-bold text-white"
+                >
+                  + Add
+                </button>
+              </div>
+              <div className="space-y-2.5">
+                {linkedPending.map((r) => (
+                  <div
+                    key={r.id}
+                    className="flex items-start gap-3 rounded-2xl border border-slate-100 bg-white px-3 py-3"
+                    data-testid={`task-reminder-row-${r.id}`}
+                  >
+                    {/* Green checkmark to mark done */}
+                    <button
+                      type="button"
+                      onClick={() => onReminderMarkDone(r)}
+                      data-testid={`task-reminder-done-${r.id}`}
+                      className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-emerald-500"
                     >
-                      <div className="flex flex-wrap items-center justify-between gap-2">
-                        <span className="min-w-0 font-medium text-slate-900 dark:text-slate-100">
-                          {r.title}
-                        </span>
-                        <span className="shrink-0 text-[11px] text-slate-500 dark:text-slate-400">
-                          {new Date(r.dueAt).toLocaleString(undefined, {
-                            month: "long",
-                            day: "numeric",
-                            hour: "numeric",
-                            minute: "2-digit",
-                          })}
+                      <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="h-3.5 w-3.5">
+                        <path d="m5 12 4 4 10-10" />
+                      </svg>
+                    </button>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-start justify-between gap-2">
+                        <p className="text-[13px] font-semibold text-slate-900">{r.title}</p>
+                        <span className="shrink-0 text-[11px] text-amber-400">
+                          {"★".repeat(r.priority ?? 0)}
                         </span>
                       </div>
-                      <div className="mt-2 flex flex-wrap gap-1.5">
-                        <button
-                          type="button"
-                          onClick={() => onReminderMarkDone(r)}
-                          data-testid={`task-reminder-done-${r.id}`}
-                          className="rounded-full bg-emerald-600 px-2.5 py-1 text-[10px] font-semibold text-white"
-                        >
-                          Mark done
-                        </button>
+                      <p className="mt-0.5 text-[11px] text-slate-400">{formatReminderTime(r.dueAt)}</p>
+                      <div className="mt-2 flex gap-2">
                         <button
                           type="button"
                           onClick={() => onReminderEdit(r)}
                           data-testid={`task-reminder-edit-${r.id}`}
-                          className="rounded-full bg-amber-500 px-2.5 py-1 text-[10px] font-semibold text-white"
+                          className="rounded-full border border-slate-200 px-2.5 py-1 text-[10px] font-bold text-slate-600"
                         >
                           Edit
                         </button>
@@ -287,38 +320,66 @@ function TaskListCard({
                           type="button"
                           onClick={() => onReminderReschedule(r)}
                           data-testid={`task-reminder-reschedule-${r.id}`}
-                          className="rounded-full border border-sky-300 bg-sky-50 px-2.5 py-1 text-[10px] font-semibold text-sky-900 dark:border-sky-700 dark:bg-sky-950/40 dark:text-sky-100"
+                          className="rounded-full border border-cyan-200 bg-cyan-50 px-2.5 py-1 text-[10px] font-bold text-cyan-700"
                         >
                           Reschedule
                         </button>
-                        <button
-                          type="button"
-                          onClick={() => onReminderDelete(r)}
-                          data-testid={`task-reminder-delete-${r.id}`}
-                          className="rounded-full bg-rose-600 px-2.5 py-1 text-[10px] font-semibold text-white"
-                        >
-                          Delete
-                        </button>
                       </div>
-                    </li>
-                  ))}
-                </ul>
+                    </div>
+                  </div>
+                ))}
               </div>
-            ) : null}
-            {linkedDone.length > 0 ? (
-              <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                <span className="font-medium text-slate-600 dark:text-slate-300">
-                  Completed on this task:
-                </span>{" "}
-                {linkedDone.map((r) => r.title).join(" · ")}
+            </div>
+          )}
+
+          {/* Completed reminders on this task */}
+          {linkedDone.length > 0 && (
+            <div className="border-t border-slate-100 px-4 py-3">
+              <p className="mb-2.5 text-[10px] font-extrabold uppercase tracking-widest text-emerald-600">
+                COMPLETED ON THIS TASK ({linkedDone.length})
               </p>
-            ) : null}
+              <div className="space-y-1.5">
+                {linkedDone.map((r) => (
+                  <div key={r.id} className="flex items-center gap-2 border-l-2 border-emerald-200 pl-3">
+                    <p className="text-[12px] text-slate-400 line-through">{r.title}</p>
+                    <span className="text-[10px] text-slate-300">
+                      {formatShortDate(r.dueAt.toString())} · Done
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Bottom actions */}
+          <div className="flex items-center gap-3 border-t border-slate-100 px-4 py-3">
+            {!isDone && (
+              <button
+                type="button"
+                onClick={() => onToggleStatus(task)}
+                data-testid="task-status-button"
+                className="flex flex-1 items-center justify-center gap-2 rounded-2xl bg-emerald-500 py-3 text-[13px] font-bold text-white"
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4"><path d="m5 12 4 4 10-10"/></svg>
+                Mark Task Done
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => onDeleteTask(task)}
+              data-testid="task-delete-button"
+              className={`text-[13px] font-bold text-rose-500 ${isDone ? "flex-1 rounded-2xl border border-rose-200 py-3 text-center" : ""}`}
+            >
+              Delete
+            </button>
           </div>
-        ) : null}
-      </div>
-    </details>
+        </div>
+      )}
+    </div>
   );
 }
+
+// ─── TaskListOverlay ──────────────────────────────────────────────────────────
 
 export function TaskListOverlay({
   open,
@@ -355,105 +416,118 @@ export function TaskListOverlay({
   const activeTasks =
     taskTab === "all" && q
       ? baseTasks.filter((task) => {
-          const hay = [
-            task.title,
-            task.notes ?? "",
-            task.domain ?? "",
-            task.status,
-          ]
+          const hay = [task.title, task.notes ?? "", task.domain ?? "", task.status]
             .join(" ")
             .toLowerCase();
           return hay.includes(q);
         })
       : baseTasks;
 
+  const tabs: { key: "pending" | "missed" | "done" | "all"; label: string; count: number; dot?: string }[] = [
+    { key: "pending", label: "Upcoming", count: tasksGrouped.pending.length },
+    { key: "missed",  label: "Missed",   count: tasksGrouped.missed.length,  dot: "#f43f5e" },
+    { key: "done",    label: "Done",     count: tasksGrouped.done.length,    dot: "#10b981" },
+    {
+      key: "all",
+      label: "All",
+      count: tasksGrouped.missed.length + tasksGrouped.pending.length + tasksGrouped.done.length,
+    },
+  ];
+
   return (
     <div
       data-testid="task-list-overlay"
-      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-0 sm:items-center sm:p-4"
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 sm:items-center sm:p-4"
       onClick={onClose}
     >
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="tasks-list-title"
-        className="mt-auto flex max-h-[min(92vh,760px)] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900 sm:my-auto sm:rounded-2xl"
+        className="flex max-h-[92dvh] w-full max-w-lg flex-col overflow-hidden rounded-t-3xl bg-[#fafaf9] shadow-2xl sm:rounded-3xl"
         onClick={(event) => event.stopPropagation()}
       >
-        <TaskHeader
-          title="Tasks"
-          onViewReminders={onViewReminders}
-          onClose={onClose}
-        />
-        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-slate-200 px-4 py-2 dark:border-slate-800">
-          <div className="flex gap-1 overflow-x-auto">
-            {(
-              [
-                ["missed", "Missed"],
-                ["pending", "Upcoming"],
-                ["all", "All"],
-                ["done", "Done"],
-              ] as const
-            ).map(([key, label]) => (
+        {/* Handle bar */}
+        <div className="flex shrink-0 justify-center pt-2.5 pb-1 sm:hidden">
+          <div className="h-1 w-10 rounded-full bg-slate-200" />
+        </div>
+
+        {/* Header */}
+        <div className="flex shrink-0 items-center justify-between px-5 py-3">
+          <h2 id="tasks-list-title" className="text-[20px] font-extrabold text-slate-900">Tasks</h2>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={onCreateTask}
+              data-testid="task-create-button"
+              className="flex items-center gap-1 rounded-full bg-teal-500 px-4 py-2 text-[13px] font-bold text-white shadow-sm"
+            >
+              <span className="text-base leading-none">+</span> Task
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              data-testid="task-panel-close"
+              className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-slate-400"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="h-4 w-4"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+          </div>
+        </div>
+
+        {/* Tab bar */}
+        <div className="flex shrink-0 gap-1.5 overflow-x-auto px-4 pb-3 scrollbar-none">
+          {tabs.map((tab) => {
+            const active = taskTab === tab.key;
+            return (
               <button
-                key={key}
+                key={tab.key}
                 type="button"
-                onClick={() => setTaskTab(key)}
-                data-testid={`task-tab-${key}`}
-                className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold transition ${
-                  taskTab === key
-                    ? "bg-teal-600 text-white"
-                    : "bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-200"
+                onClick={() => setTaskTab(tab.key)}
+                data-testid={`task-tab-${tab.key}`}
+                className={`shrink-0 flex items-center gap-1.5 rounded-full px-4 py-1.5 text-[12px] font-bold transition ${
+                  active ? "bg-violet-600 text-white" : "border border-slate-200 bg-white text-slate-600"
                 }`}
               >
-                {label}{" "}
-                <span className="opacity-80">
-                  (
-                  {key === "missed"
-                    ? tasksGrouped.missed.length
-                    : key === "pending"
-                      ? tasksGrouped.pending.length
-                      : key === "all"
-                        ? tasksGrouped.missed.length +
-                          tasksGrouped.pending.length +
-                          tasksGrouped.done.length
-                      : tasksGrouped.done.length}
-                  )
-                </span>
+                {!active && tab.dot && (
+                  <span className="h-1.5 w-1.5 rounded-full shrink-0" style={{ background: tab.dot }} />
+                )}
+                {tab.label}
+                <span className={`text-[10px] ${active ? "opacity-80" : "text-slate-400"}`}>({tab.count})</span>
               </button>
-            ))}
-          </div>
-          <button
-            type="button"
-            onClick={onCreateTask}
-            data-testid="task-create-button"
-            className="rounded-full border border-teal-300 bg-teal-50 px-3 py-1 text-xs font-semibold text-teal-800 transition hover:bg-teal-100 dark:border-teal-700 dark:bg-teal-950/50 dark:text-teal-100 dark:hover:bg-teal-900/40"
-          >
-            + Task
-          </button>
+            );
+          })}
         </div>
-        {taskTab === "all" ? (
-          <div className="shrink-0 border-b border-slate-200 px-4 py-2 dark:border-slate-800">
-            <label className="flex items-center gap-2 text-xs text-slate-600 dark:text-slate-400">
-              <span className="font-medium">Search</span>
+
+        {/* Search (All tab only) */}
+        {taskTab === "all" && (
+          <div className="shrink-0 border-b border-slate-200 px-4 py-2">
+            <div className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="h-3.5 w-3.5 text-slate-400"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
               <input
                 value={taskSearchQuery}
                 onChange={(e) => setTaskSearchQuery(e.target.value)}
                 data-testid="task-search-input"
                 placeholder="Search tasks..."
-                className="w-full max-w-xs rounded-lg border border-slate-300 bg-white px-2 py-1 text-xs dark:border-slate-600 dark:bg-slate-950"
+                className="flex-1 bg-transparent text-[12px] text-slate-700 outline-none placeholder:text-slate-400"
               />
-            </label>
+            </div>
           </div>
-        ) : null}
-        <div className="min-h-0 flex-1 overflow-y-auto p-4">
-          <div className="grid gap-3">
-            {activeTasks.length === 0 ? (
-              <p className="text-sm text-slate-500 dark:text-slate-400">
-                No tasks here.
+        )}
+
+        {/* Task list */}
+        <div className="relative min-h-0 flex-1 overflow-y-auto px-4 py-3">
+          {activeTasks.length === 0 ? (
+            <div className="flex flex-col items-center justify-center py-16 text-center">
+              <span className="mb-3 text-4xl">{taskTab === "done" ? "✅" : taskTab === "missed" ? "🎉" : "📋"}</span>
+              <p className="text-[14px] font-semibold text-slate-700">
+                {taskTab === "done" ? "No completed tasks" : taskTab === "missed" ? "No missed tasks!" : "No tasks here"}
               </p>
-            ) : (
-              activeTasks.map((task) => (
+              <p className="mt-1 text-[12px] text-slate-400">Tap + Task to create one.</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {activeTasks.map((task) => (
                 <TaskListCard
                   key={task.id}
                   task={task}
@@ -467,14 +541,41 @@ export function TaskListOverlay({
                   onReminderReschedule={onReminderReschedule}
                   onReminderDelete={onReminderDelete}
                 />
-              ))
-            )}
-          </div>
+              ))}
+            </div>
+          )}
+
+          {/* FAB */}
+          <button
+            type="button"
+            onClick={onCreateTask}
+            data-testid="task-fab-button"
+            className="fixed bottom-20 right-4 z-10 flex h-14 w-14 items-center justify-center rounded-full bg-teal-500 text-white shadow-lg shadow-teal-500/40 transition hover:bg-teal-400 active:scale-95 lg:hidden"
+            aria-label="New task"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="h-6 w-6">
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+          </button>
+        </div>
+
+        {/* Footer: view reminders */}
+        <div className="shrink-0 border-t border-slate-100 px-5 py-3">
+          <button
+            type="button"
+            onClick={onViewReminders}
+            data-testid="task-panel-view-reminders"
+            className="text-[12px] font-semibold text-violet-600"
+          >
+            View reminders →
+          </button>
         </div>
       </div>
     </div>
   );
 }
+
+// ─── TaskFormOverlay ──────────────────────────────────────────────────────────
 
 export function TaskFormOverlay({
   open,
@@ -514,116 +615,215 @@ export function TaskFormOverlay({
     onSubmit(event);
   };
 
+  // Parse date and time from taskFormDue (datetime-local format: YYYY-MM-DDTHH:MM)
+  const dueDatePart = taskFormDue ? taskFormDue.split("T")[0] : "";
+  const dueTimePart = taskFormDue ? taskFormDue.split("T")[1] : "";
+  const dueDateDisplay = dueDatePart
+    ? new Date(`${dueDatePart}T12:00`).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })
+    : "Not set";
+  const dueTimeDisplay = dueTimePart
+    ? new Date(`1970-01-01T${dueTimePart}`).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" })
+    : "Optional";
+
+  const domainChipColors: Record<string, { active: string; text: string }> = {
+    health:  { active: "#10b981", text: "#065f46" },
+    finance: { active: "#06b6d4", text: "#155e75" },
+    career:  { active: "#6366f1", text: "#312e81" },
+    hobby:   { active: "#7c3aed", text: "#4c1d95" },
+    fun:     { active: "#f59e0b", text: "#78350f" },
+  };
+
   return (
     <div
       data-testid="task-form-overlay"
-      className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/50 p-0 sm:items-center sm:p-4"
+      className="fixed inset-0 z-50 flex items-end justify-center bg-black/50 sm:items-center sm:p-4"
       onClick={onClose}
     >
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="tasks-form-title"
-        className="mt-auto flex max-h-[min(92vh,760px)] w-full max-w-lg flex-col overflow-hidden rounded-t-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-900 sm:my-auto sm:rounded-2xl"
+        className="flex max-h-[92dvh] w-full max-w-lg flex-col overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:rounded-3xl"
         onClick={(event) => event.stopPropagation()}
       >
-        <TaskHeader
-          title={editingTaskId ? "Edit task" : "Create task"}
-          onViewReminders={onViewReminders}
-          onClose={onClose}
-        />
-        <form className="min-h-0 overflow-y-auto" onSubmit={handleSubmit}>
-          <div className="grid gap-4 px-4 py-4">
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-xs font-medium text-slate-500 dark:text-slate-400">
-                {editingTaskId ? "Edit task" : "New task"}
-              </p>
-              {editingTaskId ? (
-                <button
-                  type="button"
-                  className="text-xs font-semibold text-slate-500 underline hover:text-slate-700 dark:hover:text-slate-300"
-                  onClick={onCancelEdit}
-                  data-testid="task-cancel-edit-button"
-                >
-                  Cancel edit
-                </button>
-              ) : null}
-            </div>
+        {/* Handle bar */}
+        <div className="flex shrink-0 justify-center pt-2.5 pb-1 sm:hidden">
+          <div className="h-1 w-10 rounded-full bg-slate-200" />
+        </div>
+
+        {/* Header */}
+        <div className="flex shrink-0 items-center justify-between px-5 py-3">
+          {editingTaskId ? (
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex items-center gap-1 text-slate-500"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="h-4 w-4"><path d="m15 18-6-6 6-6"/></svg>
+              <span className="text-[15px] font-semibold text-slate-700">Edit Task</span>
+            </button>
+          ) : (
+            <h3 id="tasks-form-title" className="text-[17px] font-extrabold text-slate-900">New Task</h3>
+          )}
+          <div className="flex items-center gap-2">
+            {editingTaskId && (
+              <button
+                type="button"
+                onClick={onCancelEdit}
+                data-testid="task-cancel-edit-button"
+                className="text-[12px] font-semibold text-slate-400 underline"
+              >
+                Cancel
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex h-8 w-8 items-center justify-center rounded-full bg-slate-100 text-slate-400"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="h-4 w-4"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <form id="task-form" className="min-h-0 flex-1 overflow-y-auto" onSubmit={handleSubmit}>
+          <div className="grid gap-5 px-5 pb-6 pt-1">
+
+            {/* Task name input */}
             <input
               value={taskFormTitle}
               onChange={(e) => setTaskFormTitle(e.target.value)}
-              placeholder="Title"
+              placeholder="Task name..."
               data-testid="task-title-input"
-              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-950"
+              className="w-full border-0 border-b-2 border-teal-400 pb-2 text-[15px] font-medium text-slate-900 outline-none placeholder:text-slate-400"
+              autoFocus
             />
-            <StarRating
-              value={taskStars}
-              onChange={setTaskStars}
-              label="Priority (required)"
-            />
-            <label className="grid gap-1 text-xs font-medium text-slate-600 dark:text-slate-400">
-              <span>Due date &amp; time (optional)</span>
-              <input
-                type="datetime-local"
-                min={new Date().toISOString().slice(0, 16)}
-                value={taskFormDue}
-                onFocus={() => setTaskDueUserEdited(true)}
-                onChange={(e) => {
-                  setTaskDueUserEdited(true);
-                  setTaskFormDue(e.target.value);
-                }}
-                data-testid="task-due-input"
-                className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-950 dark:[color-scheme:dark]"
-              />
-            </label>
-            <textarea
+
+            {/* Due date + time chips */}
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">DUE DATE</p>
+                <div className="relative">
+                  <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+                    <span className="text-[13px] font-semibold text-slate-700">{dueDateDisplay}</span>
+                  </div>
+                  <input
+                    type="date"
+                    min={new Date().toISOString().slice(0, 10)}
+                    value={dueDatePart}
+                    onChange={(e) => {
+                      setTaskDueUserEdited(true);
+                      setTaskFormDue(`${e.target.value}T${dueTimePart || "09:00"}`);
+                    }}
+                    data-testid="task-due-input"
+                    className="absolute inset-0 cursor-pointer opacity-0"
+                  />
+                </div>
+              </div>
+              <div>
+                <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">TIME</p>
+                <div className="relative">
+                  <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5">
+                    <span className="text-[13px] font-semibold text-slate-500">{dueTimeDisplay}</span>
+                  </div>
+                  <input
+                    type="time"
+                    value={dueTimePart}
+                    onChange={(e) => {
+                      setTaskDueUserEdited(true);
+                      setTaskFormDue(`${dueDatePart || new Date().toISOString().slice(0, 10)}T${e.target.value}`);
+                    }}
+                    className="absolute inset-0 cursor-pointer opacity-0"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Priority stars */}
+            <div>
+              <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                PRIORITY <span className="text-rose-400">*</span>
+              </p>
+              <div className="flex gap-2">
+                {[1, 2, 3, 4, 5].map((n) => (
+                  <button
+                    key={n}
+                    type="button"
+                    onClick={() => setTaskStars(n)}
+                    className={`flex h-11 w-11 items-center justify-center rounded-2xl border text-xl transition ${
+                      n <= taskStars
+                        ? "border-amber-300 bg-amber-50 text-amber-400"
+                        : "border-slate-200 bg-slate-50 text-slate-300"
+                    }`}
+                    aria-label={`${n} star${n > 1 ? "s" : ""}`}
+                  >
+                    ★
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Domain chips */}
+            <div>
+              <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">DOMAIN</p>
+              <div className="flex flex-wrap gap-2">
+                {(["health", "finance", "career", "hobby", "fun"] as const).map((d) => {
+                  const active = taskFormDomain === d;
+                  const c = domainChipColors[d]!;
+                  return (
+                    <button
+                      key={d}
+                      type="button"
+                      onClick={() => setTaskFormDomain(active ? "" : d)}
+                      data-testid="task-domain-select"
+                      className="rounded-full px-4 py-1.5 text-[12px] font-bold transition"
+                      style={
+                        active
+                          ? { background: `${c.active}20`, color: c.active, border: `1.5px solid ${c.active}` }
+                          : { background: "#f8fafc", color: "#64748b", border: "1.5px solid #e2e8f0" }
+                      }
+                    >
+                      {d}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Notes */}
+            <input
               value={taskFormNotes}
               onChange={(e) => setTaskFormNotes(e.target.value)}
-              placeholder="Notes (optional)"
-              rows={2}
+              placeholder="Notes (optional)..."
               data-testid="task-notes-input"
-              className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-950"
+              className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3 text-[13px] text-slate-700 outline-none placeholder:text-slate-400 focus:border-teal-400"
             />
-            <label className="grid gap-1 text-xs font-medium text-slate-600 dark:text-slate-400">
-              Domain (optional)
-              <select
-                value={taskFormDomain}
-                onChange={(e) => setTaskFormDomain(e.target.value as "" | LifeDomain)}
-                data-testid="task-domain-select"
-                className="w-full rounded-xl border border-slate-300 px-3 py-2 text-sm dark:border-slate-600 dark:bg-slate-950"
-              >
-                <option value="">No domain</option>
-                {(["health", "finance", "career", "hobby", "fun"] as const).map(
-                  (d) => (
-                    <option key={d} value={d}>
-                      {d}
-                    </option>
-                  ),
-                )}
-              </select>
-            </label>
+
+            {/* Error */}
+            {taskFormError && (
+              <p className="rounded-xl bg-rose-50 px-3 py-2 text-[12px] font-semibold text-rose-600" data-testid="task-form-error">
+                {taskFormError}
+              </p>
+            )}
+
+            {/* Save & add linked reminder */}
             <button
               type="button"
               onClick={onCreateLinkedReminder}
               data-testid="task-create-linked-reminder-button"
-              className="w-full rounded-xl border border-violet-300 bg-violet-50/90 py-2 text-xs font-semibold text-violet-900 shadow-sm transition hover:bg-violet-100 dark:border-violet-700 dark:bg-violet-950/50 dark:text-violet-100 dark:hover:bg-violet-900/40"
+              className="flex w-full items-center justify-center gap-2 rounded-2xl border border-violet-300 bg-violet-50 py-3 text-[13px] font-bold text-violet-700"
             >
-              + Add linked reminder
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="h-4 w-4"><circle cx="12" cy="12" r="10"/><path d="M12 8v8M8 12h8"/></svg>
+              Save &amp; add linked reminder
             </button>
-            {taskFormError ? (
-              <p
-                className="text-xs text-rose-600 dark:text-rose-400"
-                data-testid="task-form-error"
-              >
-                {taskFormError}
-              </p>
-            ) : null}
+
+            {/* Save Task */}
             <button
               type="submit"
               data-testid="task-save-button"
-              className="w-full rounded-full bg-teal-600 py-2 text-sm font-semibold text-white hover:bg-teal-500"
+              className="w-full rounded-2xl bg-teal-500 py-3.5 text-[15px] font-bold text-white shadow-md shadow-teal-500/30"
             >
-              {editingTaskId ? "Save changes" : "Add task"}
+              {editingTaskId ? "Save Changes" : "Save Task"}
             </button>
           </div>
         </form>

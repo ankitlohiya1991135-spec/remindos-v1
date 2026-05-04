@@ -4,6 +4,7 @@ import { currentUser } from "@clerk/nextjs/server";
 import Link from "next/link";
 import Image from "next/image";
 import localFont from "next/font/local";
+import { DM_Sans } from "next/font/google";
 import { InstallAppBanner } from "../components/pwa/install-app-banner";
 import { RegisterServiceWorker } from "../components/pwa/register-sw";
 import { OpenRemindersButton } from "../components/dashboard/open-reminders-button";
@@ -20,6 +21,7 @@ const geistMono = localFont({
   src: "./fonts/GeistMonoVF.woff",
   variable: "--font-geist-mono",
 });
+const dmSans = DM_Sans({ subsets: ["latin"], variable: "--font-dm-sans" });
 
 export const metadata: Metadata = {
   title: "Personal Life OS",
@@ -42,7 +44,7 @@ export default async function RootLayout({
     raw && raw.length > 0 ? `${raw[0]!.toUpperCase()}${raw.slice(1)}` : null;
   return (
     <html lang="en" suppressHydrationWarning>
-      <body className={`${geistSans.variable} ${geistMono.variable}`}>
+      <body className={`${geistSans.variable} ${geistMono.variable} ${dmSans.variable}`}>
         <ClerkProvider>
           <ThemeProvider>
             <header className="sticky top-0 z-40 shrink-0 border-b border-slate-200/80 bg-white/90 backdrop-blur dark:border-slate-800 dark:bg-slate-950/90">
@@ -51,7 +53,7 @@ export default async function RootLayout({
                   href="/"
                   className="flex min-w-0 flex-1 items-center gap-3 text-slate-900 dark:text-slate-100"
                 >
-                  <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[linear-gradient(135deg,#6d5efc_0%,#69d2b5_100%)] shadow-[0_12px_30px_-18px_rgba(109,94,252,0.9)]">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[linear-gradient(135deg,#7c3aed_0%,#06b6d4_100%)] shadow-[0_12px_30px_-18px_rgba(124,58,237,0.9)]">
                     <Image src="/logo-remindos.svg" alt="RemindOS logo" width={20} height={20} />
                   </span>
                   <span className="flex min-w-0 flex-col leading-tight sm:flex-row sm:items-baseline sm:gap-2">

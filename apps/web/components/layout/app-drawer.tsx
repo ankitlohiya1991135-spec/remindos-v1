@@ -15,7 +15,6 @@ export function AppDrawer() {
   const open = () => {
     if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
     setMounted(true);
-    // Small rAF delay so the mount triggers the CSS transition
     requestAnimationFrame(() => requestAnimationFrame(() => setVisible(true)));
   };
 
@@ -54,35 +53,59 @@ export function AppDrawer() {
     [user?.firstName, user?.lastName].filter(Boolean).join(" ") || "User";
   const email = user?.emailAddresses?.[0]?.emailAddress ?? "";
 
-  const navItems = [
+  const dispatch = (eventName: string) => {
+    close();
+    setTimeout(() => window.dispatchEvent(new CustomEvent(eventName)), 150);
+  };
+
+  const quickActions = [
     {
-      icon: "💬",
-      label: "Chat",
-      action: () => router.push("/dashboard"),
+      icon: "⏱",
+      label: "Next 2 Hours",
+      event: "dashboard:open-next-two-hours",
+      color:
+        "from-amber-500 to-orange-600 ring-1 ring-amber-400/25 shadow-amber-200/40",
+      testId: "drawer-action-next-2-hours",
     },
     {
-      icon: "🔔",
-      label: "Reminders",
-      action: () =>
-        window.dispatchEvent(new CustomEvent("dashboard:open-reminders")),
+      icon: "+",
+      label: "New Reminder",
+      event: "dashboard:create-reminder",
+      color:
+        "from-violet-500 to-violet-700 ring-1 ring-violet-400/25 shadow-violet-200/40",
+      testId: "drawer-action-new-reminder",
+    },
+    {
+      icon: "☰",
+      label: "All Reminders",
+      event: "dashboard:open-reminders",
+      color:
+        "from-violet-500 to-violet-700 ring-1 ring-violet-400/25 shadow-violet-200/40",
+      testId: "drawer-action-all-reminders",
     },
     {
       icon: "✓",
-      label: "Tasks",
-      action: () =>
-        window.dispatchEvent(new CustomEvent("dashboard:open-tasks")),
+      label: "Create Task",
+      event: "dashboard:create-task",
+      color:
+        "from-violet-500 to-violet-700 ring-1 ring-violet-400/25 shadow-violet-200/40",
+      testId: "drawer-action-create-task",
+    },
+    {
+      icon: "≣",
+      label: "All Tasks",
+      event: "dashboard:open-tasks",
+      color:
+        "from-teal-500 to-teal-700 ring-1 ring-teal-400/25 shadow-teal-200/40",
+      testId: "drawer-action-all-tasks",
     },
     {
       icon: "✦",
-      label: "Briefing",
-      action: () =>
-        window.dispatchEvent(new CustomEvent("dashboard:run-briefing")),
-    },
-    {
-      icon: "🧹",
-      label: "Clear Chat",
-      action: () =>
-        window.dispatchEvent(new CustomEvent("dashboard:clear-chat")),
+      label: "Run Briefing",
+      event: "dashboard:run-briefing",
+      color:
+        "from-cyan-500 to-cyan-700 ring-1 ring-cyan-400/25 shadow-cyan-200/40",
+      testId: "drawer-action-run-briefing",
     },
   ];
 
@@ -94,21 +117,21 @@ export function AppDrawer() {
     >
       {/* Backdrop */}
       <div
-        className="flex-1 bg-black/40 transition-opacity duration-300"
+        className="flex-1 bg-black/50 transition-opacity duration-300"
         style={{ opacity: visible ? 1 : 0 }}
         onClick={close}
         aria-hidden="true"
       />
 
-      {/* Drawer panel */}
+      {/* Panel */}
       <div
-        className="flex w-[min(18rem,88vw)] translate-x-0 flex-col bg-white shadow-2xl transition-transform duration-300 dark:bg-slate-900"
+        className="flex w-[min(22rem,92vw)] flex-col overflow-hidden bg-white shadow-2xl transition-transform duration-300 dark:bg-slate-950"
         style={{ transform: visible ? "translateX(0)" : "translateX(100%)" }}
       >
         {/* Header */}
-        <div className="flex items-center justify-between border-b border-slate-200 px-5 py-4 dark:border-slate-800">
-          <span className="text-base font-semibold text-slate-900 dark:text-slate-100">
-            Menu
+        <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-5 pb-3 pt-[max(1rem,env(safe-area-inset-top))] dark:border-slate-800">
+          <span className="text-[11px] font-extrabold uppercase tracking-[0.2em] text-violet-600 dark:text-violet-400">
+            Workspace
           </span>
           <button
             type="button"
@@ -117,64 +140,98 @@ export function AppDrawer() {
             className="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
             aria-label="Close menu"
           >
-            ✕
+            <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
+              <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22z" />
+            </svg>
           </button>
         </div>
 
-        {/* User card */}
-        <div className="mx-4 my-3 rounded-2xl border border-violet-100 bg-violet-50 px-4 py-3 dark:border-violet-900/40 dark:bg-violet-950/30">
-          <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-violet-600 text-sm font-bold text-white">
-              {initial}
-            </div>
-            <div className="min-w-0">
-              <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">
-                {displayName}
-              </p>
-              {email ? (
-                <p className="truncate text-xs text-slate-500 dark:text-slate-400">
-                  {email}
+        {/* Scrollable body */}
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-4">
+          {/* User card */}
+          <div className="rounded-2xl border border-violet-100 bg-gradient-to-br from-violet-50 to-cyan-50/50 px-4 py-3 dark:border-violet-900/40 dark:from-violet-950/30 dark:to-cyan-950/20">
+            <div className="flex items-center gap-3">
+              <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-[linear-gradient(135deg,#7c3aed,#06b6d4)] text-base font-bold text-white shadow-md">
+                {initial}
+              </div>
+              <div className="min-w-0">
+                <p className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">
+                  {displayName}
                 </p>
-              ) : null}
+                {email ? (
+                  <p className="truncate text-xs text-slate-500 dark:text-slate-400">
+                    {email}
+                  </p>
+                ) : null}
+              </div>
             </div>
           </div>
+
+          {/* Quick actions grid */}
+          <p className="mb-2.5 mt-5 text-[10px] font-extrabold uppercase tracking-[0.18em] text-slate-400">
+            Quick Actions
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            {quickActions.map((action) => (
+              <button
+                key={action.label}
+                type="button"
+                data-testid={action.testId}
+                onClick={() => dispatch(action.event)}
+                className={`flex min-h-[3rem] flex-col items-center justify-center gap-0.5 rounded-xl bg-gradient-to-b px-2 py-2 text-center text-[10px] font-bold uppercase tracking-wide text-white shadow-sm transition hover:brightness-110 active:scale-[0.97] ${action.color}`}
+              >
+                <span className="text-sm leading-none opacity-90">{action.icon}</span>
+                <span className="mt-0.5 leading-tight">{action.label}</span>
+              </button>
+            ))}
+          </div>
+
+          {/* Import / Export / Batch */}
+          <div className="mt-3 grid grid-cols-3 gap-2">
+            {[
+              { label: "Import", event: "dashboard:open-import", testId: "drawer-import" },
+              { label: "Export", event: "dashboard:export-chat", testId: "drawer-export" },
+              { label: "Batch", event: "dashboard:open-batch", testId: "drawer-batch" },
+            ].map((btn) => (
+              <button
+                key={btn.label}
+                type="button"
+                data-testid={btn.testId}
+                onClick={() => dispatch(btn.event)}
+                className="flex min-h-[2.25rem] items-center justify-center rounded-xl border border-slate-200 bg-slate-50/90 text-xs font-semibold text-slate-700 transition hover:bg-white hover:shadow-sm active:scale-[0.97] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
+              >
+                {btn.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Divider */}
+          <div className="my-4 h-px bg-slate-100 dark:bg-slate-800" />
+
+          {/* Clear chat */}
+          <button
+            type="button"
+            onClick={() => dispatch("dashboard:clear-chat")}
+            data-testid="drawer-clear-chat"
+            className="w-full rounded-xl border border-rose-200 bg-rose-50/80 py-2.5 text-center text-xs font-semibold text-rose-700 transition hover:bg-rose-100 active:scale-[0.98] dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-400 dark:hover:bg-rose-950/60"
+          >
+            Clear Chat History
+          </button>
+
+          {/* Sign out */}
+          <button
+            type="button"
+            onClick={() => {
+              close();
+              setTimeout(() => void signOut(() => router.push("/")), 200);
+            }}
+            data-testid="drawer-sign-out"
+            className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 py-2.5 text-xs font-medium text-slate-500 transition hover:bg-slate-50 active:scale-[0.98] dark:border-slate-700 dark:text-slate-400 dark:hover:bg-slate-800"
+          >
+            <span>🚪</span>
+            Sign out
+          </button>
         </div>
-
-        {/* Primary nav */}
-        <nav className="flex flex-col">
-          {navItems.map((item) => (
-            <button
-              key={item.label}
-              type="button"
-              onClick={() => {
-                close();
-                // Small delay so the close animation can start first
-                setTimeout(() => item.action(), 150);
-              }}
-              data-testid={`drawer-nav-${item.label.toLowerCase()}`}
-              className="flex min-h-[3.25rem] items-center gap-3 border-b border-slate-100 px-5 text-left text-sm font-medium text-slate-700 hover:bg-slate-50 active:bg-slate-100 dark:border-slate-800 dark:text-slate-200 dark:hover:bg-slate-800"
-            >
-              <span className="text-lg leading-none">{item.icon}</span>
-              {item.label}
-            </button>
-          ))}
-        </nav>
-
-        <div className="my-1 h-px bg-slate-100 dark:bg-slate-800" />
-
-        {/* Sign out */}
-        <button
-          type="button"
-          onClick={() => {
-            close();
-            setTimeout(() => void signOut(() => router.push("/")), 200);
-          }}
-          data-testid="drawer-sign-out"
-          className="flex min-h-[3.25rem] items-center gap-3 px-5 text-left text-sm text-slate-500 hover:bg-slate-50 active:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
-        >
-          <span className="text-lg leading-none">🚪</span>
-          Sign out
-        </button>
       </div>
     </div>
   );

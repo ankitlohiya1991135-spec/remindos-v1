@@ -1,6 +1,28 @@
 @import "tailwindcss";
 @custom-variant dark (&:where(.dark, .dark *));
 
+:root {
+  --color-violet: #7c3aed;
+  --color-violet-l: #ede9fe;
+  --color-violet-xl: #f5f3ff;
+  --color-violet-d: #4c1d95;
+  --color-cyan: #06b6d4;
+  --color-cyan-l: #cffafe;
+  --color-cyan-d: #0e7490;
+  --color-emerald: #10b981;
+  --color-emerald-l: #d1fae5;
+  --color-emerald-d: #065f46;
+  --color-amber: #f59e0b;
+  --color-amber-l: #fef3c7;
+  --color-amber-d: #92400e;
+  --color-rose: #f43f5e;
+  --color-rose-l: #fff1f2;
+  --color-rose-d: #be123c;
+  --color-indigo: #4f46e5;
+  --color-indigo-l: #e0e7ff;
+  --chat-bg: #1a1625;
+}
+
 html,
 body {
   min-height: 100%;
@@ -10,7 +32,7 @@ body {
 
 body {
   @apply min-h-screen bg-[#f8f8f6] text-slate-900 antialiased transition-colors duration-200 dark:bg-slate-950 dark:text-slate-100;
-  font-family: var(--font-geist-sans), sans-serif;
+  font-family: var(--font-dm-sans), var(--font-geist-sans), sans-serif;
   overflow-y: auto;
 }
 
