@@ -2942,6 +2942,8 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       if (isDuplicate) return;
 
       void (async () => {
+        const validRecurrences = ["none", "daily", "weekly", "monthly"] as const;
+        const validDomains = ["health", "finance", "career", "hobby", "fun"] as const;
         const res = await fetch("/api/reminders", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -2949,11 +2951,16 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
             title,
             dueAt: new Date(dueAt).getTime(),
             notes: action.notes?.trim() ? action.notes : undefined,
-            recurrence: "none",
+            recurrence: validRecurrences.includes(action.recurrence as typeof validRecurrences[number])
+              ? action.recurrence
+              : "none",
             priority:
               typeof action.priority === "number" && action.priority >= 1 && action.priority <= 5
                 ? action.priority
                 : 3,
+            domain: validDomains.includes(action.domain as typeof validDomains[number])
+              ? action.domain
+              : undefined,
             linkedTaskId: action.linkedTaskId?.trim() ? action.linkedTaskId : undefined,
           }),
         });
@@ -3537,7 +3544,15 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
 
         const pendingActionSnapshot = pendingConfirmAction
           ?? (pendingTimeSuggestion
-            ? { type: "create_reminder" as const, ...pendingTimeSuggestion }
+            ? {
+                type: "create_reminder" as const,
+                title: pendingTimeSuggestion.title,
+                // Server reads body.pendingAction.dueAt — map suggestedDueAt → dueAt
+                dueAt: pendingTimeSuggestion.suggestedDueAt,
+                priority: pendingTimeSuggestion.priority,
+                domain: pendingTimeSuggestion.domain,
+                recurrence: pendingTimeSuggestion.recurrence,
+              }
             : null);
         setPendingConfirmAction(null);
         setPendingTimeSuggestion(null);
