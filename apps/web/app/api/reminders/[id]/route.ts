@@ -110,6 +110,9 @@ export async function PATCH(
 
       // Wiki ingest: rebuild wiki after mark-done (fire-and-forget, direct call)
       syncUserWiki(userId).catch(() => {});
+    } else if (body.title !== undefined || body.notes !== undefined) {
+      // Wiki ingest: rebuild wiki when reminder title/notes change (affects domain pages)
+      syncUserWiki(userId).catch(() => {});
     }
   }
 

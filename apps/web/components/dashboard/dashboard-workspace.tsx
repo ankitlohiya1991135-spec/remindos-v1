@@ -6844,7 +6844,8 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                                   onEdit={() => openEditModal(reminder)}
                                   onShare={() => showShareOverlay([reminder.id])}
                                   onSnooze={() => void refreshAfterReminderMutation(
-                                    fetch(`/api/reminders/${reminder.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dueAt: new Date(new Date(reminder.dueAt).getTime() + 60 * 60 * 1000).toISOString() }) })
+                                    // Fix B4: PATCH route expects a numeric timestamp, not an ISO string
+                                    fetch(`/api/reminders/${reminder.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dueAt: new Date(reminder.dueAt).getTime() + 60 * 60 * 1000 }) })
                                   ).catch(() => showShareToast("Could not snooze reminder."))}
                                 />
                               ))}
@@ -6933,7 +6934,8 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                         onEdit={() => openEditModal(reminder)}
                         onShare={() => showShareOverlay([reminder.id])}
                         onSnooze={() => void refreshAfterReminderMutation(
-                          fetch(`/api/reminders/${reminder.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dueAt: new Date(new Date(reminder.dueAt).getTime() + 60 * 60 * 1000).toISOString() }) })
+                          // Fix B4: PATCH route expects a numeric timestamp, not an ISO string
+                          fetch(`/api/reminders/${reminder.id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dueAt: new Date(reminder.dueAt).getTime() + 60 * 60 * 1000 }) })
                         ).catch(() => showShareToast("Could not snooze reminder."))}
                       />
                     ));
