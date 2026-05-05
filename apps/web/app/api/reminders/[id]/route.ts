@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { formatNameWithInitial } from "../../../../lib/actor-display";
 import { appendSystemChatMessage } from "../../../../lib/server/chat-notify";
 import { getConvexClient } from "../../../../lib/server/convex-client";
+import { syncUserWiki } from "../../../../lib/server/wiki-sync";
 
 function errorMessage(err: unknown) {
   return err instanceof Error ? err.message : String(err);
@@ -107,15 +108,8 @@ export async function PATCH(
         ...(reminderDomain ? { domain: reminderDomain } : {}),
       }).catch(() => {});
 
-      // Wiki ingest: rebuild wiki after mark-done (fire-and-forget)
-      fetch(`${process.env.NEXT_PUBLIC_APP_URL ?? ""}/api/wiki/sync`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userId,
-          secret: process.env.WIKI_SYNC_SECRET ?? "",
-        }),
-      }).catch(() => {});
+      // Wiki ingest: rebuild wiki after mark-done (fire-and-forget, direct call)
+      syncUserWiki(userId).catch(() => {});
     }
   }
 
@@ -163,15 +157,8 @@ export async function DELETE(
       entityTitle: result.title,
     }).catch(() => {});
 
-    // Wiki ingest: rebuild wiki after deletion (fire-and-forget)
-    fetch(`${process.env.NEXT_PUBLIC_APP_URL ?? ""}/api/wiki/sync`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        userId,
-        secret: process.env.WIKI_SYNC_SECRET ?? "",
-      }),
-    }).catch(() => {});
+    // Wiki ingest: rebuild wiki after deletion (fire-and-forget, direct call)
+    syncUserWiki(userId).catch(() => {});
   }
 
   return NextResponse.json({ ok: true });

@@ -131,10 +131,13 @@ function sortByDueAsc(a: ReminderItem, b: ReminderItem) {
   return new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime();
 }
 
+// Issue 3 fix: accept timeZone so bucket boundaries (missed/today/tomorrow) use
+// the user's calendar day, not the server's UTC midnight.
 export function filterRemindersByListScope(
   reminders: ReminderItem[],
   scope: ReminderListScope,
-  now = new Date()
+  now = new Date(),
+  timeZone?: string
 ): ReminderItem[] {
   const pending = reminders.filter((r) => r.status !== "done");
   switch (scope) {
@@ -145,13 +148,13 @@ export function filterRemindersByListScope(
         .filter((r) => new Date(r.dueAt).getTime() >= now.getTime())
         .sort(sortByDueAsc);
     case "missed":
-      return pending.filter((r) => getReminderBucket(r, now) === "missed").sort(sortByDueAsc);
+      return pending.filter((r) => getReminderBucket(r, now, timeZone) === "missed").sort(sortByDueAsc);
     case "today":
-      return pending.filter((r) => getReminderBucket(r, now) === "today").sort(sortByDueAsc);
+      return pending.filter((r) => getReminderBucket(r, now, timeZone) === "today").sort(sortByDueAsc);
     case "tomorrow":
-      return pending.filter((r) => getReminderBucket(r, now) === "tomorrow").sort(sortByDueAsc);
+      return pending.filter((r) => getReminderBucket(r, now, timeZone) === "tomorrow").sort(sortByDueAsc);
     case "later":
-      return pending.filter((r) => getReminderBucket(r, now) === "upcoming").sort(sortByDueAsc);
+      return pending.filter((r) => getReminderBucket(r, now, timeZone) === "upcoming").sort(sortByDueAsc);
     case "done":
       return reminders
         .filter((r) => r.status === "done")
@@ -281,6 +284,13 @@ export function looksLikeCreateIntent(message: string): boolean {
   if (/\bping\s+me\s+(at|about|for|when)\b/.test(n)) return true;
   if (/\b(alert|notify)\s+me\s+(at|about|for|when|to)\b/.test(n)) return true;
   if (/\bput\s+(a\s+)?reminder\s+(for|to|about)\b/.test(n)) return true;
+  // Issue 9 fix: natural-language implicit create patterns
+  // "I need to go to gym tomorrow at 7am" / "Going to gym tomorrow"
+  if (/\bi\s+(need|must|have|got|gotta)\s+to\b.{0,60}\b(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|at \d|tonight|morning|evening|afternoon)\b/.test(n)) return true;
+  // "Going to the dentist on Friday at 3pm"
+  if (/^going\s+to\b/.test(n) && /\b(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|at \d|tonight|morning|evening|afternoon)\b/.test(n)) return true;
+  // "Taking a flight on Thursday"
+  if (/^(taking|meeting|calling|visiting|attending|catching)\b.{0,60}\b(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|at \d|tonight|morning|evening|afternoon)\b/.test(n)) return true;
   // Hindi / Marathi
   if (/\b(याद\s+दिलाना|याद\s+कराना|याद\s+रखना|रिमाइंडर\s+लगाओ)\b/.test(n)) return true;
   return false;
@@ -442,7 +452,8 @@ export function buildListRemindersReply(
   limit = 5,
   options?: ReminderDisplayOptions
 ): string {
-  const filtered = filterRemindersByListScope(reminders, scope, now).slice(0, Math.max(1, limit));
+  // Issue 3 / Issue 10 fix: forward timeZone so bucket boundaries are evaluated in the user's calendar day
+  const filtered = filterRemindersByListScope(reminders, scope, now, options?.timeZone).slice(0, Math.max(1, limit));
   if (filtered.length === 0) {
     const scopeHint =
       scope === "future"

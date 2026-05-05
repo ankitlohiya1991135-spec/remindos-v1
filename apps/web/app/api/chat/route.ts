@@ -31,6 +31,7 @@ import {
   type ReplyContextPayload,
 } from "../../../lib/chat-reply-context";
 import { getChatHistory } from "../../../lib/server/chat-history";
+import { syncUserWiki } from "../../../lib/server/wiki-sync";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -85,7 +86,7 @@ interface ReminderAgentResponse {
 const NIM_BASE_URL = "https://integrate.api.nvidia.com/v1";
 const DEFAULT_MODEL = "meta/llama-3.1-70b-instruct";
 const DEFAULT_CHAT_REMINDER_TITLE = "Reminder";
-const MAX_HISTORY_TURNS = 6; // last 3 user/assistant pairs
+const MAX_HISTORY_TURNS = 20; // last 10 user/assistant pairs — Issue 5 fix
 
 // ─── FLAW-3: simple per-user rate limiter (20 req/min) ───────────────────────
 const rateLimitStore = new Map<string, { count: number; resetAt: number }>();
@@ -108,16 +109,24 @@ function isRateLimited(userId: string): boolean {
 
 const systemPrompt = `You are the RemindOS assistant for Personal Life OS. You help with the user's reminders and tasks (orchestration layer).
 
+CONTEXT SOURCES (use all of them — they are complementary, not competing):
+1. USER KNOWLEDGE WIKI — persistent profile about this user: their habits, completion patterns, avoidance patterns, domain strengths/weaknesses, and recent activity. Read this FIRST to understand who you are talking to before answering.
+2. LIFE OS DIGEST — the live list of current pending and recent reminders + tasks. Use for precise CRUD actions (titles, IDs, times).
+3. LIFE OS JSON — machine-readable version of the digest for exact field values.
+
 DATA RULES (critical):
-- The LIFE OS DIGEST (tasks + reminders) and JSON below are the ONLY source of truth. Do not invent, rename, or assume items.
+- Do not invent, rename, or assume reminder/task items. All items must come from the DIGEST or JSON.
+- The WIKI is authoritative for behavioral patterns and history. The DIGEST is authoritative for current item state.
 - Reminders may link to a task (see task id / task title in digest). If a reminder has no linked task, it is labeled ADHOC (standalone).
 - Optional domain tags (health, finance, career, hobby, fun) may appear on reminders and tasks.
-- If the answer is not in the data, say you do not see that in their data and suggest what they could ask instead.
-- Never paste raw ISO-8601 timestamps in "reply". Use natural language dates/times. The digest lists due times in the user's time zone—quote them exactly as shown.
+- If the answer is not in any of the context sources, say you do not see that in their data.
+- Never paste raw ISO-8601 timestamps in "reply". Use natural language dates/times. The digest lists due times in the user's time zone — quote them exactly as shown.
 - Overdue items show how long they have been overdue (e.g. "overdue 3d") — use this context when advising the user.
+- When the user asks behavioral questions ("what do I keep forgetting?", "how am I doing?", "what's my pattern?") — answer from the WIKI, not just the current digest.
 
 WHAT YOU CAN DO:
 - Answer questions about reminders and tasks: schedules, conflicts, "what's next", which reminders belong to which task, ADHOC vs task-linked, domains, comparisons, counts, overdue, notes, recurrence.
+- Answer behavioral/insight questions using the WIKI: completion rates, avoidance patterns, domain performance, streaks, habits.
 - Small talk or unrelated topics: politely redirect to reminders and tasks.
 
 ACTIONS (JSON action.type):
@@ -130,7 +139,7 @@ ACTIONS (JSON action.type):
 - bulk_action: user wants to act on ALL reminders in a scope (e.g. "mark all today's reminders done", "delete all missed"). Set bulkOperation ("mark_done"|"delete") and scope.
 - create_reminder: only if user clearly wants to create. May include priority (1-5), domain, recurrence, linkedTaskId.
 - clarify: you need exactly one missing piece (which reminder, which time). Ask a single focused question.
-- unknown: questions you answer in "reply" only (no database change). Use for explanations, reasoning, comparisons, counts, and open-ended Q&A grounded in the digest.
+- unknown: questions you answer in "reply" only (no database change). Use for explanations, reasoning, comparisons, counts, behavioral insights, and open-ended Q&A.
 
 IMPORTANT RULES FOR ACTIONS:
 - snooze and edit are handled by fast-path code; prefer snooze_reminder/edit_reminder action types so the server can resolve them deterministically.
@@ -996,17 +1005,10 @@ async function loadUserWiki(userId: string): Promise<string> {
     const pages = wikiMap as Record<string, { content: string; updatedAt: number }>;
     const pageCount = Object.keys(pages).length;
 
-    // If wiki is empty or stale, trigger a background rebuild (fire-and-forget)
+    // If wiki is empty or stale, trigger a background rebuild (direct call, fire-and-forget)
     const isStale = oldestUpdatedAt === 0 || Date.now() - oldestUpdatedAt > WIKI_STALE_MS;
     if (isStale) {
-      fetch(`${process.env.NEXT_PUBLIC_APP_URL ?? ""}/api/wiki/sync`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userId,
-          secret: process.env.WIKI_SYNC_SECRET ?? "",
-        }),
-      }).catch(() => {});
+      syncUserWiki(userId).catch(() => {});
       // If no pages exist yet, return empty so this turn isn't blocked
       if (pageCount === 0) return "";
     }
@@ -1262,20 +1264,10 @@ export async function POST(request: Request) {
       ? body.replyContext : undefined;
   const effectiveMessage = buildMessageWithReplyContext(message, replyContext);
 
-  // Deterministic fast paths — no LLM, no history needed
+  // Issue 4 fix: decision/planning queries now fall through to the LLM path so they
+  // benefit from the wiki's behavioral context (patterns, avoidance, completion rates).
+  // Only purely action-based fast paths (create/list/mark-done/delete) bypass the LLM.
   const intent = classifyReminderIntent(effectiveMessage);
-  if (intent === "decision_query") {
-    const reply = formatDecisionReply(reminders, timeZone);
-    void saveMessageServerSide(userId, "user", effectiveMessage);
-    void saveMessageServerSide(userId, "assistant", reply);
-    return NextResponse.json({ reply, action: { type: "unknown" } } satisfies ReminderAgentResponse);
-  }
-  if (intent === "planning_query") {
-    const reply = formatPlanningReply(reminders, timeZone);
-    void saveMessageServerSide(userId, "user", effectiveMessage);
-    void saveMessageServerSide(userId, "assistant", reply);
-    return NextResponse.json({ reply, action: { type: "unknown" } } satisfies ReminderAgentResponse);
-  }
 
   if (looksLikeCreateIntent(effectiveMessage)) {
     const title = extractTitleFromCreateInput(effectiveMessage);
@@ -1661,7 +1653,8 @@ export async function POST(request: Request) {
           ...today.map((item, idx) => `${idx + 1}. ${describeReminderForChat(item, new Date(), displayOptions)}`),
         ].join("\n");
     } else {
-      const listed = filterRemindersByListScope(reminders, listScopeFromMessage, new Date()).slice(0, 5);
+      // Issue 3 fix: pass timeZone so bucket boundaries (missed/tomorrow/later) use the user's calendar day
+      const listed = filterRemindersByListScope(reminders, listScopeFromMessage, new Date(), timeZone).slice(0, 5);
       listedIds = listed.map((r) => r.id);
       reply = buildListRemindersReply(reminders, listScopeFromMessage, new Date(), 5, displayOptions);
     }
@@ -1685,11 +1678,9 @@ export async function POST(request: Request) {
     const llmReminders = filterRemindersForLLM(reminders);
     const digest = buildLifeOsContextBlock(llmReminders, tasks, new Date(), displayOptions);
 
-    // Load wiki + behavior context in parallel (both are best-effort)
-    const [wikiCtx, behaviorCtx] = await Promise.all([
-      loadUserWiki(userId),
-      buildBehaviorContext(userId),
-    ]);
+    // Issue 6 fix: wiki is the single source of behavioral context — no need for
+    // the redundant buildBehaviorContext which queries the same Convex tables again.
+    const wikiCtx = await loadUserWiki(userId);
 
     // BUG-1 / MISSING-1 fix: inject recent conversation history (already loaded above)
     const recentHistory = history
@@ -1697,13 +1688,12 @@ export async function POST(request: Request) {
       .slice(-MAX_HISTORY_TURNS);
 
     // Build the user turn content — wiki comes first (rich synthesised knowledge),
-    // then the live digest (current reminders), then behaviorCtx (raw stats fallback),
+    // then the live digest (current reminders),
     // then the machine-readable JSON for precise CRUD actions.
     const contextParts = [
       effectiveMessage,
       wikiCtx ? `\n\n${wikiCtx}` : "",
       `\n\n--- LIFE OS DIGEST (authoritative) ---\n${digest}`,
-      behaviorCtx ? `\n\n${behaviorCtx}` : "",
       `\n\n--- LIFE OS JSON (same data, machine-readable) ---\n${JSON.stringify({ reminders: llmReminders, tasks })}`,
     ].join("");
 
@@ -1740,7 +1730,8 @@ export async function POST(request: Request) {
           ? "You have no reminders for today."
           : ["Here are your reminders for today:", ...today.map((item, idx) => `${idx + 1}. ${describeReminderForChat(item, new Date(), displayOptions)}`)].join("\n");
       } else {
-        const listed = filterRemindersByListScope(reminders, scope, new Date()).slice(0, 5);
+        // Issue 3 fix: pass timeZone so bucket boundaries use the user's calendar day
+        const listed = filterRemindersByListScope(reminders, scope, new Date(), timeZone).slice(0, 5);
         parsed.action.listedIds = listed.map((r) => r.id);
         parsed.reply = buildListRemindersReply(reminders, scope, new Date(), 5, displayOptions);
       }

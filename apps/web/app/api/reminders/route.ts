@@ -2,6 +2,7 @@ import { auth } from "@clerk/nextjs/server";
 import { api } from "@repo/db/convex/api";
 import { NextResponse } from "next/server";
 import { getConvexClient } from "../../../lib/server/convex-client";
+import { syncUserWiki } from "../../../lib/server/wiki-sync";
 
 function errorMessage(err: unknown) {
   return err instanceof Error ? err.message : String(err);
@@ -112,15 +113,8 @@ export async function POST(request: Request) {
         ...(body.domain ? { domain: body.domain } : {}),
       }).catch(() => {});
 
-      // Wiki ingest: rebuild wiki pages after every new reminder (fire-and-forget)
-      fetch(`${process.env.NEXT_PUBLIC_APP_URL ?? ""}/api/wiki/sync`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          userId,
-          secret: process.env.WIKI_SYNC_SECRET ?? "",
-        }),
-      }).catch(() => {});
+      // Wiki ingest: rebuild wiki pages directly (no HTTP roundtrip)
+      syncUserWiki(userId).catch(() => {});
     }
     return NextResponse.json(result);
   } catch (err) {
