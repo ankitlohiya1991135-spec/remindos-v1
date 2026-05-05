@@ -76,14 +76,20 @@ function dateKey(date: Date, timeZone?: string): string {
 }
 
 // BUG-3 fix: accepts optional timezone so bucket boundaries use the user's calendar day
+// BUG-fix: date-key check must come BEFORE the `due < now` check so an overdue-today
+// reminder (e.g. daily recurring at 4 AM, now 6 PM same day) lands in "today" — not
+// "missed". This aligns the UI Today tab with the chat's filterToday (both use
+// calendar-day equality, not "is in the future").
 export function getReminderBucket(reminder: ReminderItem, now = new Date(), timeZone?: string): ReminderBucket {
   if (reminder.status === "done") return "done";
   const due = new Date(reminder.dueAt);
-  if (due < now) return "missed";
   const todayKey = dateKey(now, timeZone);
   const tomorrowKey = dateKey(new Date(now.getTime() + 86_400_000), timeZone);
   const dueKey = dateKey(due, timeZone);
+  // Calendar-day equality first — overdue-today still counts as "today" for UI/chat parity
   if (dueKey === todayKey) return "today";
+  // Now true "missed" = due before today's calendar day, not just "earlier than now"
+  if (due < now) return "missed";
   if (dueKey === tomorrowKey) return "tomorrow";
   return "upcoming";
 }
@@ -743,6 +749,64 @@ function answerReminderDetailHeuristic(
 
   // No title tokens matched and multiple reminders exist — not a reminder detail query,
   // return null so the caller falls through to the LLM.
+  return null;
+}
+
+/**
+ * Aggressive last-resort fuzzy match: scans EVERY query (regardless of phrasing) against
+ * reminder titles. Returns a description of the best-matching reminder if there is high
+ * confidence (exact title substring, or 2+ unique meaningful tokens >= 4 chars match).
+ * Catches "what did you know about the dynamic humor", "what happen with cli update",
+ * "any updates on the gym thing" — phrasings that don't match any "tell me about" pattern.
+ *
+ * Returns null when no strong match exists, so the caller falls through to the LLM.
+ */
+export function findReminderByFuzzyMatch(
+  message: string,
+  reminders: ReminderItem[],
+  now = new Date(),
+  options?: ReminderDisplayOptions
+): string | null {
+  const normalized = message.toLowerCase();
+  const active = reminders.filter((r) => r.status === "pending");
+  if (active.length === 0) return null;
+
+  // Stop-words that appear in many titles but shouldn't trigger matches
+  const STOP = new Set([
+    "with", "from", "into", "this", "that", "have", "were", "been", "your", "they",
+    "them", "what", "when", "where", "will", "would", "could", "should", "about",
+    "task", "tasks", "reminder", "reminders", "today", "tomorrow", "every", "some",
+    "make", "take", "want", "need", "tell", "show", "give", "know", "happen", "happens",
+    "going", "doing", "back", "more", "much", "very", "just", "like", "also", "than",
+  ]);
+
+  let best: { reminder: ReminderItem; uniqueTokens: number } | null = null;
+
+  for (const reminder of active) {
+    const title = reminder.title.toLowerCase();
+
+    // Exact substring match against the full title (≥4 chars) → instant high confidence
+    if (title.length >= 4 && normalized.includes(title)) {
+      return describeReminderForChat(reminder, now, options);
+    }
+
+    // Token-level match: only meaningful tokens (>= 4 chars, not stop-words)
+    const tokens = title.split(/\s+/).filter((t) => t.length >= 4 && !STOP.has(t));
+    const seen = new Set<string>();
+    for (const token of tokens) {
+      if (!seen.has(token) && normalized.includes(token)) {
+        seen.add(token);
+      }
+    }
+    if (!best || seen.size > best.uniqueTokens) {
+      best = { reminder, uniqueTokens: seen.size };
+    }
+  }
+
+  // Require ≥2 distinct meaningful token matches — single-token matches are too noisy
+  if (best && best.uniqueTokens >= 2) {
+    return describeReminderForChat(best.reminder, now, options);
+  }
   return null;
 }
 

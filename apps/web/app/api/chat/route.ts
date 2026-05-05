@@ -5,6 +5,7 @@ import {
   buildListRemindersReply,
   classifyReminderIntent,
   filterToday,
+  findReminderByFuzzyMatch,
   inferListScopeFromMessage,
   isCompoundReminderQuestion,
   looksLikeCreateIntent,
@@ -1681,6 +1682,15 @@ export async function POST(request: Request) {
       void saveMessageServerSide(userId, "user", effectiveMessage);
       void saveMessageServerSide(userId, "assistant", grounded);
       return NextResponse.json({ reply: grounded, action: { type: "unknown" } } satisfies ReminderAgentResponse);
+    }
+    // Aggressive last-resort fuzzy match: catches "what did you know about the dynamic humor",
+    // "what happened with cli update", "any update on gym thing" — phrasings that don't fit any
+    // "tell me about" pattern but clearly reference a reminder by 2+ unique title tokens.
+    const fuzzy = findReminderByFuzzyMatch(effectiveMessage, reminders, new Date(), displayOptions);
+    if (fuzzy) {
+      void saveMessageServerSide(userId, "user", effectiveMessage);
+      void saveMessageServerSide(userId, "assistant", fuzzy);
+      return NextResponse.json({ reply: fuzzy, action: { type: "unknown" } } satisfies ReminderAgentResponse);
     }
   }
 
