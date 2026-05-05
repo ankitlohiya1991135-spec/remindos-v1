@@ -1014,10 +1014,12 @@ async function loadUserWiki(userId: string): Promise<string> {
     }
 
     // Assemble pages in priority order: recent_week first (most current),
-    // then behavior_summary, then domains, then avoidance.
+    // then behavior_summary, then tasks_summary (same behavioral tier),
+    // then domains, then avoidance.
     const ORDER = [
       "recent_week",
       "behavior_summary",
+      "tasks_summary",
       "domain_health",
       "domain_finance",
       "domain_career",
