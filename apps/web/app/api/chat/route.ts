@@ -148,9 +148,15 @@ IMPORTANT RULES FOR ACTIONS:
 
 Keep "reply" helpful and concise but include enough detail (titles, times, notes) when relevant.
 
-Output ONLY valid JSON:
+SPELLING / TYPOS: Users often misspell reminder titles. If a message contains a word that closely resembles a reminder title in the digest (same first letter, similar length, off by 1-2 characters), treat it as that reminder.
+
+QUESTIONS NOT ABOUT REMINDERS: If the user asks a general knowledge question (e.g. "what is dynamic humour") that has nothing to do with their reminders or tasks, politely respond in "reply" that you are a reminders assistant and redirect them. Always use action.type = "unknown".
+
+CRITICAL: You MUST always respond with ONLY the JSON object shown below. Never write plain text, markdown, or explanations outside the JSON. If you are unsure, use action.type = "unknown" and write your answer in "reply".
+
+Output ONLY valid JSON — no text before or after the braces:
 {
-  "reply":"string",
+  "reply":"string — your full response to the user",
   "action":{
     "type":"create_reminder|list_reminders|mark_done|delete_reminder|reschedule_reminder|snooze_reminder|edit_reminder|bulk_action|clarify|unknown",
     "title":"optional – for create",
@@ -1663,6 +1669,19 @@ export async function POST(request: Request) {
     void saveMessageServerSide(userId, "user", effectiveMessage);
     void saveMessageServerSide(userId, "assistant", reply);
     return NextResponse.json({ reply, action: { type: "list_reminders", listedIds } } satisfies ReminderAgentResponse);
+  }
+
+  // Fast path: detail query about a specific reminder ("tell me about hupendra work",
+  // "what time is the dentist", "more details on gym reminder").
+  // tryGroundedReminderAnswer uses fuzzy title matching — handles typos and no "reminder" keyword.
+  // Runs BEFORE LLM so these never hit NVIDIA when a deterministic answer exists.
+  if (!isCompoundReminderQuestion(effectiveMessage)) {
+    const grounded = tryGroundedReminderAnswer(effectiveMessage, reminders, new Date(), displayOptions);
+    if (grounded) {
+      void saveMessageServerSide(userId, "user", effectiveMessage);
+      void saveMessageServerSide(userId, "assistant", grounded);
+      return NextResponse.json({ reply: grounded, action: { type: "unknown" } } satisfies ReminderAgentResponse);
+    }
   }
 
   const nimApiKey = process.env.NVIDIA_NIM_API_KEY;

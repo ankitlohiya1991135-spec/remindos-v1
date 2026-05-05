@@ -1,6 +1,7 @@
 import { api } from "@repo/db/convex/api";
 import { getConvexClient } from "./convex-client";
 
+
 export type ChatMessageMeta = {
   kind?: "due_reminder";
   reminderId?: string;
@@ -54,13 +55,30 @@ export async function getChatHistory(userId: string): Promise<StoredChatMessage[
   }
 }
 
-// DEAD CODE — DO NOT CALL.
-// M1 fix: saveMessageServerSide was made a no-op; the client (flushChatHistoryToServer)
-// is the sole writer to Convex. Calling this from server routes would recreate the
-// duplicate-message bug (two different clientIds → two Convex records → duplicates in UI).
-// @deprecated
-export async function appendChatMessages(_userId: string, _messages: StoredChatMessage[]): Promise<void> {
-  // intentionally empty
+/**
+ * Persist chat messages to Convex via upsert-by-clientId (idempotent — safe to call
+ * multiple times; never duplicates because the Convex mutation skips existing clientIds).
+ *
+ * Called by POST /api/chat/history which is invoked by flushChatHistoryToServer()
+ * (debounced on every message, on tab hide, and on page unload via sendBeacon).
+ */
+export async function appendChatMessages(userId: string, messages: StoredChatMessage[]): Promise<void> {
+  if (messages.length === 0) return;
+  try {
+    const client = getConvexClient();
+    await client.mutation(api.chat.upsertMessages, {
+      userId,
+      messages: messages.map((m) => ({
+        clientId: m.id,
+        role: m.role,
+        content: m.content,
+        createdAt: m.createdAt,
+        ...(m.meta ? { metaJson: JSON.stringify(m.meta) } : {}),
+      })),
+    });
+  } catch {
+    // Best-effort — client will retry on next flush/tab-hide
+  }
 }
 
 export async function clearChatHistory(userId: string) {

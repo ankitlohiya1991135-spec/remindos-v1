@@ -560,8 +560,11 @@ export function inferDetailQueryAboutReminders(message: string): boolean {
   const n = message.toLowerCase().trim();
   if (inferListScopeFromMessage(message)) return false;
   if (/\b(what|which)\s+reminders?\b/.test(n)) return false;
+  // Guard: behavioral/insight questions are not detail lookups
+  if (/\b(keep|pattern|rate|often|usually|always|never|tend to|history|track)\b/.test(n)) return false;
 
   if (/\b(what'?s that|which one|which reminder|what reminder|more detail)\b/.test(n)) return true;
+  // "tell me about X" — works even without "reminder" keyword (e.g. "tell me about hupendra work")
   if (/\b(tell me (more )?about|details (on|about|for))\b/.test(n)) return true;
   if (/\bwhat time\b/.test(n) && /\b(for|is|was|about|call|meeting|reminder)\b/.test(n)) return true;
   if (
@@ -570,6 +573,10 @@ export function inferDetailQueryAboutReminders(message: string): boolean {
   ) {
     return true;
   }
+  // "show me the X reminder", "what is the X task", "info on X"
+  if (/\b(show me|give me|info on|information (on|about)|details? (of|for|on))\b/.test(n)) return true;
+  // "what's the X reminder" — typo tolerant because fuzzy matching is used downstream
+  if (/\bwhat'?s\s+(the|my|that|this)\b.{0,40}(reminder|task|appointment|meeting|call)\b/.test(n)) return true;
   return false;
 }
 
@@ -704,7 +711,7 @@ function answerReminderDetailHeuristic(
   reminders: ReminderItem[],
   now = new Date(),
   options?: ReminderDisplayOptions
-): string {
+): string | null {
   const normalized = query.toLowerCase();
   const activeReminders = reminders.filter((item) => item.status === "pending");
   if (activeReminders.length === 0) return "You currently have no pending reminders.";
@@ -712,7 +719,9 @@ function answerReminderDetailHeuristic(
   const scored = activeReminders
     .map((reminder) => {
       const title = reminder.title.toLowerCase();
+      // Exact title match → highest score
       if (normalized.includes(title)) return { reminder, score: 100 };
+      // Token match — also try normalised tokens to handle partial spellings
       const tokens = title.split(/\s+/).filter((token) => token.length > 2);
       const score = tokens.reduce(
         (sum, token) => (normalized.includes(token) ? sum + 1 : sum),
@@ -726,16 +735,15 @@ function answerReminderDetailHeuristic(
     return describeReminderForChat(scored[0].reminder, now, options);
   }
 
+  // Single pending reminder — user is probably asking about it
   const only = activeReminders[0];
   if (activeReminders.length === 1 && only) {
     return describeReminderForChat(only, now, options);
   }
 
-  const summary = activeReminders
-    .slice(0, 5)
-    .map((reminder) => describeReminderForChat(reminder, now, options))
-    .join("\n");
-  return `You have ${activeReminders.length} pending reminders:\n${summary}\n\nSay part of a title if you want one in more detail.`;
+  // No title tokens matched and multiple reminders exist — not a reminder detail query,
+  // return null so the caller falls through to the LLM.
+  return null;
 }
 
 /**
