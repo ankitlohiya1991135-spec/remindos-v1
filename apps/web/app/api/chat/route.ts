@@ -149,9 +149,16 @@ IMPORTANT RULES FOR ACTIONS:
 
 Keep "reply" helpful and concise but include enough detail (titles, times, notes) when relevant.
 
-SPELLING / TYPOS: Users often misspell reminder titles. If a message contains a word that closely resembles a reminder title in the digest (same first letter, similar length, off by 1-2 characters), treat it as that reminder.
+SPELLING / TYPOS: Users often misspell reminder titles. If a message contains a word that closely resembles a reminder title in the digest (same first letter, similar length, off by 1-2 characters), treat it as that reminder. Match aggressively — better to answer about a probable reminder than to say you don't see it.
 
-QUESTIONS NOT ABOUT REMINDERS: If the user asks a general knowledge question (e.g. "what is dynamic humour") that has nothing to do with their reminders or tasks, politely respond in "reply" that you are a reminders assistant and redirect them. Always use action.type = "unknown".
+QUESTIONS NOT ABOUT REMINDERS: If the user asks a general knowledge question (e.g. "what is dynamic humour") that has nothing to do with their reminders or tasks, politely respond in "reply" that you are a reminders assistant and offer to show their pending reminders. Always use action.type = "unknown".
+
+NEVER-FAIL RULES (very important — these protect product trust):
+1. NEVER say "I don't see that", "I can't find that", "not in the provided context", "doesn't mention", "I'm not sure what you mean", or anything similar. These are forbidden phrases.
+2. NEVER ask the user to "rephrase" or "try again". The user's message is always valid input.
+3. If you genuinely cannot find a matching reminder for a query, instead of refusing: pick the 2-3 most likely candidates from the digest by partial keyword overlap and present them: "Did you mean X, Y, or Z? Here are the closest matches: ...".
+4. If even partial matching fails, list the user's top 3 most urgent pending reminders so they have context to refine their question.
+5. Always include concrete data (titles, times, counts) in your reply — never reply with only a question or apology.
 
 CRITICAL: You MUST always respond with ONLY the JSON object shown below. Never write plain text, markdown, or explanations outside the JSON. If you are unsure, use action.type = "unknown" and write your answer in "reply".
 
@@ -241,6 +248,35 @@ function formatPlanningReply(reminders: ReminderItem[], timeZone?: string) {
   return lines.join("\n") || "You have no pending reminders to plan right now.";
 }
 
+/**
+ * Builds a helpful, context-rich fallback response when no fast path or LLM produces an answer.
+ * NEVER returns a generic "I don't understand" / "rephrase" message — always shows the user
+ * something actionable so they don't lose trust in the assistant.
+ */
+function buildHelpfulFallback(reminders: ReminderItem[], timeZone?: string): string {
+  const pending = reminders.filter((r) => r.status !== "done" && r.status !== "archived");
+
+  if (pending.length === 0) {
+    return "You don't have any pending reminders right now. Want me to create one? Just say something like \"remind me to call mom tomorrow at 6pm\".";
+  }
+
+  // Show the 3 most urgent (rankTasks already prioritises overdue → due-soonest → priority)
+  const top = rankTasks(reminders).slice(0, 3);
+  if (top.length === 0) {
+    return `You have ${pending.length} pending reminder${pending.length === 1 ? "" : "s"}. Try asking "what's due today?" or "show my missed reminders".`;
+  }
+
+  const lines = top.map(
+    (item, idx) => `${idx + 1}. ${item.title} — ${formatDueInUserZone(item.dueAt, timeZone)}`
+  );
+  return [
+    `Here's what's most urgent (${pending.length} pending in total):`,
+    ...lines,
+    "",
+    "Tell me which one you want details on, or ask me to list/create/complete any reminder.",
+  ].join("\n");
+}
+
 function fallbackDeterministicReply(message: string, reminders: ReminderItem[], timeZone?: string) {
   const intent = classifyReminderIntent(message);
   if (intent === "decision_query") return formatDecisionReply(reminders, timeZone);
@@ -256,10 +292,17 @@ function fallbackDeterministicReply(message: string, reminders: ReminderItem[], 
     ].join("\n");
   }
   if (listScope) return buildListRemindersReply(reminders, listScope, new Date(), 5, { timeZone });
-  return (
-    tryGroundedReminderAnswer(message, reminders, new Date(), { timeZone })
-    ?? "I can help with reminder lists, what to do next, planning your day, and reminder updates."
-  );
+
+  // Try grounded answer (decision/detail/planning); if that returns null, fall back to a
+  // helpful summary instead of a generic "I can help with..." message.
+  const grounded = tryGroundedReminderAnswer(message, reminders, new Date(), { timeZone });
+  if (grounded) return grounded;
+
+  // Aggressive fuzzy match — last chance for deterministic answer
+  const fuzzy = findReminderByFuzzyMatch(message, reminders, new Date(), { timeZone });
+  if (fuzzy) return fuzzy;
+
+  return buildHelpfulFallback(reminders, timeZone);
 }
 
 // ─── Date / time parsing ──────────────────────────────────────────────────────
@@ -634,21 +677,39 @@ function extractJsonObject(text: string): string {
   return text.slice(start, end + 1);
 }
 
-function safeAgentResponse(text: string): ReminderAgentResponse {
+function safeAgentResponse(
+  text: string,
+  reminders?: ReminderItem[],
+  timeZone?: string
+): ReminderAgentResponse {
   try {
     const parsed = JSON.parse(extractJsonObject(text)) as ReminderAgentResponse;
     if (!parsed?.action?.type || !parsed?.reply) throw new Error("Invalid response shape.");
+
+    // Detect unhelpful LLM hallucinations like "I don't see X in the context" and
+    // replace with a context-aware helpful summary so the user always gets something useful.
+    const replyLower = parsed.reply.toLowerCase();
+    const looksUnhelpful =
+      /i don'?t (see|have|find)|i can'?t (find|see)|not (in|mentioned in) (the|your|provided)|doesn'?t (mention|include|appear)|no (such|specific) (reminder|task)/.test(replyLower)
+      && parsed.reply.length < 220;
+    if (looksUnhelpful && reminders && reminders.length > 0) {
+      return { reply: buildHelpfulFallback(reminders, timeZone), action: { type: "unknown" } };
+    }
     return parsed;
   } catch {
-    // Fix: never expose raw LLM JSON (may contain all reminder IDs/content) in the chat bubble.
-    // Strip any code fences or JSON blobs and fall back to a safe generic message.
+    // Strip any code fences or JSON blobs (privacy: never leak full LLM JSON).
     const safe = text
       .replace(/```[\s\S]*?```/g, "")
       .replace(/\{[\s\S]{40,}\}/g, "")
       .trim();
-    const reply = safe.length > 10 && safe.length < 300
-      ? safe
-      : "I'm having trouble with that request. Could you try rephrasing?";
+    // If the LLM produced any reasonable plain text, use it
+    if (safe.length > 5 && safe.length < 600) {
+      return { reply: safe, action: { type: "unknown" } };
+    }
+    // Otherwise produce a helpful context-aware summary — NEVER a generic error
+    const reply = reminders
+      ? buildHelpfulFallback(reminders, timeZone)
+      : "I'm here to help with your reminders and tasks. Tell me what you'd like — list, create, complete, or update any reminder.";
     return { reply, action: { type: "unknown" } };
   }
 }
@@ -1749,7 +1810,8 @@ export async function POST(request: Request) {
 
     const data = (await nimResponse.json()) as { choices?: Array<{ message?: { content?: string } }> };
     const content = data.choices?.[0]?.message?.content ?? "";
-    const parsed = safeAgentResponse(content);
+    // Pass reminders + timeZone so unhelpful LLM replies are replaced with a useful summary
+    const parsed = safeAgentResponse(content, reminders, timeZone);
 
     if (parsed.action.type === "list_reminders") {
       const scope =
@@ -1843,7 +1905,15 @@ export async function POST(request: Request) {
       (parsed.action.type === "delete_reminder" || parsed.action.type === "mark_done" || parsed.action.type === "reschedule_reminder")
       && !parsed.action.targetId && !parsed.action.targetTitle
     ) {
-      const r: ReminderAgentResponse = { reply: "Please tell me exactly which reminder you mean.", action: { type: "clarify" } };
+      // Show top 3 pending so the user can pick — never just "tell me which one"
+      const top = rankTasks(reminders).slice(0, 3);
+      const sample = top.length > 0
+        ? "\n\nYour top pending reminders:\n" + top.map((r, i) => `${i + 1}. ${r.title} — ${formatDueInUserZone(r.dueAt, timeZone)}`).join("\n")
+        : "";
+      const r: ReminderAgentResponse = {
+        reply: `Which reminder do you mean? Please tell me the title or pick one.${sample}`,
+        action: { type: "clarify" },
+      };
       void saveMessageServerSide(userId, "user", effectiveMessage);
       void saveMessageServerSide(userId, "assistant", r.reply);
       return NextResponse.json(r);
