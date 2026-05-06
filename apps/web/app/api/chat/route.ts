@@ -1337,11 +1337,13 @@ export async function POST(request: Request) {
   // Issue 4 fix: decision/planning queries now fall through to the LLM path so they
   // benefit from the wiki's behavioral context (patterns, avoidance, completion rates).
   // Only purely action-based fast paths (create/list/mark-done/delete) bypass the LLM.
-  const intent = classifyReminderIntent(effectiveMessage);
+  // NOTE: Always classify on raw `message` — effectiveMessage contains wrapper text that
+  // pollutes keyword classifiers and causes misclassification.
+  const intent = classifyReminderIntent(message);
 
-  if (looksLikeCreateIntent(effectiveMessage)) {
-    const title = extractTitleFromCreateInput(effectiveMessage);
-    const dueAt = parseDateTimeFromInput(effectiveMessage, timeZone);
+  if (looksLikeCreateIntent(message)) {
+    const title = extractTitleFromCreateInput(message);
+    const dueAt = parseDateTimeFromInput(message, timeZone);
     const resolvedTitle = title || DEFAULT_CHAT_REMINDER_TITLE;
 
     if (dueAt && isValidFutureIsoDate(dueAt)) {
@@ -1352,20 +1354,20 @@ export async function POST(request: Request) {
           type: "create_reminder",
           title: resolvedTitle,
           dueAt,
-          priority: extractPriorityFromInput(effectiveMessage),
-          domain: extractDomainFromInput(effectiveMessage),
-          recurrence: extractRecurrenceFromInput(effectiveMessage),
+          priority: extractPriorityFromInput(message),
+          domain: extractDomainFromInput(message),
+          recurrence: extractRecurrenceFromInput(message),
         },
       };
-      void saveMessageServerSide(userId, "user", effectiveMessage);
+      void saveMessageServerSide(userId, "user", message);
       void saveMessageServerSide(userId, "assistant", response.reply);
       return NextResponse.json(response);
     }
 
     // Gap 8: no time provided → suggest based on profile/domain instead of plain "please give time"
-    const domain = extractDomainFromInput(effectiveMessage);
-    const priority = extractPriorityFromInput(effectiveMessage);
-    const recurrence = extractRecurrenceFromInput(effectiveMessage);
+    const domain = extractDomainFromInput(message);
+    const priority = extractPriorityFromInput(message);
+    const recurrence = extractRecurrenceFromInput(message);
     const { profile, domainHourPatterns } = await loadProfileForSuggestion(userId);
     const suggested = suggestDomainTime(domain, resolvedTitle, profile, domainHourPatterns);
 
@@ -1373,9 +1375,9 @@ export async function POST(request: Request) {
     const now = new Date();
     const todayCal = getCalendarDateInTimeZone(now, timeZone);
     let suggestDay = addDaysToCalendarDate(todayCal, 1); // default: tomorrow
-    if (hasDayAfterTomorrowHint(effectiveMessage)) {
+    if (hasDayAfterTomorrowHint(message)) {
       suggestDay = addDaysToCalendarDate(todayCal, 2);
-    } else if (hasTodayHint(effectiveMessage)) {
+    } else if (hasTodayHint(message)) {
       const todayTs = calendarDateTimeToIso(todayCal, suggested, timeZone);
       suggestDay = new Date(todayTs).getTime() > now.getTime()
         ? todayCal
@@ -1401,10 +1403,10 @@ export async function POST(request: Request) {
   }
 
   // ─── Gap 6: bulk fast path (before single mark-done / delete) ────────────
-  if (looksLikeBulkIntent(effectiveMessage)) {
-    const op = extractBulkOperation(effectiveMessage);
+  if (looksLikeBulkIntent(message)) {
+    const op = extractBulkOperation(message);
     if (op) {
-      const targets = extractBulkTargets(effectiveMessage, reminders, timeZone);
+      const targets = extractBulkTargets(message, reminders, timeZone);
       if (targets.length === 0) {
         const r: ReminderAgentResponse = {
           reply: "You have no pending reminders matching that filter.",
@@ -1437,18 +1439,18 @@ export async function POST(request: Request) {
   }
 
   // ─── Gap 2: deterministic mark-done fast path ──────────────────────────────
-  if (looksLikeMarkDoneIntent(effectiveMessage)) {
-    const ordinalTarget = resolveByOrdinal(effectiveMessage, reminders, body.recentListedIds);
+  if (looksLikeMarkDoneIntent(message)) {
+    const ordinalTarget = resolveByOrdinal(message, reminders, body.recentListedIds);
     if (ordinalTarget) {
       const r: ReminderAgentResponse = {
         reply: `Are you sure you want to mark "${ordinalTarget.title}" — ${formatDueInUserZone(ordinalTarget.dueAt, timeZone)} as done? Reply **yes** to confirm.`,
         action: { type: "pending_confirm", pendingType: "mark_done", targetId: ordinalTarget.id, targetTitle: ordinalTarget.title },
       };
-      void saveMessageServerSide(userId, "user", effectiveMessage);
+      void saveMessageServerSide(userId, "user", message);
       void saveMessageServerSide(userId, "assistant", r.reply);
       return NextResponse.json(r);
     }
-    const rawTarget = extractTargetFromMarkDone(effectiveMessage);
+    const rawTarget = extractTargetFromMarkDone(message);
     if (rawTarget.length >= 2) {
       const matches = reminders.filter(
         (r) => r.status === "pending" && r.title.toLowerCase().includes(rawTarget.toLowerCase()),
@@ -1478,18 +1480,18 @@ export async function POST(request: Request) {
   }
 
   // ─── Gap 2: deterministic delete fast path ─────────────────────────────────
-  if (looksLikeDeleteIntent(effectiveMessage)) {
-    const ordinalTarget = resolveByOrdinal(effectiveMessage, reminders, body.recentListedIds);
+  if (looksLikeDeleteIntent(message)) {
+    const ordinalTarget = resolveByOrdinal(message, reminders, body.recentListedIds);
     if (ordinalTarget) {
       const r: ReminderAgentResponse = {
         reply: `Are you sure you want to delete "${ordinalTarget.title}" — ${formatDueInUserZone(ordinalTarget.dueAt, timeZone)}? Reply **yes** to confirm.`,
         action: { type: "pending_confirm", pendingType: "delete_reminder", targetId: ordinalTarget.id, targetTitle: ordinalTarget.title },
       };
-      void saveMessageServerSide(userId, "user", effectiveMessage);
+      void saveMessageServerSide(userId, "user", message);
       void saveMessageServerSide(userId, "assistant", r.reply);
       return NextResponse.json(r);
     }
-    const rawTarget = extractTargetFromDelete(effectiveMessage);
+    const rawTarget = extractTargetFromDelete(message);
     if (rawTarget.length >= 2) {
       const matches = reminders.filter(
         (r) => r.status === "pending" && r.title.toLowerCase().includes(rawTarget.toLowerCase()),
@@ -1519,16 +1521,16 @@ export async function POST(request: Request) {
   }
 
   // ─── Gap 5: edit title/notes fast path ────────────────────────────────────
-  if (looksLikeEditIntent(effectiveMessage)) {
-    const field = extractEditField(effectiveMessage);
-    const newValue = extractNewValueFromEdit(effectiveMessage);
+  if (looksLikeEditIntent(message)) {
+    const field = extractEditField(message);
+    const newValue = extractNewValueFromEdit(message);
 
     if (!field) {
       const r: ReminderAgentResponse = {
         reply: "What would you like to change — the title or the notes?",
         action: { type: "clarify" },
       };
-      void saveMessageServerSide(userId, "user", effectiveMessage);
+      void saveMessageServerSide(userId, "user", message);
       void saveMessageServerSide(userId, "assistant", r.reply);
       return NextResponse.json(r);
     }
@@ -1538,12 +1540,12 @@ export async function POST(request: Request) {
         reply: `What should the new ${field} be?`,
         action: { type: "clarify" },
       };
-      void saveMessageServerSide(userId, "user", effectiveMessage);
+      void saveMessageServerSide(userId, "user", message);
       void saveMessageServerSide(userId, "assistant", r.reply);
       return NextResponse.json(r);
     }
 
-    const ordinalEditTarget = resolveByOrdinal(effectiveMessage, reminders, body.recentListedIds);
+    const ordinalEditTarget = resolveByOrdinal(message, reminders, body.recentListedIds);
     if (ordinalEditTarget) {
       const previewValue = newValue.length > 40 ? `${newValue.slice(0, 40)}…` : newValue;
       const r: ReminderAgentResponse = {
@@ -1561,7 +1563,7 @@ export async function POST(request: Request) {
       return NextResponse.json(r);
     }
 
-    const rawTarget = extractTargetFromEdit(effectiveMessage);
+    const rawTarget = extractTargetFromEdit(message);
     const isPronoun = !rawTarget || rawTarget.length < 2 || PRONOUN_TARGETS.has(rawTarget.toLowerCase());
 
     if (!isPronoun) {
@@ -1613,7 +1615,7 @@ export async function POST(request: Request) {
       const originalSnoozeMsg = userMessages[userMessages.length - 1]?.content ?? "";
       const recoveredDelay = extractSnoozeDelayMinutes(originalSnoozeMsg);
       if (recoveredDelay) {
-        const rawTarget = effectiveMessage.trim();
+        const rawTarget = message.trim();
         const matches = reminders.filter(
           (r) => r.status === "pending" && r.title.toLowerCase().includes(rawTarget.toLowerCase()),
         );
@@ -1637,8 +1639,8 @@ export async function POST(request: Request) {
   }
 
   // ─── Gap 4: snooze fast path ───────────────────────────────────────────────
-  if (looksLikeSnoozeIntent(effectiveMessage)) {
-    const delayMinutes = extractSnoozeDelayMinutes(effectiveMessage);
+  if (looksLikeSnoozeIntent(message)) {
+    const delayMinutes = extractSnoozeDelayMinutes(message);
 
     if (!delayMinutes) {
       const r: ReminderAgentResponse = {
@@ -1651,9 +1653,9 @@ export async function POST(request: Request) {
     }
 
     // Gap 7: ordinal resolution ("snooze the second one by 30 min")
-    const ordinalSnoozeTarget = resolveByOrdinal(effectiveMessage, reminders, body.recentListedIds);
+    const ordinalSnoozeTarget = resolveByOrdinal(message, reminders, body.recentListedIds);
 
-    const rawTarget = extractTargetFromSnooze(effectiveMessage);
+    const rawTarget = extractTargetFromSnooze(message);
     const isPronoun = !rawTarget || rawTarget.length < 2 || PRONOUN_TARGETS.has(rawTarget.toLowerCase());
     let target: ReminderItem | undefined = ordinalSnoozeTarget ?? undefined;
 
@@ -1708,8 +1710,8 @@ export async function POST(request: Request) {
     return NextResponse.json(r);
   }
 
-  const listScopeFromMessage = inferListScopeFromMessage(effectiveMessage);
-  if (listScopeFromMessage && !isCompoundReminderQuestion(effectiveMessage)) {
+  const listScopeFromMessage = inferListScopeFromMessage(message);
+  if (listScopeFromMessage && !isCompoundReminderQuestion(message)) {
     let reply: string;
     let listedIds: string[];
     if (listScopeFromMessage === "today") {
@@ -1737,19 +1739,19 @@ export async function POST(request: Request) {
   // "what time is the dentist", "more details on gym reminder").
   // tryGroundedReminderAnswer uses fuzzy title matching — handles typos and no "reminder" keyword.
   // Runs BEFORE LLM so these never hit NVIDIA when a deterministic answer exists.
-  if (!isCompoundReminderQuestion(effectiveMessage)) {
-    const grounded = tryGroundedReminderAnswer(effectiveMessage, reminders, new Date(), displayOptions);
+  if (!isCompoundReminderQuestion(message)) {
+    const grounded = tryGroundedReminderAnswer(message, reminders, new Date(), displayOptions);
     if (grounded) {
-      void saveMessageServerSide(userId, "user", effectiveMessage);
+      void saveMessageServerSide(userId, "user", message);
       void saveMessageServerSide(userId, "assistant", grounded);
       return NextResponse.json({ reply: grounded, action: { type: "unknown" } } satisfies ReminderAgentResponse);
     }
     // Aggressive last-resort fuzzy match: catches "what did you know about the dynamic humor",
     // "what happened with cli update", "any update on gym thing" — phrasings that don't fit any
     // "tell me about" pattern but clearly reference a reminder by 2+ unique title tokens.
-    const fuzzy = findReminderByFuzzyMatch(effectiveMessage, reminders, new Date(), displayOptions);
+    const fuzzy = findReminderByFuzzyMatch(message, reminders, new Date(), displayOptions);
     if (fuzzy) {
-      void saveMessageServerSide(userId, "user", effectiveMessage);
+      void saveMessageServerSide(userId, "user", message);
       void saveMessageServerSide(userId, "assistant", fuzzy);
       return NextResponse.json({ reply: fuzzy, action: { type: "unknown" } } satisfies ReminderAgentResponse);
     }
@@ -1757,8 +1759,8 @@ export async function POST(request: Request) {
 
   const nimApiKey = process.env.NVIDIA_NIM_API_KEY;
   if (!nimApiKey) {
-    const reply = fallbackDeterministicReply(effectiveMessage, reminders, timeZone);
-    void saveMessageServerSide(userId, "user", effectiveMessage);
+    const reply = fallbackDeterministicReply(message, reminders, timeZone);
+    void saveMessageServerSide(userId, "user", message);
     void saveMessageServerSide(userId, "assistant", reply);
     return NextResponse.json({ reply, action: { type: "unknown" } } satisfies ReminderAgentResponse);
   }
@@ -1782,8 +1784,15 @@ export async function POST(request: Request) {
     // Build the user turn content — wiki comes first (rich synthesised knowledge),
     // then the live digest (current reminders),
     // then the machine-readable JSON for precise CRUD actions.
+    // NOTE: Always use `message` (the raw user text) here — never effectiveMessage which
+    // contains a [The user is replying to...] wrapper that causes the LLM to echo it back.
+    // Reply context is provided as a clean bracketed note instead.
+    const replyContextNote = replyContext?.content?.trim()
+      ? `\n\n[Reply context: responding to — "${replyContext.content.trim().slice(0, 200)}"]`
+      : "";
     const contextParts = [
-      effectiveMessage,
+      message,
+      replyContextNote,
       wikiCtx ? `\n\n${wikiCtx}` : "",
       `\n\n--- LIFE OS DIGEST (authoritative) ---\n${digest}`,
       `\n\n--- LIFE OS JSON (same data, machine-readable) ---\n${JSON.stringify({ reminders: llmReminders, tasks })}`,
@@ -1802,8 +1811,8 @@ export async function POST(request: Request) {
     });
 
     if (nimResponse.status === 429 || !nimResponse.ok) {
-      const reply = fallbackDeterministicReply(effectiveMessage, reminders, timeZone);
-      void saveMessageServerSide(userId, "user", effectiveMessage);
+      const reply = fallbackDeterministicReply(message, reminders, timeZone);
+      void saveMessageServerSide(userId, "user", message);
       void saveMessageServerSide(userId, "assistant", reply);
       return NextResponse.json({ reply, action: { type: "unknown" } } satisfies ReminderAgentResponse);
     }
@@ -1815,7 +1824,7 @@ export async function POST(request: Request) {
 
     if (parsed.action.type === "list_reminders") {
       const scope =
-        mapAgentScopeToListScope(parsed.action.scope) ?? inferListScopeFromMessage(effectiveMessage) ?? "future";
+        mapAgentScopeToListScope(parsed.action.scope) ?? inferListScopeFromMessage(message) ?? "future";
       if (scope === "today") {
         const today = filterToday(reminders, new Date(), timeZone).slice(0, 5);
         parsed.action.listedIds = today.map((r) => r.id);
@@ -1831,18 +1840,18 @@ export async function POST(request: Request) {
     }
 
     if (parsed.action.type === "create_reminder") {
-      const deterministicDueAt = parseDateTimeFromInput(effectiveMessage, timeZone);
+      const deterministicDueAt = parseDateTimeFromInput(message, timeZone);
       if (deterministicDueAt) parsed.action.dueAt = deterministicDueAt;
 
       // FLAW-2: enrich LLM-generated create action with extracted metadata
-      if (!parsed.action.priority) parsed.action.priority = extractPriorityFromInput(effectiveMessage);
-      if (!parsed.action.domain) parsed.action.domain = extractDomainFromInput(effectiveMessage);
-      if (!parsed.action.recurrence) parsed.action.recurrence = extractRecurrenceFromInput(effectiveMessage);
+      if (!parsed.action.priority) parsed.action.priority = extractPriorityFromInput(message);
+      if (!parsed.action.domain) parsed.action.domain = extractDomainFromInput(message);
+      if (!parsed.action.recurrence) parsed.action.recurrence = extractRecurrenceFromInput(message);
 
       // If the deterministic parser resolved a date, trust it and skip the clarify checks
       if (!deterministicDueAt) {
         const asksForRelativeDate =
-          hasTodayHint(effectiveMessage) || hasTomorrowHint(effectiveMessage) || hasDayAfterTomorrowHint(effectiveMessage);
+          hasTodayHint(message) || hasTomorrowHint(message) || hasDayAfterTomorrowHint(message);
         if (asksForRelativeDate) {
           const r: ReminderAgentResponse = {
             reply: "I understood you want to create a reminder, but I could not confidently parse the date/time. Please resend with clear format like: tomorrow at 8:00 PM.",
@@ -1853,7 +1862,7 @@ export async function POST(request: Request) {
           return NextResponse.json(r);
         }
 
-        if (!parsed.action.dueAt || !hasExplicitTime(effectiveMessage) || !isValidFutureIsoDate(parsed.action.dueAt)) {
+        if (!parsed.action.dueAt || !hasExplicitTime(message) || !isValidFutureIsoDate(parsed.action.dueAt)) {
           const r: ReminderAgentResponse = {
             reply: "I can create that reminder. Please confirm the exact time (for example: tomorrow at 8:00 PM).",
             action: { type: "clarify", title: parsed.action.title },
@@ -1867,7 +1876,7 @@ export async function POST(request: Request) {
       // Only offer task-linking when the user's message itself contains task-related language.
       // Without this guard every LLM-path reminder creation interrupts with a task-link
       // question even for completely standalone intents ("remind me to drink water at 6pm").
-      const hasTaskHint = /\b(task|project|link(ed)?|attach|connect|related\s+to|for\s+the\s+task)\b/i.test(effectiveMessage);
+      const hasTaskHint = /\b(task|project|link(ed)?|attach|connect|related\s+to|for\s+the\s+task)\b/i.test(message);
       if (tasks && tasks.length > 0 && !parsed.action.linkedTaskId && hasTaskHint) {
         const pendingTasks = tasks.filter((t) => (t as unknown as Record<string, unknown>).status === "pending");
         if (pendingTasks.length > 0) {
@@ -1878,7 +1887,7 @@ export async function POST(request: Request) {
 
           if (wasAskingTaskLink) {
             // User answered: a number picks a task; anything else → standalone
-            const numMatch = effectiveMessage.trim().match(/^(\d+)/);
+            const numMatch = message.trim().match(/^(\d+)/);
             if (numMatch?.[1]) {
               const idx = parseInt(numMatch[1], 10) - 1;
               if (idx >= 0 && idx < pendingTasks.length) {
@@ -1963,8 +1972,8 @@ export async function POST(request: Request) {
     return NextResponse.json(parsed);
 
   } catch {
-    const reply = fallbackDeterministicReply(effectiveMessage, reminders, timeZone);
-    void saveMessageServerSide(userId, "user", effectiveMessage);
+    const reply = fallbackDeterministicReply(message, reminders, timeZone);
+    void saveMessageServerSide(userId, "user", message);
     void saveMessageServerSide(userId, "assistant", reply);
     return NextResponse.json({ reply, action: { type: "unknown" } });
   }

@@ -2834,7 +2834,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       return rows.filter((r) => matchesReminderSearch(r, reminderSearchQuery));
     }
     if (reminderListTab === "next2hours") {
-      let rows = nextTwoHoursReminders;
+      let rows = nextTwoHoursReminders.filter((r) => matchesReminderSearch(r, reminderSearchQuery));
       if (reminderTaskFilter === "adhoc") {
         return rows.filter((r) => isAdhocReminder(r));
       }
@@ -2848,6 +2848,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       if (sharedFromFilter !== "all") {
         rows = rows.filter((r) => r.ownerUserId === sharedFromFilter);
       }
+      rows = rows.filter((r) => matchesReminderSearch(r, reminderSearchQuery));
       if (reminderTaskFilter === "adhoc")
         return rows.filter((r) => isAdhocReminder(r));
       if (reminderTaskFilter !== "all") {
@@ -2864,6 +2865,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
           r.shareRecipients?.some((p) => p.userId === sentToFilter),
         );
       }
+      rows = rows.filter((r) => matchesReminderSearch(r, reminderSearchQuery));
       if (reminderTaskFilter === "adhoc")
         return rows.filter((r) => isAdhocReminder(r));
       if (reminderTaskFilter !== "all") {
@@ -2871,7 +2873,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       }
       return rows;
     }
-    const base = grouped[reminderListTab];
+    const base = grouped[reminderListTab].filter((r) => matchesReminderSearch(r, reminderSearchQuery));
     if (reminderTaskFilter === "all") return base;
     if (reminderTaskFilter === "adhoc")
       return base.filter((r) => isAdhocReminder(r));
@@ -5126,6 +5128,25 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                 </button>
               ))}
             </div>
+            {/* ── Desktop search bar ── */}
+            {reminderListTabDesktop !== "shared" && (
+              <div className="flex shrink-0 items-center gap-2 border-b border-slate-100 bg-white px-4 py-2">
+                <div className="flex flex-1 items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="h-3.5 w-3.5 shrink-0 text-slate-400"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
+                  <input
+                    value={reminderSearchQuery}
+                    onChange={(e) => setReminderSearchQuery(e.target.value)}
+                    placeholder="Search reminders…"
+                    className="flex-1 bg-transparent text-[12px] text-slate-700 outline-none placeholder:text-slate-400"
+                  />
+                  {reminderSearchQuery && (
+                    <button type="button" onClick={() => setReminderSearchQuery("")} className="text-slate-400 hover:text-slate-600">
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="h-3 w-3"><path d="M18 6 6 18M6 6l12 12"/></svg>
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
             {/* Missed banner */}
             {snapshot.missed > 0 && (
               <div className="mx-4 mt-3 flex shrink-0 items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5">
@@ -5146,7 +5167,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
             <div className="min-h-0 flex-1 overflow-y-auto px-4 py-3 scrollbar-none">
               <div className="grid gap-3">
                 {(() => {
-                  const desktopRows =
+                  const desktopRowsRaw =
                     reminderListTabDesktop === "shared"
                       ? grouped.missed /* placeholder — share inbox shown below */
                       : reminderListTabDesktop === "done"
@@ -5160,6 +5181,9 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                       : reminderListTabDesktop === "tomorrow"
                       ? grouped.tomorrow
                       : [];
+                  const desktopRows = reminderListTabDesktop === "shared"
+                    ? desktopRowsRaw
+                    : desktopRowsRaw.filter((r) => matchesReminderSearch(r, reminderSearchQuery));
 
                   if (reminderListTabDesktop === "shared") {
                     return shareInbox.length === 0 ? (
@@ -6372,7 +6396,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                         value={newDate}
                         onChange={(e) => setNewDate(e.target.value)}
                         data-testid="reminder-date-input"
-                        className="absolute inset-0 cursor-pointer opacity-0"
+                        className="absolute inset-0 cursor-pointer opacity-[0.01]"
                       />
                     </div>
                   </label>
@@ -6388,7 +6412,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                         value={newTime}
                         onChange={(e) => setNewTime(e.target.value)}
                         data-testid="reminder-time-input"
-                        className="absolute inset-0 cursor-pointer opacity-0"
+                        className="absolute inset-0 cursor-pointer opacity-[0.01]"
                       />
                     </div>
                   </label>
@@ -6682,8 +6706,8 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
               </div>
             )}
 
-            {/* ── Today filter bar ── */}
-            {(reminderListTab === "today" || reminderListTab === "all") && (
+            {/* ── Search / filter bar — shown on all tabs ── */}
+            {reminderListTab !== "shared" && reminderListTab !== "sent" && (
               <div className="flex shrink-0 items-center gap-2 border-b border-slate-100 bg-white px-3 py-2">
                 <div className="flex flex-1 items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="h-3.5 w-3.5 shrink-0 text-slate-400"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg>
@@ -7344,7 +7368,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                         )
                       }
                       data-testid="reschedule-datetime-input"
-                      className="absolute inset-0 cursor-pointer opacity-0"
+                      className="absolute inset-0 cursor-pointer opacity-[0.01]"
                     />
                   </div>
                 </div>
