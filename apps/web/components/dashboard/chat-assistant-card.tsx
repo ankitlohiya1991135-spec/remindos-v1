@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type ChatRole = "user" | "assistant";
 
@@ -8,23 +8,63 @@ interface ChatMessage {
   id: string;
   role: ChatRole;
   content: string;
+  createdAt: string;
 }
 
+const STARTER_ID = "starter";
+
 const starterMessage: ChatMessage = {
-  id: "starter",
+  id: STARTER_ID,
   role: "assistant",
   content:
     "Hi! I am your reminder assistant. Tell me what reminder you want to create or plan.",
+  createdAt: new Date(0).toISOString(),
 };
+
+async function fetchHistory(): Promise<ChatMessage[]> {
+  const res = await fetch("/api/chat/history");
+  if (!res.ok) return [];
+  const data = (await res.json()) as { messages?: { id: string; role: string; content: string; createdAt: string }[] };
+  return (data.messages ?? [])
+    .filter((m) => m.role === "user" || m.role === "assistant")
+    .map((m) => ({ id: m.id, role: m.role as ChatRole, content: m.content, createdAt: m.createdAt }));
+}
+
+async function persistMessages(messages: ChatMessage[]): Promise<void> {
+  const storable = messages.filter((m) => m.id !== STARTER_ID);
+  if (storable.length === 0) return;
+  await fetch("/api/chat/history", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ messages: storable.map((m) => ({ id: m.id, role: m.role, content: m.content, createdAt: m.createdAt })) }),
+  });
+}
 
 export function ChatAssistantCard() {
   const [messages, setMessages] = useState<ChatMessage[]>([starterMessage]);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const formRef = useRef<HTMLFormElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
 
-  const canSend = useMemo(() => input.trim().length > 0 && !isLoading, [input, isLoading]);
+  const canSend = useMemo(() => input.trim().length > 0 && !isLoading && historyLoaded, [input, isLoading, historyLoaded]);
+
+  // Load persisted history once on mount
+  useEffect(() => {
+    fetchHistory().then((history) => {
+      if (history.length > 0) {
+        setMessages(history);
+      }
+      setHistoryLoaded(true);
+    });
+  }, []);
+
+  // Scroll to bottom whenever messages change
+  useEffect(() => {
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
 
   useEffect(() => {
     const handleQuickCreate = () => {
@@ -36,20 +76,23 @@ export function ChatAssistantCard() {
     return () => window.removeEventListener("reminder:quick-create", handleQuickCreate);
   }, []);
 
-  const handleSend = async (event: FormEvent<HTMLFormElement>) => {
+  const handleSend = useCallback(async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const prompt = input.trim();
-    if (!prompt || isLoading) return;
+    if (!prompt || isLoading || !historyLoaded) return;
 
     const userMessage: ChatMessage = {
       id: crypto.randomUUID(),
       role: "user",
       content: prompt,
+      createdAt: new Date().toISOString(),
     };
 
     setMessages((prev) => [...prev, userMessage]);
     setInput("");
     setIsLoading(true);
+
+    let assistantMessage: ChatMessage | null = null;
 
     try {
       const timeZone =
@@ -77,28 +120,29 @@ export function ChatAssistantCard() {
         throw new Error("Assistant response was empty.");
       }
 
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content: assistantContent,
-        },
-      ]);
+      assistantMessage = {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content: assistantContent,
+        createdAt: new Date().toISOString(),
+      };
+
+      setMessages((prev) => [...prev, assistantMessage!]);
     } catch {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
-          role: "assistant",
-          content:
-            "I could not respond right now. Please check your AI API configuration and try again.",
-        },
-      ]);
+      assistantMessage = {
+        id: crypto.randomUUID(),
+        role: "assistant",
+        content:
+          "I could not respond right now. Please check your AI API configuration and try again.",
+        createdAt: new Date().toISOString(),
+      };
+      setMessages((prev) => [...prev, assistantMessage!]);
     } finally {
       setIsLoading(false);
+      // Persist both the user message and the assistant reply (best-effort)
+      persistMessages([userMessage, ...(assistantMessage ? [assistantMessage] : [])]);
     }
-  };
+  }, [input, isLoading, historyLoaded, messages]);
 
   return (
     <article className="rounded-2xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
@@ -110,20 +154,27 @@ export function ChatAssistantCard() {
       </p>
 
       <div className="mt-4 h-80 overflow-y-auto rounded-xl border border-slate-200 bg-slate-50 p-3 dark:border-slate-700 dark:bg-slate-950">
-        <div className="grid gap-3">
-          {messages.map((message) => (
-            <div
-              key={message.id}
-              className={`max-w-[90%] rounded-2xl px-4 py-2 text-sm ${
-                message.role === "user"
-                  ? "ml-auto bg-violet-600 text-white"
-                  : "bg-white text-slate-800 dark:bg-slate-800 dark:text-slate-100"
-              }`}
-            >
-              {message.content}
-            </div>
-          ))}
-        </div>
+        {!historyLoaded ? (
+          <div className="flex h-full items-center justify-center">
+            <span className="text-sm text-slate-400 dark:text-slate-500">Loading chat…</span>
+          </div>
+        ) : (
+          <div className="grid gap-3">
+            {messages.map((message) => (
+              <div
+                key={message.id}
+                className={`max-w-[90%] rounded-2xl px-4 py-2 text-sm ${
+                  message.role === "user"
+                    ? "ml-auto bg-violet-600 text-white"
+                    : "bg-white text-slate-800 dark:bg-slate-800 dark:text-slate-100"
+                }`}
+              >
+                {message.content}
+              </div>
+            ))}
+            <div ref={bottomRef} />
+          </div>
+        )}
       </div>
 
       <form ref={formRef} onSubmit={handleSend} className="mt-4 grid gap-3">

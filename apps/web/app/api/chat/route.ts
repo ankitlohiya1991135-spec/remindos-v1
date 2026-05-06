@@ -85,7 +85,7 @@ interface ReminderAgentResponse {
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const NIM_BASE_URL = "https://integrate.api.nvidia.com/v1";
-const DEFAULT_MODEL = "meta/llama-3.1-70b-instruct";
+const DEFAULT_MODEL = "mistralai/mistral-medium-3.5-128b";
 const DEFAULT_CHAT_REMINDER_TITLE = "Reminder";
 const MAX_HISTORY_TURNS = 20; // last 10 user/assistant pairs — Issue 5 fix
 
