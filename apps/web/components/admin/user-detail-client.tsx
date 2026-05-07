@@ -5,6 +5,7 @@ import { USER_ROLES, type UserRole } from "@repo/admin/types";
 import type { AdminUserActivity } from "@repo/admin/types";
 import { AdminNotesPanel } from "./admin-notes-panel";
 import { AdminDmPanel } from "./admin-dm-panel";
+import { broadcastUserMetadataChanged } from "../../lib/user-metadata-events";
 
 interface DetailUser {
   id: string;
@@ -419,6 +420,7 @@ function AdminActionsPanel({
       }
       const data = (await res.json()) as { deleted: number };
       setDone(`Deleted ${data.deleted} chat row(s).`);
+      broadcastUserMetadataChanged(userId);
       onChanged();
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));
@@ -481,6 +483,17 @@ function SuperadminActionsPanel({
     displayRole === realRole ? "" : displayRole,
   );
 
+  // Re-sync local form state whenever the parent feeds in fresh server data.
+  // Without this, the role <select> sticks on the *previous* value after a
+  // successful save → the user thinks the change didn't apply and reaches
+  // for refresh.
+  useEffect(() => {
+    setPendingUserType(realRole);
+  }, [realRole]);
+  useEffect(() => {
+    setPendingDisplayRole(displayRole === realRole ? "" : displayRole);
+  }, [displayRole, realRole]);
+
   const callApi = useCallback(
     async (path: string, body: unknown) => {
       setWorking(true);
@@ -497,6 +510,10 @@ function SuperadminActionsPanel({
           };
           throw new Error(payload.error ?? `Request failed (${res.status})`);
         }
+        // Tell the rest of the app this user's metadata just moved so they
+        // can re-pull (drawer admin link, user list row, etc.) without
+        // requiring a page refresh.
+        broadcastUserMetadataChanged(userId);
         onChanged();
       } catch (err) {
         setActionError(err instanceof Error ? err.message : String(err));
@@ -504,7 +521,7 @@ function SuperadminActionsPanel({
         setWorking(false);
       }
     },
-    [onChanged],
+    [onChanged, userId],
   );
 
   const handleSaveRole = () => {
@@ -706,6 +723,7 @@ function HardDeleteButton({
       setOpen(false);
       setConfirmEmail("");
       setConfirmPhrase("");
+      broadcastUserMetadataChanged(userId);
       onChanged();
       // Most callers will navigate away; we still call onChanged for safety.
       window.location.href = "/admin";

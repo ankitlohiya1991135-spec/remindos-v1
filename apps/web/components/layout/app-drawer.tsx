@@ -4,6 +4,10 @@ import { useUser, useClerk } from "@clerk/nextjs";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { canAccessAdmin, getRoleFromPublicMetadata } from "@repo/admin";
+import {
+  USER_METADATA_CHANGED_EVENT,
+  type UserMetadataChangedDetail,
+} from "../../lib/user-metadata-events";
 
 export function AppDrawer() {
   const [mounted, setMounted] = useState(false);
@@ -43,6 +47,39 @@ export function AppDrawer() {
       if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
     };
   }, []);
+
+  // Reactively re-pull this user's Clerk metadata whenever:
+  //   1. an admin endpoint anywhere in the app reports the metadata moved,
+  //      AND the change is about THIS signed-in user (covers self-flip
+  //      paths and superadmin-issued role changes for the current user);
+  //   2. the tab regains visibility (covers the cross-tab case where a
+  //      different superadmin demoted/promoted you while you were away).
+  // Calling user.reload() refreshes publicMetadata in-place; the next
+  // render of `isAdmin` below picks up the new value, so the
+  // "User Management" link appears or disappears without a page refresh.
+  useEffect(() => {
+    if (!user) return;
+
+    const handleMetadataChanged = (event: Event) => {
+      const detail = (event as CustomEvent<UserMetadataChangedDetail>).detail;
+      if (!detail) return;
+      if (detail.targetUserId === user.id) {
+        void user.reload();
+      }
+    };
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        void user.reload();
+      }
+    };
+
+    window.addEventListener(USER_METADATA_CHANGED_EVENT, handleMetadataChanged);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => {
+      window.removeEventListener(USER_METADATA_CHANGED_EVENT, handleMetadataChanged);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, [user]);
 
   if (!mounted) return null;
 

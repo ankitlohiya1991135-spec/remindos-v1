@@ -7,6 +7,7 @@ import type {
   BulkDeactivateResult,
   OrgCostOverview,
 } from "@repo/admin/types";
+import { USER_METADATA_CHANGED_EVENT } from "../../lib/user-metadata-events";
 
 interface UsersResponse {
   users: AdminListedUser[];
@@ -67,6 +68,25 @@ export function AdminUserListClient() {
 
   useEffect(() => {
     void refetch();
+  }, [refetch]);
+
+  // Live-refresh the list whenever any admin endpoint (role change, deactivate,
+  // bulk-deactivate, hard-delete, etc.) reports it mutated user metadata —
+  // including from the detail page or another tab. Avoids forcing the operator
+  // to manually refresh after a role change to see the updated badge.
+  useEffect(() => {
+    const onChanged = () => {
+      void refetch();
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") void refetch();
+    };
+    window.addEventListener(USER_METADATA_CHANGED_EVENT, onChanged);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener(USER_METADATA_CHANGED_EVENT, onChanged);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
   }, [refetch]);
 
   const filtered = useMemo(() => {
@@ -162,6 +182,16 @@ export function AdminUserListClient() {
         );
       } else {
         alert(`${result.results.length} user(s) ${verb}d.`);
+      }
+      // Notify other listeners (drawer admin gate, other open tabs/views)
+      // that a batch of users just had their metadata flipped, so they can
+      // refresh in place without a page reload.
+      for (const id of [...selected]) {
+        window.dispatchEvent(
+          new CustomEvent(USER_METADATA_CHANGED_EVENT, {
+            detail: { targetUserId: id },
+          }),
+        );
       }
       handleClearSelection();
       void refetch();
