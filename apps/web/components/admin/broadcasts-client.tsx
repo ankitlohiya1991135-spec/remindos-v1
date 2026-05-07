@@ -13,7 +13,8 @@ const SEGMENTS: Array<{
 }> = [
   { value: "active_today", label: "Active today" },
   { value: "active_7d", label: "Active this week" },
-  { value: "admins_only", label: "Admins only" },
+  // Label says "Staff" not "Admins" — keeps tier hierarchy invisible.
+  { value: "admins_only", label: "Staff only" },
   { value: "all", label: "ALL users", caution: true },
 ];
 

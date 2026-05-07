@@ -19,6 +19,13 @@ export const AUDIT_ACTIONS = [
   // broadcasts
   "BROADCAST_SENT",
   "BROADCAST_RECALLED",
+  // direct messages and notes
+  "USER_DM_SENT",
+  "ADMIN_NOTE_CREATED",
+  "ADMIN_NOTE_EDITED",
+  "ADMIN_NOTE_DELETED",
+  // bulk operations
+  "BULK_DEACTIVATION_REQUESTED",
 ] as const;
 
 export type AuditAction = (typeof AUDIT_ACTIONS)[number];
@@ -70,4 +77,68 @@ export interface SendBroadcastRequest {
   title: string;
   body: string;
   segment: BroadcastListItem["segment"];
+}
+
+/** Admin note row forwarded to the user-detail page. */
+export interface AdminNote {
+  id: string;
+  targetUserId: string;
+  authorUserId: string;
+  authorDisplay: string;
+  /** Author role from the API caller's perspective. Admins see all notes
+   * with authorRole "admin" so they can't infer the author's true tier. */
+  authorRole: "admin" | "superadmin";
+  content: string;
+  createdAt: number;
+  updatedAt: number;
+  /** True iff the current viewer is allowed to edit/delete this note. */
+  canEdit: boolean;
+}
+
+/** Body shape for `POST /api/admin/users/[userId]/notes`. */
+export interface CreateAdminNoteRequest {
+  content: string;
+}
+
+/** Body shape for `PATCH /api/admin/notes/[noteId]`. */
+export interface UpdateAdminNoteRequest {
+  content: string;
+}
+
+/** Body shape for `POST /api/admin/users/[userId]/message`. */
+export interface SendDirectMessageRequest {
+  title: string;
+  body: string;
+}
+
+/** Body shape for `POST /api/admin/users/bulk-deactivate`. */
+export interface BulkDeactivateRequest {
+  userIds: string[];
+  deactivated: boolean;
+}
+
+export interface BulkDeactivateResult {
+  ok: boolean;
+  results: Array<{
+    userId: string;
+    success: boolean;
+    error?: string;
+  }>;
+}
+
+export interface OrgCostOverview {
+  totalUsers: number;
+  /** Sum of token estimates across the entire user base. */
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  /** USD using configured / default rates. */
+  estimatedCostUsd: number;
+  /** Top 10 spenders by total tokens. */
+  topSpenders: Array<{
+    userId: string;
+    display: string;
+    totalTokens: number;
+    estimatedCostUsd: number;
+  }>;
 }

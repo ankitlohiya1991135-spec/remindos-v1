@@ -216,6 +216,27 @@ const adminAuditLog = defineTable({
   .index("by_target_created", ["targetUserId", "createdAt"]);
 
 /**
+ * Internal notes admins leave on a user's profile. Visible to all admin
+ * viewers (admin + superadmin). Authoring is open to any admin; editing
+ * and deleting are tier-gated:
+ *   - admin can edit/delete their OWN notes
+ *   - superadmin can edit/delete ANY note (override pattern)
+ */
+const userAdminNotes = defineTable({
+  /** The user the note is ABOUT. */
+  targetUserId: v.string(),
+  /** The admin/superadmin who wrote the note. */
+  authorUserId: v.string(),
+  /** Frozen role at write-time — used for display in admin UI. */
+  authorRole: v.union(v.literal("admin"), v.literal("superadmin")),
+  content: v.string(),
+  createdAt: v.number(),
+  updatedAt: v.number(),
+})
+  .index("by_target_created", ["targetUserId", "createdAt"])
+  .index("by_author_created", ["authorUserId", "createdAt"]);
+
+/**
  * Broadcast notifications sent by admins/superadmins to user segments.
  * Used together with the existing `notifications` table — sending a
  * broadcast inserts a `notifications` row per matched user AND records
@@ -261,4 +282,5 @@ export default defineSchema({
   userWiki,
   adminAuditLog,
   adminBroadcasts,
+  userAdminNotes,
 });

@@ -53,12 +53,13 @@ export async function DELETE(
       return jsonError({ error: "Broadcast not found", code: "BAD_REQUEST" }, 404);
     }
 
-    // Override check: admins can only recall their own.
+    // Override check: admins can only recall broadcasts they sent.
+    // Error message is generic — admin probers must NOT learn there's a
+    // higher tier with override capability.
     if (guard.role === "admin" && target.senderUserId !== guard.userId) {
       return jsonError(
         {
-          error:
-            "Admins can only recall their own broadcasts. Superadmin override required.",
+          error: "You can only recall broadcasts you sent.",
           code: "FORBIDDEN",
         },
         403,

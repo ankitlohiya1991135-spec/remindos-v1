@@ -78,11 +78,16 @@ export async function GET() {
       }
     }
 
+    // PRIVACY: admin viewers must NOT learn the sender's tier. We always
+    // report sender role as "admin" to admin viewers — even when the row
+    // was sent by a superadmin. Superadmin viewers see the truth.
+    const callerIsSuperadmin = guard.role === "superadmin";
+
     const enriched: BroadcastListItem[] = rows.map((r) => ({
       id: r.id,
       senderUserId: r.senderUserId,
       senderDisplay: displayMap.get(r.senderUserId) ?? r.senderUserId,
-      senderRole: r.senderRole,
+      senderRole: callerIsSuperadmin ? r.senderRole : "admin",
       title: r.title,
       body: r.body,
       segment: r.segment,

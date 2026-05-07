@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { USER_ROLES, type UserRole } from "@repo/admin/types";
 import type { AdminUserActivity } from "@repo/admin/types";
+import { AdminNotesPanel } from "./admin-notes-panel";
+import { AdminDmPanel } from "./admin-dm-panel";
 
 interface DetailUser {
   id: string;
@@ -213,6 +215,14 @@ export function AdminUserDetailClient({ userId }: { userId: string }) {
         For accurate accounting, capture the NIM API <code>usage</code>{" "}
         response per turn (separate ticket).
       </p>
+
+      {/* Direct message + internal notes — both visible to all admin
+          viewers. The admin notes panel shows author display names but
+          masks author tier so admins cannot infer hidden roles. */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <AdminDmPanel userId={user.id} />
+        <AdminNotesPanel userId={user.id} />
+      </div>
 
       {/* Daily activity histogram */}
       <section className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">

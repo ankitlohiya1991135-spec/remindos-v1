@@ -158,10 +158,17 @@ export interface AdminApiError {
 // Re-export audit + token types so consumers can use the `@repo/admin/types`
 // subpath as a single source of types.
 export type {
+  AdminNote,
   AuditAction,
   AuditLogEntry,
   BroadcastListItem,
+  BulkDeactivateRequest,
+  BulkDeactivateResult,
+  CreateAdminNoteRequest,
+  OrgCostOverview,
   SendBroadcastRequest,
+  SendDirectMessageRequest,
+  UpdateAdminNoteRequest,
 } from "./audit";
 export { AUDIT_ACTIONS, isAuditAction } from "./audit";
 

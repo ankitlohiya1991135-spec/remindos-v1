@@ -500,6 +500,181 @@ export const recallBroadcast = mutation({
 // PER-USER ACTIONS callable from admin / superadmin endpoints.
 // ──────────────────────────────────────────────────────────────────────
 
+// ──────────────────────────────────────────────────────────────────────
+// ADMIN NOTES on a user. Admin can edit/delete OWN; superadmin can
+// edit/delete ANY (override). API layer enforces — these mutations just
+// take a `requireAuthorMatch` flag from the route.
+// ──────────────────────────────────────────────────────────────────────
+
+export const listUserAdminNotes = query({
+  args: {
+    adminSecret: v.string(),
+    targetUserId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    assertAdminSecret(args.adminSecret);
+    const rows = await ctx.db
+      .query("userAdminNotes")
+      .withIndex("by_target_created", (q) =>
+        q.eq("targetUserId", args.targetUserId),
+      )
+      .collect();
+    return rows
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .map((r) => ({
+        id: String(r._id),
+        targetUserId: r.targetUserId,
+        authorUserId: r.authorUserId,
+        authorRole: r.authorRole,
+        content: r.content,
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt,
+      }));
+  },
+});
+
+export const createUserAdminNote = mutation({
+  args: {
+    adminSecret: v.string(),
+    targetUserId: v.string(),
+    authorUserId: v.string(),
+    authorRole: v.union(v.literal("admin"), v.literal("superadmin")),
+    content: v.string(),
+  },
+  handler: async (ctx, args) => {
+    assertAdminSecret(args.adminSecret);
+    const now = Date.now();
+    const id = await ctx.db.insert("userAdminNotes", {
+      targetUserId: args.targetUserId,
+      authorUserId: args.authorUserId,
+      authorRole: args.authorRole,
+      content: args.content,
+      createdAt: now,
+      updatedAt: now,
+    });
+    return String(id);
+  },
+});
+
+/**
+ * Update or delete a note. The API layer pre-resolves whether the caller
+ * is allowed to do so (own note OR superadmin override). This mutation
+ * just executes — pass `requireAuthorMatch` to ALSO defensively check at
+ * the data layer (belt-and-suspenders for admin edits).
+ */
+export const updateUserAdminNote = mutation({
+  args: {
+    adminSecret: v.string(),
+    noteId: v.id("userAdminNotes"),
+    callerUserId: v.string(),
+    callerIsSuperadmin: v.boolean(),
+    content: v.string(),
+  },
+  handler: async (ctx, args) => {
+    assertAdminSecret(args.adminSecret);
+    const row = await ctx.db.get(args.noteId);
+    if (!row) throw new ConvexError("Note not found");
+    if (!args.callerIsSuperadmin && row.authorUserId !== args.callerUserId) {
+      throw new ConvexError("Forbidden");
+    }
+    await ctx.db.patch(args.noteId, {
+      content: args.content,
+      updatedAt: Date.now(),
+    });
+    return { ok: true, wasOverride: args.callerIsSuperadmin && row.authorUserId !== args.callerUserId, originalAuthor: row.authorUserId };
+  },
+});
+
+export const deleteUserAdminNote = mutation({
+  args: {
+    adminSecret: v.string(),
+    noteId: v.id("userAdminNotes"),
+    callerUserId: v.string(),
+    callerIsSuperadmin: v.boolean(),
+  },
+  handler: async (ctx, args) => {
+    assertAdminSecret(args.adminSecret);
+    const row = await ctx.db.get(args.noteId);
+    if (!row) throw new ConvexError("Note not found");
+    if (!args.callerIsSuperadmin && row.authorUserId !== args.callerUserId) {
+      throw new ConvexError("Forbidden");
+    }
+    await ctx.db.delete(args.noteId);
+    return { ok: true, wasOverride: args.callerIsSuperadmin && row.authorUserId !== args.callerUserId, originalAuthor: row.authorUserId };
+  },
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// ORG COST OVERVIEW — aggregate token estimate across the whole user
+// base. Used by the superadmin-only block on the admin landing page.
+// ──────────────────────────────────────────────────────────────────────
+
+export const orgCostOverview = query({
+  args: {
+    adminSecret: v.string(),
+    userIds: v.array(v.string()),
+  },
+  handler: async (ctx, args) => {
+    assertAdminSecret(args.adminSecret);
+    const CHARS_PER_TOKEN = 4;
+    const INPUT_RATE_PER_1M = Number.parseFloat(
+      process.env.NIM_INPUT_COST_PER_1M_TOKENS ?? "",
+    ) || 0.4;
+    const OUTPUT_RATE_PER_1M = Number.parseFloat(
+      process.env.NIM_OUTPUT_COST_PER_1M_TOKENS ?? "",
+    ) || 2.0;
+
+    let totalInputTokens = 0;
+    let totalOutputTokens = 0;
+    const perUser: Array<{
+      userId: string;
+      totalTokens: number;
+      estimatedCostUsd: number;
+    }> = [];
+
+    for (const userId of args.userIds) {
+      const rows = await ctx.db
+        .query("chatMessages")
+        .withIndex("by_user_created", (q) => q.eq("userId", userId))
+        .collect();
+      let inputChars = 0;
+      let outputChars = 0;
+      for (const row of rows) {
+        if (row.role === "assistant") outputChars += row.content.length;
+        else inputChars += row.content.length;
+      }
+      const inputTokens = Math.ceil(inputChars / CHARS_PER_TOKEN);
+      const outputTokens = Math.ceil(outputChars / CHARS_PER_TOKEN);
+      totalInputTokens += inputTokens;
+      totalOutputTokens += outputTokens;
+      const cost =
+        (inputTokens / 1_000_000) * INPUT_RATE_PER_1M +
+        (outputTokens / 1_000_000) * OUTPUT_RATE_PER_1M;
+      perUser.push({
+        userId,
+        totalTokens: inputTokens + outputTokens,
+        estimatedCostUsd: Math.round(cost * 1_000_000) / 1_000_000,
+      });
+    }
+
+    const totalCost =
+      (totalInputTokens / 1_000_000) * INPUT_RATE_PER_1M +
+      (totalOutputTokens / 1_000_000) * OUTPUT_RATE_PER_1M;
+
+    perUser.sort((a, b) => b.totalTokens - a.totalTokens);
+    const topSpenders = perUser.slice(0, 10);
+
+    return {
+      totalUsers: args.userIds.length,
+      inputTokens: totalInputTokens,
+      outputTokens: totalOutputTokens,
+      totalTokens: totalInputTokens + totalOutputTokens,
+      estimatedCostUsd: Math.round(totalCost * 1_000_000) / 1_000_000,
+      topSpenders,
+    };
+  },
+});
+
 /** Wipe a user's chat history. Admin-allowed. Audited at the API layer. */
 export const resetUserChatHistory = mutation({
   args: {

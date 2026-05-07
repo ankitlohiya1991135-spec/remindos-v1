@@ -1,8 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
-import type { AdminListedUser } from "@repo/admin/types";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type {
+  AdminListedUser,
+  BulkDeactivateResult,
+  OrgCostOverview,
+} from "@repo/admin/types";
 
 interface UsersResponse {
   users: AdminListedUser[];
@@ -40,36 +44,30 @@ export function AdminUserListClient() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [filterActive, setFilterActive] = useState<"all" | "today" | "week">("all");
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+
+  const refetch = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch("/api/admin/users", { cache: "no-store" });
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? `Request failed (${res.status})`);
+      }
+      const payload = (await res.json()) as UsersResponse;
+      setData(payload);
+      setError(null);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
-    let cancelled = false;
-    setLoading(true);
-    fetch("/api/admin/users", { cache: "no-store" })
-      .then(async (res) => {
-        if (!res.ok) {
-          const body = (await res.json().catch(() => ({}))) as { error?: string };
-          throw new Error(body.error ?? `Request failed (${res.status})`);
-        }
-        return (await res.json()) as UsersResponse;
-      })
-      .then((payload) => {
-        if (!cancelled) {
-          setData(payload);
-          setError(null);
-        }
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : String(err));
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
+    void refetch();
+  }, [refetch]);
 
   const filtered = useMemo(() => {
     if (!data) return [];
@@ -110,8 +108,77 @@ export function AdminUserListClient() {
 
   if (!data) return null;
 
+  // Detect superadmin viewer the same way the user-detail page does:
+  // the API only includes `actualRole` for superadmins.
+  const callerIsSuperadmin = data.users.some((u) => u.actualRole !== undefined);
+
+  const handleToggleSelect = (id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const handleSelectAllVisible = () => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      for (const u of filtered) next.add(u.id);
+      return next;
+    });
+  };
+
+  const handleClearSelection = () => setSelected(new Set());
+
+  const handleBulkDeactivate = async (deactivated: boolean) => {
+    if (selected.size === 0) return;
+    const verb = deactivated ? "deactivate" : "reactivate";
+    if (!confirm(`${verb.charAt(0).toUpperCase() + verb.slice(1)} ${selected.size} user(s)?`)) {
+      return;
+    }
+    setBulkBusy(true);
+    try {
+      const res = await fetch("/api/admin/users/bulk-deactivate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userIds: [...selected], deactivated }),
+      });
+      if (!res.ok) {
+        const payload = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(payload.error ?? `Request failed (${res.status})`);
+      }
+      const result = (await res.json()) as BulkDeactivateResult;
+      const failed = result.results.filter((r) => !r.success);
+      if (failed.length > 0) {
+        const lines = failed
+          .slice(0, 10)
+          .map((r) => `• ${r.userId}: ${r.error ?? "unknown"}`)
+          .join("\n");
+        alert(
+          `${result.results.length - failed.length} succeeded · ${failed.length} failed:\n\n${lines}${
+            failed.length > 10 ? "\n…" : ""
+          }`,
+        );
+      } else {
+        alert(`${result.results.length} user(s) ${verb}d.`);
+      }
+      handleClearSelection();
+      void refetch();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBulkBusy(false);
+    }
+  };
+
   return (
     <div className="space-y-4">
+      {/* Cost overview — quietly omitted for non-super viewers; admins
+          never see this section so they don't suspect there is a hidden
+          tier with extra capabilities. */}
+      {callerIsSuperadmin && <CostOverviewCard />}
+
       {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
         <input
@@ -170,12 +237,58 @@ export function AdminUserListClient() {
         />
       </div>
 
+      {/* Bulk action bar — only rendered for superadmin viewers. */}
+      {callerIsSuperadmin && selected.size > 0 && (
+        <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-rose-200 bg-rose-50 p-3 dark:border-rose-900/60 dark:bg-rose-950/30">
+          <span className="text-xs font-bold text-rose-700 dark:text-rose-300">
+            {selected.size} selected
+          </span>
+          <button
+            type="button"
+            onClick={handleClearSelection}
+            disabled={bulkBusy}
+            className="rounded-full border border-slate-300 px-3 py-1 text-[11px] font-semibold text-slate-700 hover:bg-white disabled:opacity-50 dark:border-slate-600 dark:text-slate-300"
+          >
+            Clear
+          </button>
+          <span className="flex-1" />
+          <button
+            type="button"
+            onClick={() => void handleBulkDeactivate(true)}
+            disabled={bulkBusy}
+            className="rounded-full bg-rose-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-rose-500 disabled:opacity-50"
+          >
+            {bulkBusy ? "Working…" : "Bulk deactivate"}
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleBulkDeactivate(false)}
+            disabled={bulkBusy}
+            className="rounded-full bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white transition hover:bg-emerald-500 disabled:opacity-50"
+          >
+            Bulk reactivate
+          </button>
+        </div>
+      )}
+
       {/* User table */}
       <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
         <div className="overflow-x-auto">
           <table className="min-w-full text-sm">
             <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:bg-slate-950 dark:text-slate-400">
               <tr>
+                {callerIsSuperadmin && (
+                  <th className="px-3 py-3 text-left">
+                    <button
+                      type="button"
+                      onClick={handleSelectAllVisible}
+                      className="text-[10px] font-bold uppercase tracking-wider text-slate-400 hover:text-slate-700"
+                      title="Select all visible"
+                    >
+                      All
+                    </button>
+                  </th>
+                )}
                 <th className="px-4 py-3 text-left">User</th>
                 <th className="px-4 py-3 text-left">Role</th>
                 <th className="px-4 py-3 text-right">Total prompts</th>
@@ -188,13 +301,24 @@ export function AdminUserListClient() {
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="px-4 py-8 text-center text-slate-400">
+                  <td colSpan={callerIsSuperadmin ? 8 : 7} className="px-4 py-8 text-center text-slate-400">
                     No users match the current filter.
                   </td>
                 </tr>
               )}
               {filtered.map((u) => (
                 <tr key={u.id} className="transition hover:bg-slate-50 dark:hover:bg-slate-950/50">
+                  {callerIsSuperadmin && (
+                    <td className="px-3 py-3">
+                      <input
+                        type="checkbox"
+                        checked={selected.has(u.id)}
+                        onChange={() => handleToggleSelect(u.id)}
+                        className="h-4 w-4 cursor-pointer rounded border-slate-300"
+                        aria-label={`Select ${displayName(u)}`}
+                      />
+                    </td>
+                  )}
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-3">
                       {u.imageUrl ? (
@@ -264,6 +388,112 @@ export function AdminUserListClient() {
           </table>
         </div>
       </div>
+    </div>
+  );
+}
+
+function CostOverviewCard() {
+  const [data, setData] = useState<OrgCostOverview | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/admin/cost-overview", { cache: "no-store" })
+      .then(async (res) => {
+        if (!res.ok) {
+          const body = (await res.json().catch(() => ({}))) as { error?: string };
+          throw new Error(body.error ?? `Request failed (${res.status})`);
+        }
+        return (await res.json()) as OrgCostOverview;
+      })
+      .then((payload) => {
+        if (!cancelled) {
+          setData(payload);
+          setError(null);
+        }
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (loading) {
+    return (
+      <div className="rounded-2xl border border-slate-200 bg-white p-4 text-center text-xs text-slate-400 dark:border-slate-800 dark:bg-slate-900">
+        Loading cost overview…
+      </div>
+    );
+  }
+  if (error || !data) {
+    return null; // silent — admin never sees this either way, so no need to surface
+  }
+
+  return (
+    <section className="rounded-2xl border border-rose-200 bg-rose-50/30 p-5 dark:border-rose-900/60 dark:bg-rose-950/20">
+      <header className="mb-3 flex items-center gap-2">
+        <span className="rounded-full bg-rose-600 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white">
+          Cost
+        </span>
+        <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+          Org-wide token usage
+        </h3>
+      </header>
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <MiniStat label="Total users" value={data.totalUsers.toLocaleString()} />
+        <MiniStat label="Total tokens" value={data.totalTokens.toLocaleString()} />
+        <MiniStat
+          label="Estimated cost"
+          value={`$${data.estimatedCostUsd.toFixed(4)}`}
+        />
+        <MiniStat
+          label="Top spender"
+          value={data.topSpenders[0]?.display ?? "—"}
+          hint={
+            data.topSpenders[0]
+              ? `${data.topSpenders[0].totalTokens.toLocaleString()} tok`
+              : ""
+          }
+        />
+      </div>
+      {data.topSpenders.length > 0 && (
+        <details className="mt-3">
+          <summary className="cursor-pointer text-xs font-semibold text-rose-700 dark:text-rose-300">
+            Top 10 spenders
+          </summary>
+          <ol className="mt-2 list-decimal space-y-1 pl-5 text-xs text-slate-700 dark:text-slate-200">
+            {data.topSpenders.map((s) => (
+              <li key={s.userId}>
+                <span className="font-medium">{s.display}</span> —{" "}
+                {s.totalTokens.toLocaleString()} tok ·{" "}
+                ${s.estimatedCostUsd.toFixed(4)}
+              </li>
+            ))}
+          </ol>
+        </details>
+      )}
+    </section>
+  );
+}
+
+function MiniStat({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  return (
+    <div className="rounded-xl bg-white px-3 py-2 dark:bg-slate-900">
+      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+        {label}
+      </p>
+      <p className="mt-0.5 truncate text-base font-bold text-slate-900 dark:text-slate-100">
+        {value}
+      </p>
+      {hint && <p className="text-[10px] text-slate-400">{hint}</p>}
     </div>
   );
 }

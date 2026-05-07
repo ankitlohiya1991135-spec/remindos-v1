@@ -73,7 +73,10 @@ export async function checkSuperadminRequest(): Promise<SuperadminGuardResult> {
   }
   const role = getRoleFromPublicMetadata(user.publicMetadata);
   if (!isSuperadminRole(role)) {
-    return { ok: false, status: 403, reason: "Superadmin role required" };
+    // Generic message: never say "superadmin" — an admin probing this
+    // endpoint must NOT learn that a higher tier exists. The string is
+    // identical to other "forbidden" responses.
+    return { ok: false, status: 403, reason: "Insufficient permissions" };
   }
   return { ok: true, userId, role: "superadmin" };
 }
