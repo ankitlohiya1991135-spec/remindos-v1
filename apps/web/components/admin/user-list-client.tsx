@@ -166,7 +166,7 @@ export function AdminUserListClient() {
         />
         <StatCard
           label="Admins"
-          value={data.users.filter((u) => u.role === "admin").length}
+          value={data.users.filter((u) => u.role === "admin" || u.role === "superadmin").length}
         />
       </div>
 
@@ -220,15 +220,20 @@ export function AdminUserListClient() {
                     </div>
                   </td>
                   <td className="px-4 py-3">
-                    <span
-                      className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${
-                        u.role === "admin"
-                          ? "bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300"
-                          : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"
-                      }`}
-                    >
-                      {u.role}
-                    </span>
+                    <RoleBadge role={u.role} />
+                    {u.actualRole && u.actualRole !== u.role && (
+                      <span
+                        className="ml-1.5 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
+                        title={`Real role: ${u.actualRole}. Visible only to superadmins.`}
+                      >
+                        actual: {u.actualRole}
+                      </span>
+                    )}
+                    {u.deactivated && (
+                      <span className="ml-1.5 rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold text-rose-700 dark:bg-rose-900/40 dark:text-rose-300">
+                        deactivated
+                      </span>
+                    )}
                   </td>
                   <td className="px-4 py-3 text-right font-mono text-xs text-slate-700 dark:text-slate-200">
                     {u.activity.totalPrompts}
@@ -260,6 +265,20 @@ export function AdminUserListClient() {
         </div>
       </div>
     </div>
+  );
+}
+
+function RoleBadge({ role }: { role: import("@repo/admin/types").UserRole }) {
+  const cls =
+    role === "superadmin"
+      ? "bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300"
+      : role === "admin"
+      ? "bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300"
+      : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300";
+  return (
+    <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${cls}`}>
+      {role}
+    </span>
   );
 }
 

@@ -1,23 +1,26 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import type {
-  AdminUserActivity,
-  UserRole,
-} from "@repo/admin/types";
+import { useCallback, useEffect, useState } from "react";
+import { USER_ROLES, type UserRole } from "@repo/admin/types";
+import type { AdminUserActivity } from "@repo/admin/types";
+
+interface DetailUser {
+  id: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+  username: string;
+  imageUrl: string;
+  role: UserRole;
+  /** Only present in API response when caller is superadmin. */
+  actualRole?: UserRole;
+  deactivated: boolean;
+  createdAt: number;
+  lastSignInAt: number | null;
+}
 
 interface DetailResponse {
-  user: {
-    id: string;
-    email: string;
-    firstName: string;
-    lastName: string;
-    username: string;
-    imageUrl: string;
-    role: UserRole;
-    createdAt: number;
-    lastSignInAt: number | null;
-  };
+  user: DetailUser;
   activity: AdminUserActivity;
 }
 
@@ -37,37 +40,37 @@ export function AdminUserDetailClient({ userId }: { userId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const refetch = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await fetch(
+        `/api/admin/users/${encodeURIComponent(userId)}/activity`,
+        { cache: "no-store" },
+      );
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(body.error ?? `Request failed (${res.status})`);
+      }
+      const payload = (await res.json()) as DetailResponse;
+      setData(payload);
+      setError(null);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLoading(false);
+    }
+  }, [userId]);
+
   useEffect(() => {
     let cancelled = false;
-    setLoading(true);
-    fetch(`/api/admin/users/${encodeURIComponent(userId)}/activity`, {
-      cache: "no-store",
-    })
-      .then(async (res) => {
-        if (!res.ok) {
-          const body = (await res.json().catch(() => ({}))) as { error?: string };
-          throw new Error(body.error ?? `Request failed (${res.status})`);
-        }
-        return (await res.json()) as DetailResponse;
-      })
-      .then((payload) => {
-        if (!cancelled) {
-          setData(payload);
-          setError(null);
-        }
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) {
-          setError(err instanceof Error ? err.message : String(err));
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
+    (async () => {
+      await refetch();
+      if (cancelled) return;
+    })();
     return () => {
       cancelled = true;
     };
-  }, [userId]);
+  }, [refetch]);
 
   if (loading) {
     return (
@@ -97,6 +100,13 @@ export function AdminUserDetailClient({ userId }: { userId: string }) {
 
   // Histogram normalisation
   const peak = Math.max(1, ...activity.dailyPromptCounts.map((d) => d.count));
+
+  // Caller is a superadmin iff the API exposed `actualRole`. The API only
+  // sets that field for verified-superadmin requests, so the presence of
+  // the field is itself a signal. We do NOT trust this for any access
+  // decision — the server enforces all destructive endpoints anyway.
+  const callerIsSuperadmin = user.actualRole !== undefined;
+  const realRole = user.actualRole ?? user.role;
 
   return (
     <div className="space-y-5">
@@ -138,8 +148,26 @@ export function AdminUserDetailClient({ userId }: { userId: string }) {
             Joined {formatDateTime(user.createdAt)} · Last sign-in{" "}
             {formatDateTime(user.lastSignInAt)}
           </p>
+          {user.deactivated && (
+            <span className="mt-2 inline-block rounded-full bg-rose-100 px-2 py-0.5 text-[11px] font-semibold text-rose-700 dark:bg-rose-900/40 dark:text-rose-300">
+              Deactivated
+            </span>
+          )}
         </div>
       </header>
+
+      {/* Superadmin actions panel — only rendered when the API marked the
+          caller as superadmin (presence of actualRole). Server re-verifies
+          on every action regardless. */}
+      {callerIsSuperadmin && (
+        <SuperadminActionsPanel
+          userId={user.id}
+          realRole={realRole}
+          displayRole={user.role}
+          deactivated={user.deactivated}
+          onChanged={() => void refetch()}
+        />
+      )}
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -156,7 +184,24 @@ export function AdminUserDetailClient({ userId }: { userId: string }) {
           value={`${activity.tasksCompleted} / ${activity.tasksCreated}`}
           hint="completed / total"
         />
+        <StatCard
+          label="Tokens (msgs only)"
+          value={activity.tokenEstimate.totalTokens.toLocaleString()}
+          hint={`${activity.tokenEstimate.inputTokens.toLocaleString()} in · ${activity.tokenEstimate.outputTokens.toLocaleString()} out`}
+        />
+        <StatCard
+          label="Est. cost (USD)"
+          value={`$${activity.tokenEstimate.estimatedCostUsd.toFixed(4)}`}
+          hint="lower bound — see details"
+        />
       </div>
+
+      <p className="text-[11px] text-slate-400">
+        Token estimates count chat message text only. Real upstream usage
+        is higher because each turn also includes wiki + digest context.
+        For accurate accounting, capture the NIM API <code>usage</code>{" "}
+        response per turn (separate ticket).
+      </p>
 
       {/* Daily activity histogram */}
       <section className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
@@ -223,7 +268,261 @@ export function AdminUserDetailClient({ userId }: { userId: string }) {
           ))}
         </ul>
       </section>
+
+      {/* Superadmin-only: recent reminders */}
+      {callerIsSuperadmin && activity.recentReminders && (
+        <section className="rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+          <header className="flex items-center justify-between border-b border-slate-100 px-5 py-3 dark:border-slate-800">
+            <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+              Recent reminders
+            </h3>
+            <span className="text-xs text-slate-400">
+              {activity.recentReminders.length} shown
+            </span>
+          </header>
+          <ul className="divide-y divide-slate-100 dark:divide-slate-800">
+            {activity.recentReminders.length === 0 && (
+              <li className="px-5 py-6 text-center text-sm text-slate-400">
+                No reminders.
+              </li>
+            )}
+            {activity.recentReminders.map((row) => (
+              <li
+                key={row.id}
+                className="grid gap-1 px-5 py-3 sm:grid-cols-[8rem_4rem_1fr_8rem] sm:gap-3"
+              >
+                <span className="text-xs text-slate-400">
+                  {formatDateTime(row.createdAt)}
+                </span>
+                <span
+                  className={`w-fit rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                    row.status === "done"
+                      ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
+                      : row.status === "pending"
+                      ? "bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
+                      : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+                  }`}
+                >
+                  {row.status}
+                </span>
+                <p className="truncate text-sm text-slate-700 dark:text-slate-200">
+                  {row.title}
+                </p>
+                <span className="text-xs text-slate-400">
+                  due {formatDateTime(row.dueAt)}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {/* Superadmin-only: recent notifications */}
+      {callerIsSuperadmin && activity.recentNotifications && (
+        <section className="rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+          <header className="flex items-center justify-between border-b border-slate-100 px-5 py-3 dark:border-slate-800">
+            <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+              Recent notifications
+            </h3>
+            <span className="text-xs text-slate-400">
+              {activity.recentNotifications.length} shown
+            </span>
+          </header>
+          <ul className="divide-y divide-slate-100 dark:divide-slate-800">
+            {activity.recentNotifications.length === 0 && (
+              <li className="px-5 py-6 text-center text-sm text-slate-400">
+                No notifications.
+              </li>
+            )}
+            {activity.recentNotifications.map((row) => (
+              <li
+                key={row.id}
+                className="grid gap-1 px-5 py-3 sm:grid-cols-[8rem_5rem_1fr] sm:gap-3"
+              >
+                <span className="text-xs text-slate-400">
+                  {formatDateTime(row.createdAt)}
+                </span>
+                <span className="w-fit rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                  {row.type}
+                </span>
+                <div>
+                  <p className="text-sm font-medium text-slate-900 dark:text-slate-100">
+                    {row.title}
+                    {!row.read && (
+                      <span className="ml-2 inline-block h-1.5 w-1.5 rounded-full bg-rose-500" />
+                    )}
+                  </p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    {row.body}
+                  </p>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
     </div>
+  );
+}
+
+function SuperadminActionsPanel({
+  userId,
+  realRole,
+  displayRole,
+  deactivated,
+  onChanged,
+}: {
+  userId: string;
+  realRole: UserRole;
+  displayRole: UserRole;
+  deactivated: boolean;
+  onChanged: () => void;
+}) {
+  const [working, setWorking] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [pendingUserType, setPendingUserType] = useState<UserRole>(realRole);
+  const [pendingDisplayRole, setPendingDisplayRole] = useState<UserRole | "">(
+    displayRole === realRole ? "" : displayRole,
+  );
+
+  const callApi = useCallback(
+    async (path: string, body: unknown) => {
+      setWorking(true);
+      setActionError(null);
+      try {
+        const res = await fetch(path, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+          const payload = (await res.json().catch(() => ({}))) as {
+            error?: string;
+          };
+          throw new Error(payload.error ?? `Request failed (${res.status})`);
+        }
+        onChanged();
+      } catch (err) {
+        setActionError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setWorking(false);
+      }
+    },
+    [onChanged],
+  );
+
+  const handleSaveRole = () => {
+    const userTypeChanged = pendingUserType !== realRole;
+    const wantedDisplayRole = pendingDisplayRole === "" ? null : pendingDisplayRole;
+    const currentDisplayOverride = displayRole === realRole ? null : displayRole;
+    const displayChanged = wantedDisplayRole !== currentDisplayOverride;
+    if (!userTypeChanged && !displayChanged) return;
+
+    const body: Record<string, unknown> = {};
+    if (userTypeChanged) body.userType = pendingUserType;
+    if (displayChanged) body.displayRole = wantedDisplayRole;
+    void callApi(`/api/admin/users/${encodeURIComponent(userId)}/role`, body);
+  };
+
+  const handleToggleDeactivate = () => {
+    if (
+      !confirm(
+        deactivated
+          ? "Reactivate this account? They'll be able to sign in again."
+          : "Deactivate this account? They'll be banned from signing in.",
+      )
+    ) {
+      return;
+    }
+    void callApi(`/api/admin/users/${encodeURIComponent(userId)}/deactivate`, {
+      deactivated: !deactivated,
+    });
+  };
+
+  return (
+    <section className="rounded-2xl border border-rose-200 bg-rose-50/40 p-5 dark:border-rose-900/60 dark:bg-rose-950/20">
+      <header className="mb-3 flex items-center gap-2">
+        <span className="rounded-full bg-rose-600 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white">
+          Superadmin
+        </span>
+        <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+          Manage this user
+        </h3>
+      </header>
+
+      <div className="grid gap-4 sm:grid-cols-2">
+        <div>
+          <label className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+            Real role (controls access)
+          </label>
+          <select
+            value={pendingUserType}
+            onChange={(e) => setPendingUserType(e.target.value as UserRole)}
+            disabled={working}
+            className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+          >
+            {USER_ROLES.map((r) => (
+              <option key={r} value={r}>
+                {r}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div>
+          <label className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+            Display override (UI only)
+          </label>
+          <select
+            value={pendingDisplayRole}
+            onChange={(e) =>
+              setPendingDisplayRole(e.target.value as UserRole | "")
+            }
+            disabled={working}
+            className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+          >
+            <option value="">— none (show real role) —</option>
+            {USER_ROLES.map((r) => (
+              <option key={r} value={r}>
+                show as: {r}
+              </option>
+            ))}
+          </select>
+          <p className="mt-1 text-[10px] text-slate-400">
+            Cosmetic only. Other admins will see this label instead of the real role.
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={handleSaveRole}
+          disabled={working}
+          className="rounded-full bg-violet-600 px-4 py-2 text-xs font-semibold text-white transition hover:bg-violet-500 disabled:opacity-50"
+        >
+          {working ? "Saving…" : "Save role changes"}
+        </button>
+        <button
+          type="button"
+          onClick={handleToggleDeactivate}
+          disabled={working}
+          className={`rounded-full px-4 py-2 text-xs font-semibold transition disabled:opacity-50 ${
+            deactivated
+              ? "bg-emerald-600 text-white hover:bg-emerald-500"
+              : "bg-rose-600 text-white hover:bg-rose-500"
+          }`}
+        >
+          {deactivated ? "Reactivate account" : "Deactivate account"}
+        </button>
+      </div>
+
+      {actionError && (
+        <p className="mt-3 rounded-xl border border-rose-300 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-800 dark:border-rose-900 dark:bg-rose-950/50 dark:text-rose-300">
+          {actionError}
+        </p>
+      )}
+    </section>
   );
 }
 

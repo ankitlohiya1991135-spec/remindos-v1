@@ -3,7 +3,7 @@
 import { useUser, useClerk } from "@clerk/nextjs";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
-import { getRoleFromPublicMetadata, isAdminRole } from "@repo/admin";
+import { canAccessAdmin, getRoleFromPublicMetadata } from "@repo/admin";
 
 export function AppDrawer() {
   const [mounted, setMounted] = useState(false);
@@ -55,10 +55,11 @@ export function AppDrawer() {
   const email = user?.emailAddresses?.[0]?.emailAddress ?? "";
 
   // Type-safe admin check via @repo/admin (no `as` casts thanks to the
-  // global UserPublicMetadata augmentation in that package).
-  // NOTE: This is UI-gating only — every admin API route also re-verifies
-  // server-side, so a user can't see admin data even if they spoof this.
-  const isAdmin = isAdminRole(getRoleFromPublicMetadata(user?.publicMetadata));
+  // global UserPublicMetadata augmentation in that package). True for
+  // BOTH `admin` and `superadmin`. NOTE: This is UI-gating only — every
+  // admin API route also re-verifies server-side, so a user can't see
+  // admin data even if they spoof this.
+  const isAdmin = canAccessAdmin(getRoleFromPublicMetadata(user?.publicMetadata));
 
   const dispatch = (eventName: string) => {
     close();

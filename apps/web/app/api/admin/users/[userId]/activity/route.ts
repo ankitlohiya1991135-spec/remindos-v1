@@ -1,7 +1,11 @@
 import { clerkClient } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { checkAdminRequest, getAdminConvexSecret } from "@repo/admin/server";
-import { getRoleFromPublicMetadata } from "@repo/admin";
+import {
+  getDisplayRole,
+  getRoleFromPublicMetadata,
+  isDeactivatedFromMetadata,
+} from "@repo/admin";
 import type {
   AdminApiError,
   AdminUserActivity,
@@ -52,12 +56,18 @@ export async function GET(
     }
 
     const convex = getConvexClient();
+    const callerIsSuperadmin = guard.role === "superadmin";
     const activity = (await convex.query(api.admin.userActivityDetail, {
       userId,
       adminSecret: getAdminConvexSecret(),
+      includeNotifications: callerIsSuperadmin,
+      includeReminders: callerIsSuperadmin,
     })) as AdminUserActivity;
 
-    const role: UserRole = getRoleFromPublicMetadata(clerkUser.publicMetadata);
+    const realRole: UserRole = getRoleFromPublicMetadata(clerkUser.publicMetadata);
+    const displayRole: UserRole = getDisplayRole(clerkUser.publicMetadata);
+    const banned = Boolean((clerkUser as { banned?: boolean }).banned);
+    const deactivated = banned || isDeactivatedFromMetadata(clerkUser.publicMetadata);
 
     return NextResponse.json({
       user: {
@@ -67,7 +77,10 @@ export async function GET(
         lastName: clerkUser.lastName ?? "",
         username: clerkUser.username ?? "",
         imageUrl: clerkUser.imageUrl,
-        role,
+        role: displayRole,
+        // Real role is exposed ONLY to superadmins.
+        ...(callerIsSuperadmin ? { actualRole: realRole } : {}),
+        deactivated,
         createdAt: clerkUser.createdAt ?? 0,
         lastSignInAt: clerkUser.lastSignInAt ?? null,
       },

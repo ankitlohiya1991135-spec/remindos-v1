@@ -1,7 +1,11 @@
 import { clerkClient } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { checkAdminRequest, getAdminConvexSecret } from "@repo/admin/server";
-import { getRoleFromPublicMetadata } from "@repo/admin";
+import {
+  getDisplayRole,
+  getRoleFromPublicMetadata,
+  isDeactivatedFromMetadata,
+} from "@repo/admin";
 import type { AdminApiError, AdminListedUser } from "@repo/admin/types";
 import { api } from "@repo/db/convex/api";
 import { getConvexClient } from "../../../../lib/server/convex-client";
@@ -38,21 +42,34 @@ export async function GET(request: Request) {
     ? Math.min(limitParam, MAX_USERS)
     : MAX_USERS;
 
+  // Did the caller pass the superadmin guard? If yes, expose actualRole.
+  // Admins receive only `role` (= display role) so they cannot identify
+  // hidden superadmins from the API response.
+  const callerIsSuperadmin = guard.role === "superadmin";
+
   try {
     const client = await clerkClient();
     const res = await client.users.getUserList({ limit, orderBy: "-created_at" });
 
-    const baseUsers = res.data.map((u) => ({
-      id: u.id,
-      email: u.primaryEmailAddress?.emailAddress ?? "",
-      firstName: u.firstName ?? "",
-      lastName: u.lastName ?? "",
-      username: u.username ?? "",
-      imageUrl: u.imageUrl,
-      role: getRoleFromPublicMetadata(u.publicMetadata),
-      createdAt: u.createdAt ?? 0,
-      lastSignInAt: u.lastSignInAt ?? null,
-    }));
+    const baseUsers = res.data.map((u) => {
+      const realRole = getRoleFromPublicMetadata(u.publicMetadata);
+      const displayRole = getDisplayRole(u.publicMetadata);
+      const banned = Boolean((u as { banned?: boolean }).banned);
+      const deactivated = banned || isDeactivatedFromMetadata(u.publicMetadata);
+      return {
+        id: u.id,
+        email: u.primaryEmailAddress?.emailAddress ?? "",
+        firstName: u.firstName ?? "",
+        lastName: u.lastName ?? "",
+        username: u.username ?? "",
+        imageUrl: u.imageUrl,
+        role: displayRole,
+        ...(callerIsSuperadmin ? { actualRole: realRole } : {}),
+        deactivated,
+        createdAt: u.createdAt ?? 0,
+        lastSignInAt: u.lastSignInAt ?? null,
+      };
+    });
 
     // Bulk-fetch activity stats from Convex (single round-trip).
     // The shared secret prevents anyone with the public Convex URL from

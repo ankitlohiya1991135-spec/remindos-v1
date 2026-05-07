@@ -4,43 +4,77 @@
  * enforces this.
  */
 
-import { auth, currentUser } from "@clerk/nextjs/server";
-import { getRoleFromPublicMetadata, isAdminRole } from "./roles";
+import { auth, clerkClient, currentUser } from "@clerk/nextjs/server";
+import {
+  canAccessAdmin,
+  getRoleFromPublicMetadata,
+  isSuperadminRole,
+} from "./roles";
 import type { UserRole } from "./types";
 
 /**
- * Result of an admin guard check. Discriminated by `ok` so callers can
- * narrow safely without casts.
+ * Result of an admin guard check (admin OR superadmin). Discriminated by
+ * `ok` so callers can narrow safely without casts.
+ *
+ * The `role` field carries the REAL role (`"admin" | "superadmin"`) so
+ * downstream code can branch — e.g. include `actualRole` in responses
+ * only when `role === "superadmin"`.
  */
 export type AdminGuardResult =
-  | { ok: true; userId: string; role: "admin" }
+  | { ok: true; userId: string; role: "admin" | "superadmin" }
   | { ok: false; status: 401 | 403; reason: string };
 
 /**
- * Authoritative admin check. Always reads the user's CURRENT publicMetadata
- * from Clerk (not from session JWT claims, which require a Clerk dashboard
- * JWT-template config and may be cached). Use this on every admin API route.
+ * Result of a superadmin-only guard.
+ */
+export type SuperadminGuardResult =
+  | { ok: true; userId: string; role: "superadmin" }
+  | { ok: false; status: 401 | 403; reason: string };
+
+/**
+ * Authoritative admin check. Allows BOTH admin and superadmin. Always reads
+ * the user's CURRENT publicMetadata from Clerk (not from session JWT claims
+ * which require a Clerk dashboard JWT-template config and may be cached).
  *
- * Returns a discriminated result rather than throwing so callers can choose
- * the response shape (NextResponse.json, redirect, etc.).
+ * Use this on every admin API route. Returns a discriminated result rather
+ * than throwing so callers can choose the response shape.
  */
 export async function checkAdminRequest(): Promise<AdminGuardResult> {
   const { userId } = await auth();
   if (!userId) {
     return { ok: false, status: 401, reason: "Not signed in" };
   }
-  // Fetch fresh — sessionClaims.publicMetadata is undefined unless the user
-  // has configured a Clerk JWT template. Defaulting to the API call is the
-  // safer cross-environment behaviour.
   const user = await currentUser();
   if (!user) {
     return { ok: false, status: 401, reason: "User record not found" };
   }
   const role = getRoleFromPublicMetadata(user.publicMetadata);
-  if (!isAdminRole(role)) {
+  if (!canAccessAdmin(role)) {
     return { ok: false, status: 403, reason: "Admin role required" };
   }
-  return { ok: true, userId, role: "admin" };
+  // Type-safe narrowing: canAccessAdmin → role is "admin" | "superadmin".
+  return { ok: true, userId, role: role as "admin" | "superadmin" };
+}
+
+/**
+ * Strict guard: only superadmin passes. Admin returns 403. Use this on
+ * destructive endpoints (role updates, deactivation) and superadmin-only
+ * data exposure.
+ */
+export async function checkSuperadminRequest(): Promise<SuperadminGuardResult> {
+  const { userId } = await auth();
+  if (!userId) {
+    return { ok: false, status: 401, reason: "Not signed in" };
+  }
+  const user = await currentUser();
+  if (!user) {
+    return { ok: false, status: 401, reason: "User record not found" };
+  }
+  const role = getRoleFromPublicMetadata(user.publicMetadata);
+  if (!isSuperadminRole(role)) {
+    return { ok: false, status: 403, reason: "Superadmin role required" };
+  }
+  return { ok: true, userId, role: "superadmin" };
 }
 
 /**
@@ -56,6 +90,36 @@ export async function getCurrentUserRole(): Promise<{
   const user = await currentUser();
   if (!user) return { userId, role: null };
   return { userId, role: getRoleFromPublicMetadata(user.publicMetadata) };
+}
+
+/**
+ * Count active (non-banned, non-deactivated) superadmins by paging
+ * through Clerk users. Called only on demote / deactivate operations to
+ * prevent the org from losing its last superadmin.
+ *
+ * Caps at 5000 users for sanity; if you have more, increase or move to
+ * a Convex `roleRegistry` table maintained on every role change.
+ */
+export async function countActiveSuperadmins(): Promise<number> {
+  const client = await clerkClient();
+  const PAGE = 200;
+  const HARD_CAP = 5000;
+  let offset = 0;
+  let count = 0;
+  while (offset < HARD_CAP) {
+    const res = await client.users.getUserList({ limit: PAGE, offset });
+    for (const u of res.data) {
+      const role = getRoleFromPublicMetadata(u.publicMetadata);
+      const deactivatedFlag = Boolean(u.publicMetadata?.deactivated);
+      const banned = Boolean((u as { banned?: boolean }).banned);
+      if (role === "superadmin" && !deactivatedFlag && !banned) {
+        count++;
+      }
+    }
+    if (res.data.length < PAGE) break;
+    offset += PAGE;
+  }
+  return count;
 }
 
 /**

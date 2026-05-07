@@ -7,8 +7,19 @@
  * the entire app — no `as "admin"` casts needed anywhere.
  */
 
-/** Canonical role values stored on Clerk `publicMetadata.userType`. */
-export const USER_ROLES = ["admin", "user"] as const;
+/**
+ * Canonical role values stored on Clerk `publicMetadata.userType`.
+ *
+ * Hierarchy (highest → lowest privilege):
+ *   superadmin → admin → user
+ *
+ * `superadmin` is intentionally HIDDEN: when an admin views the user list,
+ * a superadmin appears with whatever `displayRole` the superadmin chose
+ * (typically "user" or "admin"). Only superadmins ever see real roles in
+ * the UI. See `getDisplayRole()` and the `actualRole` field in
+ * `AdminListedUser`.
+ */
+export const USER_ROLES = ["superadmin", "admin", "user"] as const;
 export type UserRole = (typeof USER_ROLES)[number];
 
 /** Default role assumed when `publicMetadata.userType` is missing. */
@@ -20,7 +31,21 @@ declare global {
    * Extend this interface here (not in app code) so the type is shared.
    */
   interface UserPublicMetadata {
+    /** Real, access-controlling role. Defaults to "user" if absent. */
     userType?: UserRole;
+    /**
+     * Optional UI-only override. When set, non-superadmin viewers see this
+     * value instead of `userType`. Lets a superadmin masquerade as "user"
+     * or "admin" so admins cannot identify them. NEVER read this in any
+     * authorization check — it has no security meaning.
+     */
+    displayRole?: UserRole;
+    /**
+     * Soft-deactivation marker set by a superadmin. We ALSO ban the user
+     * via Clerk for hard enforcement; this flag is for UI/audit clarity
+     * and survives even if a Clerk-level un-ban is performed.
+     */
+    deactivated?: boolean;
   }
 }
 
@@ -32,7 +57,20 @@ export interface AdminListedUser {
   lastName: string;
   username: string;
   imageUrl: string;
+  /**
+   * What the viewer should display. For non-superadmin viewers this is the
+   * potentially-masked `displayRole`; for superadmins it is also the
+   * displayRole (so they see exactly what admins see).
+   */
   role: UserRole;
+  /**
+   * The real `userType`. Only present when the request was made by a
+   * superadmin — admins receive `undefined` so they cannot identify hidden
+   * superadmins from the API response.
+   */
+  actualRole?: UserRole;
+  /** Banned in Clerk OR `deactivated: true` in publicMetadata. */
+  deactivated: boolean;
   createdAt: number;
   lastSignInAt: number | null;
   /** Activity stats joined from Convex. */
@@ -66,6 +104,49 @@ export interface AdminUserActivity {
   recentPrompts: AdminUserPromptRow[];
   /** Per-day prompt counts for the last 14 days. */
   dailyPromptCounts: Array<{ date: string; count: number }>;
+  /**
+   * Rough token-count estimate from chat content alone. Does NOT include
+   * the wiki + digest + JSON context the chat route appends per turn, so
+   * real upstream usage is higher. Real instrumentation is a follow-up
+   * (capture `usage` from the NIM API response and store on each row).
+   */
+  tokenEstimate: {
+    inputTokens: number;       // sum across user/system messages
+    outputTokens: number;      // sum across assistant messages
+    totalTokens: number;
+    estimatedCostUsd: number;  // input * inputRate + output * outputRate
+  };
+  /** Recent notifications (superadmin-only). */
+  recentNotifications?: Array<{
+    id: string;
+    type: string;
+    title: string;
+    body: string;
+    read: boolean;
+    createdAt: number;
+  }>;
+  /** Recent reminders summary (superadmin-only). */
+  recentReminders?: Array<{
+    id: string;
+    title: string;
+    status: string;
+    dueAt: number;
+    createdAt: number;
+  }>;
+}
+
+/** Body shape for `POST /api/admin/users/[userId]/role` (superadmin-only). */
+export interface UpdateUserRoleRequest {
+  /** Set the access-controlling role. Optional. */
+  userType?: UserRole;
+  /** Set the UI-only display override. Optional. Pass `null` to clear. */
+  displayRole?: UserRole | null;
+}
+
+/** Body shape for `POST /api/admin/users/[userId]/deactivate`. */
+export interface DeactivateUserRequest {
+  /** true → ban + flag; false → unban + clear flag. */
+  deactivated: boolean;
 }
 
 /** Standard error payload shape returned by admin API routes. */

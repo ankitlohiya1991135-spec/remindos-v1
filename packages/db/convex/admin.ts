@@ -126,11 +126,22 @@ export const userActivityDetail = query({
     adminSecret: v.string(),
     promptLimit: v.optional(v.number()),
     previewLength: v.optional(v.number()),
+    /** Superadmin-only: include recent notifications. */
+    includeNotifications: v.optional(v.boolean()),
+    /** Superadmin-only: include recent reminders. */
+    includeReminders: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     assertAdminSecret(args.adminSecret);
     const promptLimit = Math.min(Math.max(args.promptLimit ?? 50, 1), 200);
     const previewLength = Math.min(Math.max(args.previewLength ?? 200, 20), 500);
+    const CHARS_PER_TOKEN = 4;
+    const INPUT_RATE_PER_1M = Number.parseFloat(
+      process.env.NIM_INPUT_COST_PER_1M_TOKENS ?? "",
+    ) || 0.4;
+    const OUTPUT_RATE_PER_1M = Number.parseFloat(
+      process.env.NIM_OUTPUT_COST_PER_1M_TOKENS ?? "",
+    ) || 2.0;
 
     const now = Date.now();
     const cutoff24h = now - DAY_MS;
@@ -145,16 +156,34 @@ export const userActivityDetail = query({
     let totalPrompts = 0;
     let promptsLast24h = 0;
     let promptsLast7d = 0;
+    let inputChars = 0;
+    let outputChars = 0;
     const recentByCreatedAt = [...chatRows].sort(
       (a, b) => b.createdAt - a.createdAt,
     );
 
     for (const row of chatRows) {
+      // Token estimation: assistant text → output, user/system → input.
+      if (row.role === "assistant") outputChars += row.content.length;
+      else inputChars += row.content.length;
+
       if (row.role !== "user") continue;
       totalPrompts++;
       if (row.createdAt >= cutoff24h) promptsLast24h++;
       if (row.createdAt >= cutoff7d) promptsLast7d++;
     }
+
+    const inputTokens = Math.ceil(inputChars / CHARS_PER_TOKEN);
+    const outputTokens = Math.ceil(outputChars / CHARS_PER_TOKEN);
+    const estimatedCostUsd =
+      (inputTokens / 1_000_000) * INPUT_RATE_PER_1M +
+      (outputTokens / 1_000_000) * OUTPUT_RATE_PER_1M;
+    const tokenEstimate = {
+      inputTokens,
+      outputTokens,
+      totalTokens: inputTokens + outputTokens,
+      estimatedCostUsd: Math.round(estimatedCostUsd * 1_000_000) / 1_000_000,
+    };
 
     const recentPrompts = recentByCreatedAt.slice(0, promptLimit).map((row) => ({
       clientId: row.clientId,
@@ -200,6 +229,58 @@ export const userActivityDetail = query({
     const tasksCreated = tasks.length;
     const tasksCompleted = tasks.filter((t) => t.status === "done").length;
 
+    // Superadmin-only payloads.
+    let recentNotifications:
+      | Array<{
+          id: string;
+          type: string;
+          title: string;
+          body: string;
+          read: boolean;
+          createdAt: number;
+        }>
+      | undefined;
+    let recentReminders:
+      | Array<{
+          id: string;
+          title: string;
+          status: string;
+          dueAt: number;
+          createdAt: number;
+        }>
+      | undefined;
+
+    if (args.includeNotifications) {
+      const notifs = await ctx.db
+        .query("notifications")
+        .withIndex("by_user_created", (q) => q.eq("userId", args.userId))
+        .collect();
+      recentNotifications = notifs
+        .sort((a, b) => b.createdAt - a.createdAt)
+        .slice(0, 25)
+        .map((n) => ({
+          id: String(n._id),
+          type: n.type,
+          title: n.title,
+          body: n.body,
+          read: n.read,
+          createdAt: n.createdAt,
+        }));
+    }
+
+    if (args.includeReminders) {
+      recentReminders = [...reminders]
+        .sort((a, b) => b.createdAt - a.createdAt)
+        .slice(0, 25)
+        .map((r) => ({
+          id: String(r._id),
+          title: r.title,
+          status: r.status,
+          dueAt: r.dueAt,
+          createdAt: r.createdAt,
+        }));
+    }
+
     return {
       userId: args.userId,
       totalPrompts,
@@ -211,6 +292,9 @@ export const userActivityDetail = query({
       tasksCompleted,
       recentPrompts,
       dailyPromptCounts,
+      tokenEstimate,
+      ...(recentNotifications ? { recentNotifications } : {}),
+      ...(recentReminders ? { recentReminders } : {}),
     };
   },
 });
