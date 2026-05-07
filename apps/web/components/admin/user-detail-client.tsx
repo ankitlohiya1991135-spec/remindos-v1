@@ -114,7 +114,25 @@ export function AdminUserDetailClient({ userId }: { userId: string }) {
     user.id;
 
   // Histogram normalisation
-  const peak = Math.max(1, ...activity.dailyPromptCounts.map((d) => d.count));
+  const peak = Math.max(1, ...(activity.dailyPromptCounts ?? []).map((d) => d.count));
+
+  // sessionStats may be missing if the Convex backend hasn't been redeployed
+  // since the schema change. Fall back to zeros so the page still renders.
+  const sessionStats = activity.sessionStats ?? {
+    totalActiveMs: 0,
+    activeMs24h: 0,
+    activeMs7d: 0,
+    sessionCount: 0,
+    lastSeenAt: null,
+  };
+  const dailyPromptCounts = activity.dailyPromptCounts ?? [];
+  const recentPrompts = activity.recentPrompts ?? [];
+  const tokenEstimate = activity.tokenEstimate ?? {
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    estimatedCostUsd: 0,
+  };
 
   // Caller is a superadmin iff the API exposed `actualRole`. The API only
   // sets that field for verified-superadmin requests, so the presence of
@@ -203,30 +221,30 @@ export function AdminUserDetailClient({ userId }: { userId: string }) {
         />
         <StatCard
           label="Active time (7d)"
-          value={formatDuration(activity.sessionStats.activeMs7d)}
-          hint={`${activity.sessionStats.sessionCount} sessions total`}
+          value={formatDuration(sessionStats.activeMs7d)}
+          hint={`${sessionStats.sessionCount} sessions total`}
         />
         <StatCard
           label="Active time (24h)"
-          value={formatDuration(activity.sessionStats.activeMs24h)}
-          hint={`last seen ${formatDateTime(activity.sessionStats.lastSeenAt)}`}
+          value={formatDuration(sessionStats.activeMs24h)}
+          hint={`last seen ${formatDateTime(sessionStats.lastSeenAt)}`}
         />
         <StatCard
           label="Active time (lifetime)"
-          value={formatDuration(activity.sessionStats.totalActiveMs)}
+          value={formatDuration(sessionStats.totalActiveMs)}
           hint="aggregate across all sessions"
         />
         {callerIsSuperadmin && (
           <StatCard
             label="Tokens (msgs only)"
-            value={activity.tokenEstimate.totalTokens.toLocaleString()}
-            hint={`${activity.tokenEstimate.inputTokens.toLocaleString()} in · ${activity.tokenEstimate.outputTokens.toLocaleString()} out`}
+            value={tokenEstimate.totalTokens.toLocaleString()}
+            hint={`${tokenEstimate.inputTokens.toLocaleString()} in · ${tokenEstimate.outputTokens.toLocaleString()} out`}
           />
         )}
         {callerIsSuperadmin && (
           <StatCard
             label="Est. cost (USD)"
-            value={`$${activity.tokenEstimate.estimatedCostUsd.toFixed(4)}`}
+            value={`$${tokenEstimate.estimatedCostUsd.toFixed(4)}`}
             hint="lower bound — see details"
           />
         )}
@@ -252,7 +270,7 @@ export function AdminUserDetailClient({ userId }: { userId: string }) {
           Daily prompt activity (last 14 days)
         </h3>
         <div className="flex h-32 items-end gap-1.5">
-          {activity.dailyPromptCounts.map((d) => (
+          {dailyPromptCounts.map((d) => (
             <div key={d.date} className="flex flex-1 flex-col items-center gap-1">
               <div className="flex h-24 w-full items-end">
                 <div
@@ -278,16 +296,16 @@ export function AdminUserDetailClient({ userId }: { userId: string }) {
                 Recent messages
               </h3>
               <span className="text-xs text-slate-400">
-                {activity.recentPrompts.length} shown · previews truncated
+                {recentPrompts.length} shown · previews truncated
               </span>
             </header>
             <ul className="divide-y divide-slate-100 dark:divide-slate-800">
-              {activity.recentPrompts.length === 0 && (
+              {recentPrompts.length === 0 && (
                 <li className="px-5 py-6 text-center text-sm text-slate-400">
                   No chat messages.
                 </li>
               )}
-              {activity.recentPrompts.map((row) => (
+              {recentPrompts.map((row) => (
                 <li
                   key={row.clientId}
                   className="grid gap-1 px-5 py-3 sm:grid-cols-[7rem_5rem_1fr] sm:gap-3"
