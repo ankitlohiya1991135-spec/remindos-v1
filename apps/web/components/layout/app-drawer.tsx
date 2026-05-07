@@ -3,6 +3,7 @@
 import { useUser, useClerk } from "@clerk/nextjs";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
+import { getRoleFromPublicMetadata, isAdminRole } from "@repo/admin";
 
 export function AppDrawer() {
   const [mounted, setMounted] = useState(false);
@@ -53,9 +54,20 @@ export function AppDrawer() {
     [user?.firstName, user?.lastName].filter(Boolean).join(" ") || "User";
   const email = user?.emailAddresses?.[0]?.emailAddress ?? "";
 
+  // Type-safe admin check via @repo/admin (no `as` casts thanks to the
+  // global UserPublicMetadata augmentation in that package).
+  // NOTE: This is UI-gating only — every admin API route also re-verifies
+  // server-side, so a user can't see admin data even if they spoof this.
+  const isAdmin = isAdminRole(getRoleFromPublicMetadata(user?.publicMetadata));
+
   const dispatch = (eventName: string) => {
     close();
     setTimeout(() => window.dispatchEvent(new CustomEvent(eventName)), 150);
+  };
+
+  const navigateAndClose = (path: string) => {
+    close();
+    setTimeout(() => router.push(path), 150);
   };
 
   const quickActions = [
@@ -207,6 +219,19 @@ export function AppDrawer() {
 
           {/* Divider */}
           <div className="my-4 h-px bg-slate-100 dark:bg-slate-800" />
+
+          {/* Admin: User Management — only rendered when role === "admin" */}
+          {isAdmin && (
+            <button
+              type="button"
+              onClick={() => navigateAndClose("/admin")}
+              data-testid="drawer-user-management"
+              className="mb-2 flex w-full items-center justify-center gap-2 rounded-xl border border-violet-200 bg-violet-50 py-2.5 text-center text-xs font-semibold text-violet-700 transition hover:bg-violet-100 active:scale-[0.98] dark:border-violet-900/60 dark:bg-violet-950/40 dark:text-violet-300 dark:hover:bg-violet-950/60"
+            >
+              <span>👥</span>
+              User Management
+            </button>
+          )}
 
           {/* Clear chat */}
           <button

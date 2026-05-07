@@ -35,6 +35,9 @@ importers:
       '@clerk/nextjs':
         specifier: ^7.0.12
         version: 7.0.12(next@16.2.0(@playwright/test@1.59.1)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@repo/admin':
+        specifier: workspace:*
+        version: link:../../packages/admin
       '@repo/db':
         specifier: workspace:*
         version: link:../../packages/db
@@ -99,6 +102,27 @@ importers:
       tailwindcss:
         specifier: ^4.2.2
         version: 4.2.2
+      typescript:
+        specifier: 5.9.2
+        version: 5.9.2
+
+  packages/admin:
+    devDependencies:
+      '@clerk/nextjs':
+        specifier: ^7.0.12
+        version: 7.0.12(next@16.2.0(@playwright/test@1.59.1)(react-dom@19.2.3(react@19.2.3))(react@19.2.3))(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@repo/eslint-config':
+        specifier: workspace:*
+        version: link:../eslint-config
+      '@repo/typescript-config':
+        specifier: workspace:*
+        version: link:../typescript-config
+      '@types/node':
+        specifier: ^22.15.3
+        version: 22.15.3
+      eslint:
+        specifier: ^9.39.1
+        version: 9.39.1(jiti@2.6.1)
       typescript:
         specifier: 5.9.2
         version: 5.9.2

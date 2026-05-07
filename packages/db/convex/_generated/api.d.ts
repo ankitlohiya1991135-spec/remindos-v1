@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as admin from "../admin.js";
 import type * as chat from "../chat.js";
 import type * as notifications from "../notifications.js";
 import type * as pushNotificationLogs from "../pushNotificationLogs.js";
@@ -26,6 +27,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  admin: typeof admin;
   chat: typeof chat;
   notifications: typeof notifications;
   pushNotificationLogs: typeof pushNotificationLogs;

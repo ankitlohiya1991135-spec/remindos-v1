@@ -1,3 +1,8 @@
+// Side-effect import: registers the global `UserPublicMetadata` type
+// augmentation so `user.publicMetadata.userType` is typed everywhere — even
+// in files that don't otherwise import from @repo/admin.
+import "@repo/admin";
+
 import type { Metadata } from "next";
 import { ClerkProvider, Show } from "@clerk/nextjs";
 import { currentUser } from "@clerk/nextjs/server";
