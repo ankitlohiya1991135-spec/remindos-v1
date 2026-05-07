@@ -281,6 +281,40 @@ export const userActivityDetail = query({
         }));
     }
 
+    // Session/usage timing (privacy-safe — no content). Pulls all session
+    // rows and aggregates by window. With heartbeats merged into 5-minute
+    // sessions and ~30d retention this stays bounded.
+    const sessions = await ctx.db
+      .query("userSessions")
+      .withIndex("by_user_lastSeen", (q) => q.eq("userId", args.userId))
+      .collect();
+    let totalActiveMs = 0;
+    let activeMs24h = 0;
+    let activeMs7d = 0;
+    let lastSeenAt: number | null = null;
+    for (const s of sessions) {
+      const dur = Math.max(0, s.lastSeenAt - s.startedAt);
+      totalActiveMs += dur;
+      if (s.lastSeenAt >= cutoff24h) {
+        const start24 = Math.max(s.startedAt, cutoff24h);
+        activeMs24h += Math.max(0, s.lastSeenAt - start24);
+      }
+      if (s.lastSeenAt >= cutoff7d) {
+        const start7 = Math.max(s.startedAt, cutoff7d);
+        activeMs7d += Math.max(0, s.lastSeenAt - start7);
+      }
+      if (lastSeenAt === null || s.lastSeenAt > lastSeenAt) {
+        lastSeenAt = s.lastSeenAt;
+      }
+    }
+    const sessionStats = {
+      totalActiveMs,
+      activeMs24h,
+      activeMs7d,
+      sessionCount: sessions.length,
+      lastSeenAt,
+    };
+
     return {
       userId: args.userId,
       totalPrompts,
@@ -293,6 +327,7 @@ export const userActivityDetail = query({
       recentPrompts,
       dailyPromptCounts,
       tokenEstimate,
+      sessionStats,
       ...(recentNotifications ? { recentNotifications } : {}),
       ...(recentReminders ? { recentReminders } : {}),
     };
@@ -713,7 +748,7 @@ export const purgeAllUserData = mutation({
     let counts: Record<string, number> = {};
 
     const tablesToPurge: Array<{
-      table: "chatMessages" | "reminders" | "tasks" | "notifications" | "userEvents" | "userProfiles" | "userWiki" | "pushSubscriptions" | "pushNotificationLogs" | "reminderParticipants";
+      table: "chatMessages" | "reminders" | "tasks" | "notifications" | "userEvents" | "userProfiles" | "userWiki" | "pushSubscriptions" | "pushNotificationLogs" | "reminderParticipants" | "userSessions";
       index: string;
     }> = [
       { table: "chatMessages", index: "by_user" },
@@ -725,6 +760,7 @@ export const purgeAllUserData = mutation({
       { table: "userWiki", index: "by_user" },
       { table: "pushSubscriptions", index: "by_user" },
       { table: "reminderParticipants", index: "by_user" },
+      { table: "userSessions", index: "by_user_lastSeen" },
     ];
 
     for (const t of tablesToPurge) {

@@ -116,6 +116,18 @@ export interface AdminUserActivity {
     totalTokens: number;
     estimatedCostUsd: number;  // input * inputRate + output * outputRate
   };
+  /**
+   * Privacy-safe usage timing — derived from anonymous heartbeat pings sent
+   * while the user has the app open. Stores no content. Visible to admins
+   * (not just superadmins) so they can see *how much* a user uses the app.
+   */
+  sessionStats: {
+    totalActiveMs: number;
+    activeMs24h: number;
+    activeMs7d: number;
+    sessionCount: number;
+    lastSeenAt: number | null;
+  };
   /** Recent notifications (superadmin-only). */
   recentNotifications?: Array<{
     id: string;

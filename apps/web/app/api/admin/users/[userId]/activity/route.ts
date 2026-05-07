@@ -63,21 +63,13 @@ export async function GET(
       includeNotifications: callerIsSuperadmin,
       includeReminders: callerIsSuperadmin,
     })) as AdminUserActivity;
+    // Admins (non-superadmin) see aggregate counts and timing — never any
+    // user content. Strip recent prompt previews, leave the numbers intact.
     const safeActivity: AdminUserActivity = callerIsSuperadmin
       ? activity
       : {
           ...activity,
-          totalPrompts: 0,
-          promptsLast24h: 0,
-          promptsLast7d: 0,
           recentPrompts: [],
-          dailyPromptCounts: [],
-          tokenEstimate: {
-            inputTokens: 0,
-            outputTokens: 0,
-            totalTokens: 0,
-            estimatedCostUsd: 0,
-          },
         };
 
     const realRole: UserRole = getRoleFromPublicMetadata(clerkUser.publicMetadata);

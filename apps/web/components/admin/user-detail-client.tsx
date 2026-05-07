@@ -38,6 +38,18 @@ function formatDateTime(ts: number | null): string {
   });
 }
 
+function formatDuration(ms: number): string {
+  if (!ms || ms < 1000) return "0m";
+  const totalMin = Math.round(ms / 60000);
+  if (totalMin < 60) return `${totalMin}m`;
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  if (h < 24) return m === 0 ? `${h}h` : `${h}h ${m}m`;
+  const d = Math.floor(h / 24);
+  const remH = h % 24;
+  return remH === 0 ? `${d}d` : `${d}d ${remH}h`;
+}
+
 export function AdminUserDetailClient({ userId }: { userId: string }) {
   const [data, setData] = useState<DetailResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -172,17 +184,13 @@ export function AdminUserDetailClient({ userId }: { userId: string }) {
         />
       )}
 
-      {/* Stat cards */}
+      {/* Stat cards — counts only, no content. Visible to all admins.
+          Recent message text / reminder titles / notifications stay
+          superadmin-only further down the page. */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        {callerIsSuperadmin && (
-          <StatCard label="Total prompts" value={activity.totalPrompts} />
-        )}
-        {callerIsSuperadmin && (
-          <StatCard label="Prompts (24h)" value={activity.promptsLast24h} />
-        )}
-        {callerIsSuperadmin && (
-          <StatCard label="Prompts (7d)" value={activity.promptsLast7d} />
-        )}
+        <StatCard label="Total prompts" value={activity.totalPrompts} />
+        <StatCard label="Prompts (24h)" value={activity.promptsLast24h} />
+        <StatCard label="Prompts (7d)" value={activity.promptsLast7d} />
         <StatCard
           label="Reminders"
           value={`${activity.remindersCompleted} / ${activity.remindersCreated}`}
@@ -192,6 +200,21 @@ export function AdminUserDetailClient({ userId }: { userId: string }) {
           label="Tasks"
           value={`${activity.tasksCompleted} / ${activity.tasksCreated}`}
           hint="completed / total"
+        />
+        <StatCard
+          label="Active time (7d)"
+          value={formatDuration(activity.sessionStats.activeMs7d)}
+          hint={`${activity.sessionStats.sessionCount} sessions total`}
+        />
+        <StatCard
+          label="Active time (24h)"
+          value={formatDuration(activity.sessionStats.activeMs24h)}
+          hint={`last seen ${formatDateTime(activity.sessionStats.lastSeenAt)}`}
+        />
+        <StatCard
+          label="Active time (lifetime)"
+          value={formatDuration(activity.sessionStats.totalActiveMs)}
+          hint="aggregate across all sessions"
         />
         {callerIsSuperadmin && (
           <StatCard
@@ -209,14 +232,11 @@ export function AdminUserDetailClient({ userId }: { userId: string }) {
         )}
       </div>
 
-      {callerIsSuperadmin && (
-        <p className="text-[11px] text-slate-400">
-          Token estimates count chat message text only. Real upstream usage
-          is higher because each turn also includes wiki + digest context.
-          For accurate accounting, capture the NIM API <code>usage</code>{" "}
-          response per turn (separate ticket).
-        </p>
-      )}
+      <p className="text-[11px] text-slate-400">
+        {callerIsSuperadmin
+          ? "Token estimates count chat message text only. Real upstream usage is higher because each turn also includes wiki + digest context."
+          : "Activity counts only. Message content, reminder titles, and notifications are hidden from admins."}
+      </p>
 
       {/* Direct message + internal notes — both visible to all admin
           viewers. The admin notes panel shows author display names but
@@ -226,31 +246,31 @@ export function AdminUserDetailClient({ userId }: { userId: string }) {
         <AdminNotesPanel userId={user.id} />
       </div>
 
+      {/* Daily activity histogram — counts only, safe for all admins. */}
+      <section className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
+        <h3 className="mb-3 text-sm font-bold text-slate-900 dark:text-slate-100">
+          Daily prompt activity (last 14 days)
+        </h3>
+        <div className="flex h-32 items-end gap-1.5">
+          {activity.dailyPromptCounts.map((d) => (
+            <div key={d.date} className="flex flex-1 flex-col items-center gap-1">
+              <div className="flex h-24 w-full items-end">
+                <div
+                  className="w-full rounded-t bg-violet-500/80 transition-all"
+                  style={{ height: `${(d.count / peak) * 100}%`, minHeight: d.count > 0 ? "4px" : "0" }}
+                  title={`${d.date}: ${d.count} prompts`}
+                />
+              </div>
+              <span className="text-[9px] tabular-nums text-slate-400">
+                {d.date.slice(5)}
+              </span>
+            </div>
+          ))}
+        </div>
+      </section>
+
       {callerIsSuperadmin && (
         <>
-          {/* Daily activity histogram */}
-          <section className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
-            <h3 className="mb-3 text-sm font-bold text-slate-900 dark:text-slate-100">
-              Daily prompt activity (last 14 days)
-            </h3>
-            <div className="flex h-32 items-end gap-1.5">
-              {activity.dailyPromptCounts.map((d) => (
-                <div key={d.date} className="flex flex-1 flex-col items-center gap-1">
-                  <div className="flex h-24 w-full items-end">
-                    <div
-                      className="w-full rounded-t bg-violet-500/80 transition-all"
-                      style={{ height: `${(d.count / peak) * 100}%`, minHeight: d.count > 0 ? "4px" : "0" }}
-                      title={`${d.date}: ${d.count} prompts`}
-                    />
-                  </div>
-                  <span className="text-[9px] tabular-nums text-slate-400">
-                    {d.date.slice(5)}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </section>
-
           {/* Recent prompts */}
           <section className="rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
             <header className="flex items-center justify-between border-b border-slate-100 px-5 py-3 dark:border-slate-800">

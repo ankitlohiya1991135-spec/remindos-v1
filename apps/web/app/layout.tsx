@@ -12,6 +12,7 @@ import localFont from "next/font/local";
 import { DM_Sans } from "next/font/google";
 import { InstallAppBanner } from "../components/pwa/install-app-banner";
 import { RegisterServiceWorker } from "../components/pwa/register-sw";
+import { HeartbeatPinger } from "../components/tracking/heartbeat-pinger";
 import { OpenRemindersButton } from "../components/dashboard/open-reminders-button";
 import { AppDrawer } from "../components/layout/app-drawer";
 import { DrawerTrigger } from "../components/layout/drawer-trigger";
@@ -102,6 +103,7 @@ export default async function RootLayout({
             <AppDrawer />
             <InstallAppBanner />
             <RegisterServiceWorker />
+            <HeartbeatPinger />
           </ThemeProvider>
         </ClerkProvider>
       </body>

@@ -267,6 +267,22 @@ const adminBroadcasts = defineTable({
   .index("by_created", ["createdAt"])
   .index("by_sender_created", ["senderUserId", "createdAt"]);
 
+/**
+ * Privacy-preserving usage tracking. The client posts a heartbeat while the
+ * tab is visible (~once per minute). Each heartbeat either extends the most
+ * recent session (if last heartbeat was within `SESSION_GAP_MS`) or starts
+ * a new one. Stores only timing — never reads or stores message content,
+ * reminder titles, or any user input. Used by admins to see *how much* a
+ * user uses the app without seeing *what* they do.
+ */
+const userSessions = defineTable({
+  userId: v.string(),
+  startedAt: v.number(),
+  lastSeenAt: v.number(),
+})
+  .index("by_user_lastSeen", ["userId", "lastSeenAt"])
+  .index("by_user_started", ["userId", "startedAt"]);
+
 export default defineSchema({
   reminders,
   reminderInvites,
@@ -283,4 +299,5 @@ export default defineSchema({
   adminAuditLog,
   adminBroadcasts,
   userAdminNotes,
+  userSessions,
 });

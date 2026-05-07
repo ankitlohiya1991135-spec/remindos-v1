@@ -18,6 +18,7 @@ import type * as reminders from "../reminders.js";
 import type * as tasks from "../tasks.js";
 import type * as userEvents from "../userEvents.js";
 import type * as userProfiles from "../userProfiles.js";
+import type * as userSessions from "../userSessions.js";
 import type * as userWiki from "../userWiki.js";
 
 import type {
@@ -37,6 +38,7 @@ declare const fullApi: ApiFromModules<{
   tasks: typeof tasks;
   userEvents: typeof userEvents;
   userProfiles: typeof userProfiles;
+  userSessions: typeof userSessions;
   userWiki: typeof userWiki;
 }>;
 
