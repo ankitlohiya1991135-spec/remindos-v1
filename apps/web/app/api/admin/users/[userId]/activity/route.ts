@@ -25,8 +25,8 @@ function jsonError(payload: AdminApiError, status: number) {
 /**
  * GET /api/admin/users/[userId]/activity
  *
- * Returns prompt counts, daily histogram, recent prompt previews, and
- * reminder/task totals for a single user. Admin-only.
+ * Returns user activity for a single user. Superadmins receive chat details;
+ * admins receive non-chat totals only.
  */
 export async function GET(
   _request: Request,
@@ -63,6 +63,22 @@ export async function GET(
       includeNotifications: callerIsSuperadmin,
       includeReminders: callerIsSuperadmin,
     })) as AdminUserActivity;
+    const safeActivity: AdminUserActivity = callerIsSuperadmin
+      ? activity
+      : {
+          ...activity,
+          totalPrompts: 0,
+          promptsLast24h: 0,
+          promptsLast7d: 0,
+          recentPrompts: [],
+          dailyPromptCounts: [],
+          tokenEstimate: {
+            inputTokens: 0,
+            outputTokens: 0,
+            totalTokens: 0,
+            estimatedCostUsd: 0,
+          },
+        };
 
     const realRole: UserRole = getRoleFromPublicMetadata(clerkUser.publicMetadata);
     const displayRole: UserRole = getDisplayRole(clerkUser.publicMetadata);
@@ -84,7 +100,7 @@ export async function GET(
         createdAt: clerkUser.createdAt ?? 0,
         lastSignInAt: clerkUser.lastSignInAt ?? null,
       },
-      activity,
+      activity: safeActivity,
     });
   } catch (err) {
     return jsonError({ error: errorMessage(err), code: "INTERNAL" }, 500);

@@ -159,17 +159,6 @@ export function AdminUserDetailClient({ userId }: { userId: string }) {
         </div>
       </header>
 
-      {/* Admin-tier action panel — visible to BOTH admin and superadmin.
-          Contains actions that any admin can perform (e.g. resetting a
-          user's chat history). Superadmins ALSO get the rose panel below
-          for tier-elevated actions. */}
-      {!callerIsSuperadmin && (
-        <AdminActionsPanel
-          userId={user.id}
-          onChanged={() => void refetch()}
-        />
-      )}
-
       {/* Superadmin actions panel — only rendered when the API marked the
           caller as superadmin (presence of actualRole). Server re-verifies
           on every action regardless. */}
@@ -185,9 +174,15 @@ export function AdminUserDetailClient({ userId }: { userId: string }) {
 
       {/* Stat cards */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <StatCard label="Total prompts" value={activity.totalPrompts} />
-        <StatCard label="Prompts (24h)" value={activity.promptsLast24h} />
-        <StatCard label="Prompts (7d)" value={activity.promptsLast7d} />
+        {callerIsSuperadmin && (
+          <StatCard label="Total prompts" value={activity.totalPrompts} />
+        )}
+        {callerIsSuperadmin && (
+          <StatCard label="Prompts (24h)" value={activity.promptsLast24h} />
+        )}
+        {callerIsSuperadmin && (
+          <StatCard label="Prompts (7d)" value={activity.promptsLast7d} />
+        )}
         <StatCard
           label="Reminders"
           value={`${activity.remindersCompleted} / ${activity.remindersCreated}`}
@@ -198,24 +193,30 @@ export function AdminUserDetailClient({ userId }: { userId: string }) {
           value={`${activity.tasksCompleted} / ${activity.tasksCreated}`}
           hint="completed / total"
         />
-        <StatCard
-          label="Tokens (msgs only)"
-          value={activity.tokenEstimate.totalTokens.toLocaleString()}
-          hint={`${activity.tokenEstimate.inputTokens.toLocaleString()} in · ${activity.tokenEstimate.outputTokens.toLocaleString()} out`}
-        />
-        <StatCard
-          label="Est. cost (USD)"
-          value={`$${activity.tokenEstimate.estimatedCostUsd.toFixed(4)}`}
-          hint="lower bound — see details"
-        />
+        {callerIsSuperadmin && (
+          <StatCard
+            label="Tokens (msgs only)"
+            value={activity.tokenEstimate.totalTokens.toLocaleString()}
+            hint={`${activity.tokenEstimate.inputTokens.toLocaleString()} in · ${activity.tokenEstimate.outputTokens.toLocaleString()} out`}
+          />
+        )}
+        {callerIsSuperadmin && (
+          <StatCard
+            label="Est. cost (USD)"
+            value={`$${activity.tokenEstimate.estimatedCostUsd.toFixed(4)}`}
+            hint="lower bound — see details"
+          />
+        )}
       </div>
 
-      <p className="text-[11px] text-slate-400">
-        Token estimates count chat message text only. Real upstream usage
-        is higher because each turn also includes wiki + digest context.
-        For accurate accounting, capture the NIM API <code>usage</code>{" "}
-        response per turn (separate ticket).
-      </p>
+      {callerIsSuperadmin && (
+        <p className="text-[11px] text-slate-400">
+          Token estimates count chat message text only. Real upstream usage
+          is higher because each turn also includes wiki + digest context.
+          For accurate accounting, capture the NIM API <code>usage</code>{" "}
+          response per turn (separate ticket).
+        </p>
+      )}
 
       {/* Direct message + internal notes — both visible to all admin
           viewers. The admin notes panel shows author display names but
@@ -225,71 +226,75 @@ export function AdminUserDetailClient({ userId }: { userId: string }) {
         <AdminNotesPanel userId={user.id} />
       </div>
 
-      {/* Daily activity histogram */}
-      <section className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
-        <h3 className="mb-3 text-sm font-bold text-slate-900 dark:text-slate-100">
-          Daily prompt activity (last 14 days)
-        </h3>
-        <div className="flex h-32 items-end gap-1.5">
-          {activity.dailyPromptCounts.map((d) => (
-            <div key={d.date} className="flex flex-1 flex-col items-center gap-1">
-              <div className="flex h-24 w-full items-end">
-                <div
-                  className="w-full rounded-t bg-violet-500/80 transition-all"
-                  style={{ height: `${(d.count / peak) * 100}%`, minHeight: d.count > 0 ? "4px" : "0" }}
-                  title={`${d.date}: ${d.count} prompts`}
-                />
-              </div>
-              <span className="text-[9px] tabular-nums text-slate-400">
-                {d.date.slice(5)}
-              </span>
+      {callerIsSuperadmin && (
+        <>
+          {/* Daily activity histogram */}
+          <section className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
+            <h3 className="mb-3 text-sm font-bold text-slate-900 dark:text-slate-100">
+              Daily prompt activity (last 14 days)
+            </h3>
+            <div className="flex h-32 items-end gap-1.5">
+              {activity.dailyPromptCounts.map((d) => (
+                <div key={d.date} className="flex flex-1 flex-col items-center gap-1">
+                  <div className="flex h-24 w-full items-end">
+                    <div
+                      className="w-full rounded-t bg-violet-500/80 transition-all"
+                      style={{ height: `${(d.count / peak) * 100}%`, minHeight: d.count > 0 ? "4px" : "0" }}
+                      title={`${d.date}: ${d.count} prompts`}
+                    />
+                  </div>
+                  <span className="text-[9px] tabular-nums text-slate-400">
+                    {d.date.slice(5)}
+                  </span>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-      </section>
+          </section>
 
-      {/* Recent prompts */}
-      <section className="rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-        <header className="flex items-center justify-between border-b border-slate-100 px-5 py-3 dark:border-slate-800">
-          <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-            Recent messages
-          </h3>
-          <span className="text-xs text-slate-400">
-            {activity.recentPrompts.length} shown · previews truncated
-          </span>
-        </header>
-        <ul className="divide-y divide-slate-100 dark:divide-slate-800">
-          {activity.recentPrompts.length === 0 && (
-            <li className="px-5 py-6 text-center text-sm text-slate-400">
-              No chat messages.
-            </li>
-          )}
-          {activity.recentPrompts.map((row) => (
-            <li
-              key={row.clientId}
-              className="grid gap-1 px-5 py-3 sm:grid-cols-[7rem_5rem_1fr] sm:gap-3"
-            >
+          {/* Recent prompts */}
+          <section className="rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+            <header className="flex items-center justify-between border-b border-slate-100 px-5 py-3 dark:border-slate-800">
+              <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                Recent messages
+              </h3>
               <span className="text-xs text-slate-400">
-                {formatDateTime(row.createdAt)}
+                {activity.recentPrompts.length} shown · previews truncated
               </span>
-              <span
-                className={`w-fit rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
-                  row.role === "user"
-                    ? "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-300"
-                    : row.role === "assistant"
-                    ? "bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300"
-                    : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"
-                }`}
-              >
-                {row.role}
-              </span>
-              <p className="whitespace-pre-wrap break-words text-sm text-slate-700 dark:text-slate-200">
-                {row.contentPreview}
-              </p>
-            </li>
-          ))}
-        </ul>
-      </section>
+            </header>
+            <ul className="divide-y divide-slate-100 dark:divide-slate-800">
+              {activity.recentPrompts.length === 0 && (
+                <li className="px-5 py-6 text-center text-sm text-slate-400">
+                  No chat messages.
+                </li>
+              )}
+              {activity.recentPrompts.map((row) => (
+                <li
+                  key={row.clientId}
+                  className="grid gap-1 px-5 py-3 sm:grid-cols-[7rem_5rem_1fr] sm:gap-3"
+                >
+                  <span className="text-xs text-slate-400">
+                    {formatDateTime(row.createdAt)}
+                  </span>
+                  <span
+                    className={`w-fit rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                      row.role === "user"
+                        ? "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-300"
+                        : row.role === "assistant"
+                        ? "bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300"
+                        : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+                    }`}
+                  >
+                    {row.role}
+                  </span>
+                  <p className="whitespace-pre-wrap break-words text-sm text-slate-700 dark:text-slate-200">
+                    {row.contentPreview}
+                  </p>
+                </li>
+              ))}
+            </ul>
+          </section>
+        </>
+      )}
 
       {/* Superadmin-only: recent reminders */}
       {callerIsSuperadmin && activity.recentReminders && (
@@ -384,82 +389,6 @@ export function AdminUserDetailClient({ userId }: { userId: string }) {
         </section>
       )}
     </div>
-  );
-}
-
-function AdminActionsPanel({
-  userId,
-  onChanged,
-}: {
-  userId: string;
-  onChanged: () => void;
-}) {
-  const [working, setWorking] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const [done, setDone] = useState<string | null>(null);
-
-  const handleResetChat = async () => {
-    if (
-      !confirm(
-        "Reset this user's chat history? All their stored prompts will be permanently deleted from the database.",
-      )
-    ) {
-      return;
-    }
-    setWorking(true);
-    setErr(null);
-    setDone(null);
-    try {
-      const res = await fetch(
-        `/api/admin/users/${encodeURIComponent(userId)}/reset-chat`,
-        { method: "POST", headers: { "Content-Type": "application/json" } },
-      );
-      if (!res.ok) {
-        const payload = (await res.json().catch(() => ({}))) as { error?: string };
-        throw new Error(payload.error ?? `Request failed (${res.status})`);
-      }
-      const data = (await res.json()) as { deleted: number };
-      setDone(`Deleted ${data.deleted} chat row(s).`);
-      broadcastUserMetadataChanged(userId);
-      onChanged();
-    } catch (e) {
-      setErr(e instanceof Error ? e.message : String(e));
-    } finally {
-      setWorking(false);
-    }
-  };
-
-  return (
-    <section className="rounded-2xl border border-amber-200 bg-amber-50/30 p-5 dark:border-amber-900/60 dark:bg-amber-950/20">
-      <header className="mb-3 flex items-center gap-2">
-        <span className="rounded-full bg-amber-600 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white">
-          Admin
-        </span>
-        <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-          Moderate this user
-        </h3>
-      </header>
-      <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={() => void handleResetChat()}
-          disabled={working}
-          className="rounded-full border border-amber-300 bg-amber-50 px-4 py-2 text-xs font-semibold text-amber-800 transition hover:bg-amber-100 disabled:opacity-50 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300"
-        >
-          {working ? "Working…" : "Reset chat history"}
-        </button>
-      </div>
-      {done && (
-        <p className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300">
-          {done}
-        </p>
-      )}
-      {err && (
-        <p className="mt-3 rounded-xl border border-rose-300 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-800 dark:border-rose-900 dark:bg-rose-950/50 dark:text-rose-300">
-          {err}
-        </p>
-      )}
-    </section>
   );
 }
 

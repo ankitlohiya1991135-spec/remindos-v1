@@ -24,8 +24,8 @@ function jsonError(payload: AdminApiError, status: number) {
 /**
  * GET /api/admin/users
  *
- * Returns up to `MAX_USERS` Clerk users, each enriched with chat-activity
- * stats (total prompts, last-24h, last-7d, active-today). Admin-only.
+ * Returns up to `MAX_USERS` Clerk users. Superadmins also receive chat-activity
+ * stats; admins receive empty activity so chat data stays hidden.
  */
 export async function GET(request: Request) {
   const guard = await checkAdminRequest();
@@ -71,11 +71,12 @@ export async function GET(request: Request) {
       };
     });
 
-    // Bulk-fetch activity stats from Convex (single round-trip).
+    // Bulk-fetch chat activity only for superadmins. Admins can manage users
+    // but must not see another user's chat metadata.
     // The shared secret prevents anyone with the public Convex URL from
     // calling this query directly.
     let activityMap: Record<string, AdminListedUser["activity"]> = {};
-    if (baseUsers.length > 0) {
+    if (callerIsSuperadmin && baseUsers.length > 0) {
       const convex = getConvexClient();
       activityMap = await convex.query(api.admin.activityForUsers, {
         userIds: baseUsers.map((u) => u.id),

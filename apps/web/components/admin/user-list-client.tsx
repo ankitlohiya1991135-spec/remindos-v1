@@ -253,14 +253,18 @@ export function AdminUserListClient() {
       {/* Stats summary */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <StatCard label="Total users" value={data.users.length} />
-        <StatCard
-          label="Active today"
-          value={data.users.filter((u) => u.activity.activeToday).length}
-        />
-        <StatCard
-          label="Active this week"
-          value={data.users.filter((u) => u.activity.promptsLast7d > 0).length}
-        />
+        {callerIsSuperadmin && (
+          <StatCard
+            label="Active today"
+            value={data.users.filter((u) => u.activity.activeToday).length}
+          />
+        )}
+        {callerIsSuperadmin && (
+          <StatCard
+            label="Active this week"
+            value={data.users.filter((u) => u.activity.promptsLast7d > 0).length}
+          />
+        )}
         <StatCard
           label="Admins"
           value={data.users.filter((u) => u.role === "admin" || u.role === "superadmin").length}
@@ -321,17 +325,21 @@ export function AdminUserListClient() {
                 )}
                 <th className="px-4 py-3 text-left">User</th>
                 <th className="px-4 py-3 text-left">Role</th>
-                <th className="px-4 py-3 text-right">Total prompts</th>
-                <th className="px-4 py-3 text-right">Last 24h</th>
-                <th className="px-4 py-3 text-right">Last 7d</th>
-                <th className="px-4 py-3 text-left">Last active</th>
+                {callerIsSuperadmin && (
+                  <>
+                    <th className="px-4 py-3 text-right">Total prompts</th>
+                    <th className="px-4 py-3 text-right">Last 24h</th>
+                    <th className="px-4 py-3 text-right">Last 7d</th>
+                    <th className="px-4 py-3 text-left">Last active</th>
+                  </>
+                )}
                 <th className="px-4 py-3 text-right">View</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={callerIsSuperadmin ? 8 : 7} className="px-4 py-8 text-center text-slate-400">
+                  <td colSpan={callerIsSuperadmin ? 8 : 3} className="px-4 py-8 text-center text-slate-400">
                     No users match the current filter.
                   </td>
                 </tr>
@@ -389,21 +397,25 @@ export function AdminUserListClient() {
                       </span>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-right font-mono text-xs text-slate-700 dark:text-slate-200">
-                    {u.activity.totalPrompts}
-                  </td>
-                  <td className="px-4 py-3 text-right font-mono text-xs text-slate-700 dark:text-slate-200">
-                    {u.activity.promptsLast24h}
-                  </td>
-                  <td className="px-4 py-3 text-right font-mono text-xs text-slate-700 dark:text-slate-200">
-                    {u.activity.promptsLast7d}
-                  </td>
-                  <td className="px-4 py-3 text-xs text-slate-500 dark:text-slate-400">
-                    {u.activity.activeToday && (
-                      <span className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                    )}
-                    {formatRelativeTime(u.activity.lastPromptAt)}
-                  </td>
+                  {callerIsSuperadmin && (
+                    <>
+                      <td className="px-4 py-3 text-right font-mono text-xs text-slate-700 dark:text-slate-200">
+                        {u.activity.totalPrompts}
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono text-xs text-slate-700 dark:text-slate-200">
+                        {u.activity.promptsLast24h}
+                      </td>
+                      <td className="px-4 py-3 text-right font-mono text-xs text-slate-700 dark:text-slate-200">
+                        {u.activity.promptsLast7d}
+                      </td>
+                      <td className="px-4 py-3 text-xs text-slate-500 dark:text-slate-400">
+                        {u.activity.activeToday && (
+                          <span className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                        )}
+                        {formatRelativeTime(u.activity.lastPromptAt)}
+                      </td>
+                    </>
+                  )}
                   <td className="px-4 py-3 text-right">
                     <Link
                       href={`/admin/users/${u.id}`}

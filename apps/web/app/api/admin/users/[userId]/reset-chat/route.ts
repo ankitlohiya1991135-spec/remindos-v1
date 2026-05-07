@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import {
-  checkAdminRequest,
+  checkSuperadminRequest,
   getAdminConvexSecret,
   recordAuditEvent,
 } from "@repo/admin/server";
@@ -15,8 +15,8 @@ function jsonError(payload: AdminApiError, status: number) {
 /**
  * POST /api/admin/users/[userId]/reset-chat
  *
- * Wipe all of a user's `chatMessages` rows. Available to admin AND
- * superadmin. Useful for support after a user requests a chat reset.
+ * Wipe all of a user's `chatMessages` rows. Superadmin-only so admins cannot
+ * moderate another user's chat data.
  *
  * Self-protection: cannot reset your own chat through this endpoint —
  * the user can use the in-app "Clear Chat History" drawer button.
@@ -25,7 +25,7 @@ export async function POST(
   _request: Request,
   context: { params: Promise<{ userId: string }> },
 ) {
-  const guard = await checkAdminRequest();
+  const guard = await checkSuperadminRequest();
   if (!guard.ok) {
     return jsonError(
       { error: guard.reason, code: guard.status === 401 ? "UNAUTHORIZED" : "FORBIDDEN" },
