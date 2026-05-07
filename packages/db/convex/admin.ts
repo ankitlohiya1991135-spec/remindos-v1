@@ -18,7 +18,7 @@
  */
 
 import { ConvexError, v } from "convex/values";
-import { query } from "./_generated/server";
+import { mutation, query } from "./_generated/server";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -296,5 +296,272 @@ export const userActivityDetail = query({
       ...(recentNotifications ? { recentNotifications } : {}),
       ...(recentReminders ? { recentReminders } : {}),
     };
+  },
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// AUDIT LOG — append-only.
+// CRITICAL: there is intentionally NO delete/update mutation. The log
+// must be tamper-evident. Even superadmins cannot mutate past entries.
+// ──────────────────────────────────────────────────────────────────────
+
+export const appendAuditEvent = mutation({
+  args: {
+    adminSecret: v.string(),
+    actorUserId: v.string(),
+    actorRole: v.union(v.literal("admin"), v.literal("superadmin")),
+    action: v.string(),
+    targetUserId: v.optional(v.string()),
+    metadataJson: v.optional(v.string()),
+    outcome: v.union(v.literal("ok"), v.literal("error")),
+    errorMessage: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    assertAdminSecret(args.adminSecret);
+    const id = await ctx.db.insert("adminAuditLog", {
+      actorUserId: args.actorUserId,
+      actorRole: args.actorRole,
+      action: args.action,
+      targetUserId: args.targetUserId,
+      metadataJson: args.metadataJson,
+      outcome: args.outcome,
+      errorMessage: args.errorMessage,
+      createdAt: Date.now(),
+    });
+    return String(id);
+  },
+});
+
+export const listAuditEvents = query({
+  args: {
+    adminSecret: v.string(),
+    limit: v.optional(v.number()),
+    targetUserId: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    assertAdminSecret(args.adminSecret);
+    const limit = Math.min(Math.max(args.limit ?? 200, 1), 1000);
+    const rows = args.targetUserId
+      ? await ctx.db
+          .query("adminAuditLog")
+          .withIndex("by_target_created", (q) =>
+            q.eq("targetUserId", args.targetUserId),
+          )
+          .collect()
+      : await ctx.db
+          .query("adminAuditLog")
+          .withIndex("by_created")
+          .collect();
+    const sorted = rows.sort((a, b) => b.createdAt - a.createdAt).slice(0, limit);
+    return sorted.map((r) => ({
+      id: String(r._id),
+      actorUserId: r.actorUserId,
+      actorRole: r.actorRole,
+      action: r.action,
+      targetUserId: r.targetUserId,
+      metadataJson: r.metadataJson,
+      outcome: r.outcome,
+      errorMessage: r.errorMessage,
+      createdAt: r.createdAt,
+    }));
+  },
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// BROADCASTS — admins send, superadmins can override (recall any).
+// ──────────────────────────────────────────────────────────────────────
+
+const broadcastSegment = v.union(
+  v.literal("all"),
+  v.literal("active_today"),
+  v.literal("active_7d"),
+  v.literal("admins_only"),
+);
+
+/**
+ * Send a broadcast: inserts one row in `adminBroadcasts` PLUS one
+ * `notifications` row per matched user. Caller must have already
+ * resolved which userIds to notify (Clerk paginated user list).
+ */
+export const sendBroadcast = mutation({
+  args: {
+    adminSecret: v.string(),
+    senderUserId: v.string(),
+    senderRole: v.union(v.literal("admin"), v.literal("superadmin")),
+    title: v.string(),
+    body: v.string(),
+    segment: broadcastSegment,
+    recipientUserIds: v.array(v.string()),
+  },
+  handler: async (ctx, args) => {
+    assertAdminSecret(args.adminSecret);
+    const now = Date.now();
+
+    // Insert broadcast metadata first.
+    const broadcastId = await ctx.db.insert("adminBroadcasts", {
+      senderUserId: args.senderUserId,
+      senderRole: args.senderRole,
+      title: args.title,
+      body: args.body,
+      segment: args.segment,
+      recipientCount: args.recipientUserIds.length,
+      createdAt: now,
+    });
+
+    // Then insert one notification per recipient.
+    for (const uid of args.recipientUserIds) {
+      await ctx.db.insert("notifications", {
+        userId: uid,
+        type: "admin_broadcast",
+        title: args.title,
+        body: args.body,
+        read: false,
+        createdAt: now,
+      });
+    }
+
+    return String(broadcastId);
+  },
+});
+
+export const listBroadcasts = query({
+  args: {
+    adminSecret: v.string(),
+    limit: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    assertAdminSecret(args.adminSecret);
+    const limit = Math.min(Math.max(args.limit ?? 100, 1), 500);
+    const rows = await ctx.db.query("adminBroadcasts").collect();
+    return rows
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, limit)
+      .map((r) => ({
+        id: String(r._id),
+        senderUserId: r.senderUserId,
+        senderRole: r.senderRole,
+        title: r.title,
+        body: r.body,
+        segment: r.segment,
+        recipientCount: r.recipientCount,
+        recalledAt: r.recalledAt ?? null,
+        recalledBy: r.recalledBy ?? null,
+        createdAt: r.createdAt,
+      }));
+  },
+});
+
+export const recallBroadcast = mutation({
+  args: {
+    adminSecret: v.string(),
+    broadcastId: v.id("adminBroadcasts"),
+    recallerUserId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    assertAdminSecret(args.adminSecret);
+    const row = await ctx.db.get(args.broadcastId);
+    if (!row) {
+      throw new ConvexError("Broadcast not found");
+    }
+    if (row.recalledAt) {
+      // Idempotent: already recalled. Return without erroring so retries
+      // (e.g. from a flaky network) don't show errors to the admin.
+      return { ok: true, alreadyRecalled: true };
+    }
+    await ctx.db.patch(args.broadcastId, {
+      recalledAt: Date.now(),
+      recalledBy: args.recallerUserId,
+    });
+
+    // Also remove the recipient notification rows so users don't keep
+    // seeing it. Match by type+title+body+createdAt — broadcasts don't
+    // have a back-reference field so this is the cheap join.
+    const matchingNotifs = await ctx.db
+      .query("notifications")
+      .filter((q) =>
+        q.and(
+          q.eq(q.field("type"), "admin_broadcast"),
+          q.eq(q.field("createdAt"), row.createdAt),
+        ),
+      )
+      .collect();
+    for (const n of matchingNotifs) {
+      // Defensive: only delete rows whose title+body match this broadcast.
+      if (n.title === row.title && n.body === row.body) {
+        await ctx.db.delete(n._id);
+      }
+    }
+
+    return { ok: true, alreadyRecalled: false };
+  },
+});
+
+// ──────────────────────────────────────────────────────────────────────
+// PER-USER ACTIONS callable from admin / superadmin endpoints.
+// ──────────────────────────────────────────────────────────────────────
+
+/** Wipe a user's chat history. Admin-allowed. Audited at the API layer. */
+export const resetUserChatHistory = mutation({
+  args: {
+    adminSecret: v.string(),
+    targetUserId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    assertAdminSecret(args.adminSecret);
+    const rows = await ctx.db
+      .query("chatMessages")
+      .withIndex("by_user", (q) => q.eq("userId", args.targetUserId))
+      .collect();
+    let deleted = 0;
+    for (const row of rows) {
+      await ctx.db.delete(row._id);
+      deleted++;
+    }
+    return { deleted };
+  },
+});
+
+/**
+ * Delete EVERYTHING associated with a userId in Convex. Used by the
+ * superadmin hard-delete flow AFTER the audit row is written and BEFORE
+ * the Clerk delete call. We do NOT delete the audit log entries
+ * referencing this user — the log stays intact.
+ */
+export const purgeAllUserData = mutation({
+  args: {
+    adminSecret: v.string(),
+    targetUserId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    assertAdminSecret(args.adminSecret);
+    const userId = args.targetUserId;
+    let counts: Record<string, number> = {};
+
+    const tablesToPurge: Array<{
+      table: "chatMessages" | "reminders" | "tasks" | "notifications" | "userEvents" | "userProfiles" | "userWiki" | "pushSubscriptions" | "pushNotificationLogs" | "reminderParticipants";
+      index: string;
+    }> = [
+      { table: "chatMessages", index: "by_user" },
+      { table: "reminders", index: "by_user_dueAt" },
+      { table: "tasks", index: "by_user_status" },
+      { table: "notifications", index: "by_user_created" },
+      { table: "userEvents", index: "by_user_created" },
+      { table: "userProfiles", index: "by_user" },
+      { table: "userWiki", index: "by_user" },
+      { table: "pushSubscriptions", index: "by_user" },
+      { table: "reminderParticipants", index: "by_user" },
+    ];
+
+    for (const t of tablesToPurge) {
+      const rows = await ctx.db
+        .query(t.table)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .withIndex(t.index as any, (q: any) => q.eq("userId", userId))
+        .collect();
+      for (const row of rows) await ctx.db.delete(row._id);
+      counts[t.table] = rows.length;
+    }
+
+    return { counts };
   },
 });

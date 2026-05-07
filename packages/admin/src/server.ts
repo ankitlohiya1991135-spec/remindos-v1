@@ -11,6 +11,7 @@ import {
   isSuperadminRole,
 } from "./roles";
 import type { UserRole } from "./types";
+import type { AuditAction } from "./audit";
 
 /**
  * Result of an admin guard check (admin OR superadmin). Discriminated by
@@ -120,6 +121,80 @@ export async function countActiveSuperadmins(): Promise<number> {
     offset += PAGE;
   }
   return count;
+}
+
+/**
+ * Minimal interface satisfied by `ConvexHttpClient`. Defining it inline
+ * means this package doesn't need a runtime dependency on `convex`.
+ *
+ * `ref` is typed as `any` (rather than `unknown`) so structural matching
+ * accepts ConvexHttpClient's stricter `FunctionReference<"mutation">` —
+ * variance on function parameters is contravariant, and `unknown` would
+ * reject the more-specific Convex signature.
+ */
+export interface AuditMutationRunner {
+  mutation: (
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    ref: any,
+    args: {
+      adminSecret: string;
+      actorUserId: string;
+      actorRole: "admin" | "superadmin";
+      action: string;
+      targetUserId?: string;
+      metadataJson?: string;
+      outcome: "ok" | "error";
+      errorMessage?: string;
+    },
+  ) => Promise<unknown>;
+}
+
+export interface RecordAuditEventInput {
+  /** Caller pre-validated by `checkAdminRequest()` / `checkSuperadminRequest()`. */
+  actor: { userId: string; role: "admin" | "superadmin" };
+  action: AuditAction;
+  targetUserId?: string;
+  metadata?: Record<string, unknown>;
+  outcome?: "ok" | "error";
+  errorMessage?: string;
+  /** ConvexHttpClient instance from the calling Next.js route. */
+  convex: AuditMutationRunner;
+  /** `api.admin.appendAuditEvent` reference passed in by the caller. */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  mutationRef: any;
+}
+
+/**
+ * Append an audit-log entry. Failures are swallowed and logged to
+ * stderr — we never want a missing audit entry to break the user-facing
+ * action. Pair this with the rule "write audit BEFORE the destructive
+ * action when feasible", so a successful audit entry exists even if the
+ * downstream operation later fails.
+ */
+export async function recordAuditEvent(
+  input: RecordAuditEventInput,
+): Promise<void> {
+  try {
+    await input.convex.mutation(input.mutationRef, {
+      adminSecret: getAdminConvexSecret(),
+      actorUserId: input.actor.userId,
+      actorRole: input.actor.role,
+      action: input.action,
+      targetUserId: input.targetUserId,
+      metadataJson: input.metadata
+        ? JSON.stringify(input.metadata)
+        : undefined,
+      outcome: input.outcome ?? "ok",
+      errorMessage: input.errorMessage,
+    });
+  } catch (err) {
+    console.error(
+      "[admin-audit] FAILED to record event",
+      input.action,
+      input.targetUserId,
+      err,
+    );
+  }
 }
 
 /**

@@ -156,6 +156,17 @@ export function AdminUserDetailClient({ userId }: { userId: string }) {
         </div>
       </header>
 
+      {/* Admin-tier action panel — visible to BOTH admin and superadmin.
+          Contains actions that any admin can perform (e.g. resetting a
+          user's chat history). Superadmins ALSO get the rose panel below
+          for tier-elevated actions. */}
+      {!callerIsSuperadmin && (
+        <AdminActionsPanel
+          userId={user.id}
+          onChanged={() => void refetch()}
+        />
+      )}
+
       {/* Superadmin actions panel — only rendered when the API marked the
           caller as superadmin (presence of actualRole). Server re-verifies
           on every action regardless. */}
@@ -365,6 +376,81 @@ export function AdminUserDetailClient({ userId }: { userId: string }) {
   );
 }
 
+function AdminActionsPanel({
+  userId,
+  onChanged,
+}: {
+  userId: string;
+  onChanged: () => void;
+}) {
+  const [working, setWorking] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const [done, setDone] = useState<string | null>(null);
+
+  const handleResetChat = async () => {
+    if (
+      !confirm(
+        "Reset this user's chat history? All their stored prompts will be permanently deleted from the database.",
+      )
+    ) {
+      return;
+    }
+    setWorking(true);
+    setErr(null);
+    setDone(null);
+    try {
+      const res = await fetch(
+        `/api/admin/users/${encodeURIComponent(userId)}/reset-chat`,
+        { method: "POST", headers: { "Content-Type": "application/json" } },
+      );
+      if (!res.ok) {
+        const payload = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(payload.error ?? `Request failed (${res.status})`);
+      }
+      const data = (await res.json()) as { deleted: number };
+      setDone(`Deleted ${data.deleted} chat row(s).`);
+      onChanged();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  return (
+    <section className="rounded-2xl border border-amber-200 bg-amber-50/30 p-5 dark:border-amber-900/60 dark:bg-amber-950/20">
+      <header className="mb-3 flex items-center gap-2">
+        <span className="rounded-full bg-amber-600 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white">
+          Admin
+        </span>
+        <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+          Moderate this user
+        </h3>
+      </header>
+      <div className="flex flex-wrap items-center gap-2">
+        <button
+          type="button"
+          onClick={() => void handleResetChat()}
+          disabled={working}
+          className="rounded-full border border-amber-300 bg-amber-50 px-4 py-2 text-xs font-semibold text-amber-800 transition hover:bg-amber-100 disabled:opacity-50 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300"
+        >
+          {working ? "Working…" : "Reset chat history"}
+        </button>
+      </div>
+      {done && (
+        <p className="mt-3 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs font-semibold text-emerald-800 dark:border-emerald-900/60 dark:bg-emerald-950/40 dark:text-emerald-300">
+          {done}
+        </p>
+      )}
+      {err && (
+        <p className="mt-3 rounded-xl border border-rose-300 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-800 dark:border-rose-900 dark:bg-rose-950/50 dark:text-rose-300">
+          {err}
+        </p>
+      )}
+    </section>
+  );
+}
+
 function SuperadminActionsPanel({
   userId,
   realRole,
@@ -517,12 +603,177 @@ function SuperadminActionsPanel({
         </button>
       </div>
 
+      {/* Destructive actions — superadmin only, fenced off for clarity. */}
+      <div className="mt-5 border-t border-rose-300/50 pt-4 dark:border-rose-900/40">
+        <p className="mb-2 text-[11px] font-bold uppercase tracking-wider text-rose-700 dark:text-rose-300">
+          Destructive actions
+        </p>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              if (
+                !confirm(
+                  "Reset this user's chat history? All their stored prompts will be permanently deleted from the database.",
+                )
+              ) return;
+              void callApi(
+                `/api/admin/users/${encodeURIComponent(userId)}/reset-chat`,
+                {},
+              );
+            }}
+            disabled={working}
+            className="rounded-full border border-amber-300 bg-amber-50 px-4 py-2 text-xs font-semibold text-amber-800 transition hover:bg-amber-100 disabled:opacity-50 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-300"
+          >
+            Reset chat history
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (
+                !confirm(
+                  "Revoke ALL active sessions? The user will be signed out from every device immediately.",
+                )
+              ) return;
+              void callApi(
+                `/api/admin/users/${encodeURIComponent(userId)}/sessions/revoke`,
+                {},
+              );
+            }}
+            disabled={working}
+            className="rounded-full border border-orange-300 bg-orange-50 px-4 py-2 text-xs font-semibold text-orange-800 transition hover:bg-orange-100 disabled:opacity-50 dark:border-orange-900/60 dark:bg-orange-950/40 dark:text-orange-300"
+          >
+            Revoke all sessions
+          </button>
+          <HardDeleteButton userId={userId} disabled={working} onChanged={onChanged} />
+        </div>
+      </div>
+
       {actionError && (
         <p className="mt-3 rounded-xl border border-rose-300 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-800 dark:border-rose-900 dark:bg-rose-950/50 dark:text-rose-300">
           {actionError}
         </p>
       )}
     </section>
+  );
+}
+
+/**
+ * Hard-delete is destructive and irreversible. Shows a modal that requires
+ * the operator to type the user's email AND the literal word "DELETE".
+ */
+function HardDeleteButton({
+  userId,
+  disabled,
+  onChanged,
+}: {
+  userId: string;
+  disabled: boolean;
+  onChanged: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [confirmEmail, setConfirmEmail] = useState("");
+  const [confirmPhrase, setConfirmPhrase] = useState("");
+  const [working, setWorking] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const submit = async () => {
+    setWorking(true);
+    setErr(null);
+    try {
+      const res = await fetch(
+        `/api/admin/users/${encodeURIComponent(userId)}/hard-delete`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ confirmEmail, confirmPhrase }),
+        },
+      );
+      if (!res.ok) {
+        const payload = (await res.json().catch(() => ({}))) as { error?: string };
+        throw new Error(payload.error ?? `Request failed (${res.status})`);
+      }
+      setOpen(false);
+      setConfirmEmail("");
+      setConfirmPhrase("");
+      onChanged();
+      // Most callers will navigate away; we still call onChanged for safety.
+      window.location.href = "/admin";
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  return (
+    <>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => setOpen(true)}
+        className="rounded-full bg-rose-700 px-4 py-2 text-xs font-semibold text-white transition hover:bg-rose-600 disabled:opacity-50"
+      >
+        Hard-delete account
+      </button>
+      {open && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-md rounded-2xl border border-rose-300 bg-white p-5 shadow-2xl dark:border-rose-900 dark:bg-slate-900">
+            <h3 className="text-base font-bold text-rose-700 dark:text-rose-400">
+              Permanently delete account
+            </h3>
+            <p className="mt-2 text-sm text-slate-700 dark:text-slate-300">
+              This deletes the user from Clerk and purges every reminder, task,
+              chat message, notification, and profile row associated with them.
+              Audit log entries remain. <strong>This cannot be undone.</strong>
+            </p>
+            <label className="mt-4 block text-xs font-semibold text-slate-600 dark:text-slate-300">
+              Type the user&apos;s email to confirm:
+              <input
+                type="text"
+                value={confirmEmail}
+                onChange={(e) => setConfirmEmail(e.target.value)}
+                className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+                placeholder="user@example.com"
+              />
+            </label>
+            <label className="mt-3 block text-xs font-semibold text-slate-600 dark:text-slate-300">
+              Type DELETE to confirm:
+              <input
+                type="text"
+                value={confirmPhrase}
+                onChange={(e) => setConfirmPhrase(e.target.value)}
+                className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
+                placeholder="DELETE"
+              />
+            </label>
+            {err && (
+              <p className="mt-3 rounded-xl border border-rose-300 bg-rose-50 px-3 py-2 text-xs font-semibold text-rose-800 dark:border-rose-900 dark:bg-rose-950/50 dark:text-rose-300">
+                {err}
+              </p>
+            )}
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                disabled={working}
+                className="rounded-full border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => void submit()}
+                disabled={working || confirmPhrase !== "DELETE" || confirmEmail.trim() === ""}
+                className="rounded-full bg-rose-700 px-4 py-2 text-xs font-semibold text-white hover:bg-rose-600 disabled:opacity-50"
+              >
+                {working ? "Deleting…" : "Permanently delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 

@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import {
   checkSuperadminRequest,
   countActiveSuperadmins,
+  recordAuditEvent,
 } from "@repo/admin/server";
 import {
   USER_ROLES,
@@ -14,6 +15,8 @@ import type {
   UpdateUserRoleRequest,
   UserRole,
 } from "@repo/admin/types";
+import { api } from "@repo/db/convex/api";
+import { getConvexClient } from "../../../../../../lib/server/convex-client";
 
 function jsonError(payload: AdminApiError, status: number) {
   return NextResponse.json(payload, { status });
@@ -166,6 +169,37 @@ export async function POST(
     await client.users.updateUserMetadata(targetUserId, {
       publicMetadata: next,
     });
+
+    // Audit trail. Record AFTER the operation succeeded so the entry
+    // reflects reality. If the audit write itself fails, the helper
+    // logs to stderr and does not error the request.
+    const convex = getConvexClient();
+    if (wantsUserTypeChange) {
+      await recordAuditEvent({
+        actor: { userId: guard.userId, role: "superadmin" },
+        action: "ROLE_CHANGED",
+        targetUserId,
+        metadata: {
+          from: currentRole,
+          to: next.userType,
+        },
+        convex,
+        mutationRef: api.admin.appendAuditEvent,
+      });
+    }
+    if (wantsDisplayRoleChange) {
+      await recordAuditEvent({
+        actor: { userId: guard.userId, role: "superadmin" },
+        action: "DISPLAY_ROLE_CHANGED",
+        targetUserId,
+        metadata: {
+          from: existing.displayRole ?? null,
+          to: next.displayRole ?? null,
+        },
+        convex,
+        mutationRef: api.admin.appendAuditEvent,
+      });
+    }
 
     return NextResponse.json({
       ok: true,

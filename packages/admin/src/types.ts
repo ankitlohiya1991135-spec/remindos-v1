@@ -155,5 +155,15 @@ export interface AdminApiError {
   code: "UNAUTHORIZED" | "FORBIDDEN" | "BAD_REQUEST" | "INTERNAL";
 }
 
+// Re-export audit + token types so consumers can use the `@repo/admin/types`
+// subpath as a single source of types.
+export type {
+  AuditAction,
+  AuditLogEntry,
+  BroadcastListItem,
+  SendBroadcastRequest,
+} from "./audit";
+export { AUDIT_ACTIONS, isAuditAction } from "./audit";
+
 // Required for the `declare global` block to be picked up as augmentation.
 export {};

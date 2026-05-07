@@ -187,6 +187,65 @@ const userWiki = defineTable({
   .index("by_user", ["userId"])
   .index("by_user_page", ["userId", "pageType"]);
 
+/**
+ * Append-only audit log of every admin / superadmin action.
+ * NEVER expose a delete mutation for this table — the log must be
+ * tamper-evident even from superadmins. Retention is "forever" by
+ * default; a separate internalMutation can purge >1y entries if needed.
+ */
+const adminAuditLog = defineTable({
+  /** Clerk userId of the admin who took the action. */
+  actorUserId: v.string(),
+  /** Role at the time of the action — captured for forensic clarity. */
+  actorRole: v.union(v.literal("admin"), v.literal("superadmin")),
+  /** Constant from `@repo/admin/audit` (typed enum). */
+  action: v.string(),
+  /** Target user, when applicable. Null/absent for org-wide actions. */
+  targetUserId: v.optional(v.string()),
+  /** Free-form JSON metadata for the action. */
+  metadataJson: v.optional(v.string()),
+  /** "ok" for success; "error" when an action failed but we still want
+   *  evidence (e.g. Clerk delete that errored after audit write). */
+  outcome: v.union(v.literal("ok"), v.literal("error")),
+  /** Error message when outcome === "error". */
+  errorMessage: v.optional(v.string()),
+  createdAt: v.number(),
+})
+  .index("by_created", ["createdAt"])
+  .index("by_actor_created", ["actorUserId", "createdAt"])
+  .index("by_target_created", ["targetUserId", "createdAt"]);
+
+/**
+ * Broadcast notifications sent by admins/superadmins to user segments.
+ * Used together with the existing `notifications` table — sending a
+ * broadcast inserts a `notifications` row per matched user AND records
+ * the broadcast metadata here so it can be listed / recalled.
+ */
+const adminBroadcasts = defineTable({
+  /** Clerk userId of the sender (admin or superadmin). */
+  senderUserId: v.string(),
+  /** Stored at send-time. Frozen even if the user later changes role. */
+  senderRole: v.union(v.literal("admin"), v.literal("superadmin")),
+  title: v.string(),
+  body: v.string(),
+  /** Target segment. Server validates against this enum. */
+  segment: v.union(
+    v.literal("all"),
+    v.literal("active_today"),
+    v.literal("active_7d"),
+    v.literal("admins_only"),
+  ),
+  /** Number of `notifications` rows actually inserted at send-time. */
+  recipientCount: v.number(),
+  /** When the sender (or a superadmin) recalled it; null = still active. */
+  recalledAt: v.optional(v.number()),
+  /** Who recalled it (sender themselves, or an overriding superadmin). */
+  recalledBy: v.optional(v.string()),
+  createdAt: v.number(),
+})
+  .index("by_created", ["createdAt"])
+  .index("by_sender_created", ["senderUserId", "createdAt"]);
+
 export default defineSchema({
   reminders,
   reminderInvites,
@@ -200,4 +259,6 @@ export default defineSchema({
   userProfiles,
   userEvents,
   userWiki,
+  adminAuditLog,
+  adminBroadcasts,
 });

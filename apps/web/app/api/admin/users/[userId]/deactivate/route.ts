@@ -3,12 +3,15 @@ import { NextResponse } from "next/server";
 import {
   checkSuperadminRequest,
   countActiveSuperadmins,
+  recordAuditEvent,
 } from "@repo/admin/server";
 import { getRoleFromPublicMetadata } from "@repo/admin";
 import type {
   AdminApiError,
   DeactivateUserRequest,
 } from "@repo/admin/types";
+import { api } from "@repo/db/convex/api";
+import { getConvexClient } from "../../../../../../lib/server/convex-client";
 
 function jsonError(payload: AdminApiError, status: number) {
   return NextResponse.json(payload, { status });
@@ -107,6 +110,15 @@ export async function POST(
 
     await client.users.updateUserMetadata(targetUserId, {
       publicMetadata: next,
+    });
+
+    await recordAuditEvent({
+      actor: { userId: guard.userId, role: "superadmin" },
+      action: body.deactivated ? "USER_DEACTIVATED" : "USER_REACTIVATED",
+      targetUserId,
+      metadata: { previousRole: currentRole },
+      convex: getConvexClient(),
+      mutationRef: api.admin.appendAuditEvent,
     });
 
     return NextResponse.json({
