@@ -310,7 +310,7 @@ function fallbackDeterministicReply(message: string, reminders: ReminderItem[], 
 function hasExplicitTime(input: string) {
   const normalized = input
     .replace(/[०-९]/g, (d) => String("०१२३४५६७८९".indexOf(d)))
-    .replace(/\b([ap])\.\s?m\.\b/gi, "$1m");
+    .replace(/([ap])\.\s?m\.(?!\w)/gi, "$1m");
   return /\b(\d{1,2})(?:[:.]\d{2})?\s?(am|pm)\b/i.test(normalized)
     || /\b\d{1,2}[:.]\d{2}\b/.test(input)
     || /(?:^|\s)\d{1,2}\s*(?:बजे|वाजता|वाजले)(?=\s|$|[,.!?])/i.test(normalized)
@@ -337,7 +337,7 @@ function hasDayAfterTomorrowHint(input: string) {
 function parseTimeFromInput(input: string) {
   const normalized = input
     .replace(/[०-९]/g, (d) => String("०१२३४५६७८९".indexOf(d)))
-    .replace(/\b([ap])\.\s?m\.\b/gi, "$1m");
+    .replace(/([ap])\.\s?m\.(?!\w)/gi, "$1m");
 
   const meridiemMatch = normalized.match(/\b(\d{1,2})(?:[:.]\s*(\d{2}))?\s?(am|pm)\b/i);
   if (meridiemMatch) {
@@ -576,7 +576,13 @@ function parseDateTimeFromInput(input: string, timeZone?: string) {
   }
   const time = parseTimeFromInput(input);
   if (!time) return null;
-  return calendarDateTimeToIso(day, time, timeZone);
+  const iso = calendarDateTimeToIso(day, time, timeZone);
+  // If the user said "today at X" but X has already passed, schedule for tomorrow
+  // at the exact same time the user specified — don't silently change the time.
+  if (iso && hasTodayHint(input) && new Date(iso).getTime() < Date.now() - 60_000) {
+    return calendarDateTimeToIso(addDaysToCalendarDate(day, 1), time, timeZone);
+  }
+  return iso;
 }
 
 function isValidFutureIsoDate(value: string) {
@@ -613,7 +619,7 @@ function extractTitleFromCreateInput(input: string) {
   if (!stripped) {
     working = working
       .replace(
-        /^(?:please\s+)?(?:create|add|set|make|schedule|बनाओ|तैयार करो|set karo|करो)\s+(?:(?:a|an)\s+)?(?:reminder|रिमाइंडर|स्मरणपत्र)?\s*/i,
+        /^(?:please\s+)?(?:create|add|set|make|schedule|बनाओ|तैयार करो|set karo|करो)\s+(?:(?:a|an|the|my)\s+)?(?:reminder|रिमाइंडर|स्मरणपत्र)?\s*/i,
         "",
       )
       .trim();

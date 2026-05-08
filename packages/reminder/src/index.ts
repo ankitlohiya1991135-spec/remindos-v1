@@ -279,7 +279,7 @@ export function looksLikeCreateIntent(message: string): boolean {
   if (/\b(already\s+(set|have|created|scheduled)|check if|look up)\s+a?\s*reminder\b/.test(n)) return false;
   // Original patterns
   if (/\bremind me to\b/.test(n)) return true;
-  if (/\b(create|add|set|make|schedule)\s+(a\s+)?reminder\b/.test(n)) return true;
+  if (/\b(create|add|set|make|schedule)\s+(a\s+|an\s+|the\s+|my\s+)?reminder\b/.test(n)) return true;
   if (/\b(schedule|set)\s+(a\s+)?(task|meeting|event|appointment|call)\b/.test(n)) return true;
   if (/\b(add|create)\s+to\s+(my\s+)?(calendar|reminders)\b/.test(n)) return true;
   // Extended patterns

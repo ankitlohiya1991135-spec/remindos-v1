@@ -1388,6 +1388,27 @@ function ReminderCard({
               {linkedTaskTitle}
             </span>
           )}
+          {/* Recurrence tag — tells the user (and the admin) at a glance
+              whether this reminder repeats and how often. */}
+          {(() => {
+            const rec = reminder.recurrence;
+            if (rec === "daily" || rec === "weekly" || rec === "monthly") {
+              const tone =
+                rec === "daily" ? "bg-emerald-50 text-emerald-700"
+                : rec === "weekly" ? "bg-teal-50 text-teal-700"
+                : "bg-cyan-50 text-cyan-700";
+              return (
+                <span className={`rounded-full px-1.5 py-0.5 text-[9px] font-bold uppercase ${tone}`}>
+                  ↻ {rec}
+                </span>
+              );
+            }
+            return (
+              <span className="rounded-full bg-slate-50 px-1.5 py-0.5 text-[9px] font-bold uppercase text-slate-500">
+                One-time
+              </span>
+            );
+          })()}
           {/* Domain tag */}
           {reminder.domain && (
             <span
@@ -5000,6 +5021,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
               <p className="px-2 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-slate-400">Reminders</p>
               {(
                 [
+                  { key: "all" as ReminderListTab, label: "All", count: reminders.length, dot: "#64748b" },
                   { key: "missed" as ReminderListTab, label: "Missed", count: snapshot.missed, dot: "#f43f5e" },
                   { key: "today" as ReminderListTab, label: "Today", count: snapshot.today, dot: "#f59e0b" },
                   { key: "tomorrow" as ReminderListTab, label: "Tomorrow", count: snapshot.tomorrow, dot: "#7c3aed" },
@@ -5108,6 +5130,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
             <div className="flex shrink-0 gap-1.5 overflow-x-auto border-b border-slate-200 bg-white px-4 py-2.5 scrollbar-none">
               {(
                 [
+                  { key: "all", label: "All", count: reminders.length, activeClass: "bg-slate-700 text-white", inactiveClass: "bg-slate-100 text-slate-700 border border-slate-200" },
                   { key: "missed", label: "Missed", count: snapshot.missed, activeClass: "bg-rose-600 text-white", inactiveClass: "bg-rose-50 text-rose-700 border border-rose-200" },
                   { key: "today", label: "Today", count: snapshot.today, activeClass: "bg-amber-500 text-white", inactiveClass: "bg-amber-50 text-amber-700 border border-amber-200" },
                   { key: "tomorrow", label: "Tomorrow", count: snapshot.tomorrow, activeClass: "bg-violet-600 text-white", inactiveClass: "bg-violet-50 text-violet-700 border border-violet-200" },
@@ -5328,10 +5351,12 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
 
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden" style={{ background: "#1a1625" }}>
               {/* ── Mobile top bar ── */}
+              {/* The global app header (in app/layout.tsx) already shows the
+                  RemindOS brand mark, so we don't repeat it here — just the
+                  personalised greeting goes in this row to save vertical space. */}
               <div className="flex shrink-0 items-center justify-between px-4 pb-2 pt-[max(0.875rem,env(safe-area-inset-top))] lg:hidden">
                 <div>
-                  <h1 className="text-[17px] font-bold leading-tight text-white">RemindOS</h1>
-                  <p className="text-[11px] text-[rgba(255,255,255,0.45)]">
+                  <p className="text-[15px] font-semibold leading-tight text-white">
                     {(() => {
                       const h = new Date().getHours();
                       const g = h < 12 ? "morning" : h < 18 ? "afternoon" : "evening";
@@ -6663,6 +6688,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
             <div className="flex shrink-0 gap-1.5 overflow-x-auto border-b border-slate-200 bg-white px-3 py-2.5 scrollbar-none">
               {(
                 [
+                  ["all",       "All",      "#64748b", reminders.length],
                   ["missed",    "Missed",   "#f43f5e", grouped.missed.length],
                   ["today",     "Today",    "#f59e0b", grouped.today.length],
                   ["tomorrow",  "Tmrw",     "#7c3aed", grouped.tomorrow.length],
