@@ -2967,33 +2967,39 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       void (async () => {
         const validRecurrences = ["none", "daily", "weekly", "monthly"] as const;
         const validDomains = ["health", "finance", "career", "hobby", "fun"] as const;
-        const res = await fetch("/api/reminders", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            title,
-            dueAt: new Date(dueAt).getTime(),
-            notes: action.notes?.trim() ? action.notes : undefined,
-            recurrence: validRecurrences.includes(action.recurrence as typeof validRecurrences[number])
-              ? action.recurrence
-              : "none",
-            priority:
-              typeof action.priority === "number" && action.priority >= 1 && action.priority <= 5
-                ? action.priority
-                : 3,
-            domain: validDomains.includes(action.domain as typeof validDomains[number])
-              ? action.domain
-              : undefined,
-            linkedTaskId: action.linkedTaskId?.trim() ? action.linkedTaskId : undefined,
-          }),
-        });
-        const data = (await res.json().catch(() => ({}))) as {
-          created?: boolean;
-        };
-        if (res.ok) {
+        try {
+          const res = await fetch("/api/reminders", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              title,
+              dueAt: new Date(dueAt).getTime(),
+              notes: action.notes?.trim() ? action.notes : undefined,
+              recurrence: validRecurrences.includes(action.recurrence as typeof validRecurrences[number])
+                ? action.recurrence
+                : "none",
+              priority:
+                typeof action.priority === "number" && action.priority >= 1 && action.priority <= 5
+                  ? action.priority
+                  : 3,
+              domain: validDomains.includes(action.domain as typeof validDomains[number])
+                ? action.domain
+                : undefined,
+              linkedTaskId: action.linkedTaskId?.trim() ? action.linkedTaskId : undefined,
+            }),
+          });
+          const data = (await res.json().catch(() => ({}))) as {
+            created?: boolean;
+            error?: string;
+          };
+          if (!res.ok) {
+            showShareToast(data.error ?? "Could not save the reminder. Please try again.");
+            return;
+          }
           await refreshReminders();
           playReminderSuccessAnimation();
-          if (data.created === false) return;
+        } catch {
+          showShareToast("Could not save the reminder. Please try again.");
         }
       })();
       return;
@@ -5734,12 +5740,11 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
               </div>
 
               {showSuggestedQuestions && followUpQuestions.length > 0 ? (
-                <div className="shrink-0 border-t border-[rgba(255,255,255,0.06)] px-4 pb-3 pt-3 sm:px-4">
+                <div className="shrink-0 border-t border-[rgba(255,255,255,0.06)] px-4 pb-2 pt-2 sm:px-4">
                   <div className="mx-auto max-w-4xl">
-                    <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.24em] text-[rgba(255,255,255,0.3)]">
-                      Suggested
-                    </p>
-                    <div className="flex flex-wrap gap-2">
+                    {/* On desktop: single scrollable row so suggestions never push messages up.
+                        On mobile: wrap onto multiple rows as before. */}
+                    <div className="flex gap-2 overflow-x-auto pb-1 sm:flex-nowrap sm:[scrollbar-width:none] sm:[&::-webkit-scrollbar]:hidden">
                       {followUpQuestions.map((q, i) => (
                         <button
                           key={`${q.kind}-${i}-${q.text.slice(0, 24)}`}
@@ -5768,11 +5773,12 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                               }),
                             );
                           }}
-                          className={`min-h-[2.75rem] rounded-full border px-4 py-2 text-left text-xs font-medium leading-snug transition active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-0 sm:px-3 sm:py-2 ${
+                          className={`min-h-[2.75rem] shrink-0 rounded-full border px-4 py-2 text-left text-xs font-medium leading-snug transition active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-40 sm:min-h-0 sm:max-w-[18rem] sm:truncate sm:px-3 sm:py-1.5 ${
                             q.kind === "action"
                               ? "border-emerald-500/30 bg-emerald-600/15 text-emerald-300 hover:bg-emerald-600/25"
                               : "border-[rgba(255,255,255,0.1)] bg-[rgba(255,255,255,0.06)] text-[rgba(255,255,255,0.7)] hover:bg-[rgba(255,255,255,0.1)]"
                           }`}
+                          title={q.text}
                         >
                           {q.text}
                         </button>

@@ -368,10 +368,10 @@ export function looksLikeRescheduleIntent(message: string): boolean {
   if (/^(did i|have i|do i|does|is there|was there|what|which|show|list|how many)\b/.test(n)) return false;
   // Explicit reschedule keyword
   if (/\breschedule\b/.test(n)) return true;
-  // "change/update the time/date of X" — covers "change the time of playing to 5pm"
-  if (/\b(change|update)\s+the\s+(time|date|due\s+date|due\s+time|schedule)\b/.test(n)) return true;
-  // "change X's time" / "change time of X"
-  if (/\bchange\b.{0,40}\btime\b.{0,30}\b(to|of|for)\b/.test(n)) return true;
+  // "change/update/set the time/date of X" — covers "change the time of playing to 5pm"
+  if (/\b(change|update|set)\s+the\s+(time|date|due\s+date|due\s+time|schedule)\b/.test(n)) return true;
+  // "change/update time of X to Y"
+  if (/\b(change|update)\b.{0,40}\btime\b.{0,30}\b(to|of|for)\b/.test(n)) return true;
   // "move X to [date/time]" — "move meeting to tomorrow 3pm"
   if (
     /\bmove\b.{0,60}\b(to|from)\b/.test(n) &&
