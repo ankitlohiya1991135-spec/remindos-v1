@@ -58,7 +58,8 @@ export async function PATCH(
     if (!Number.isFinite(dueAt)) {
       return NextResponse.json({ error: "dueAt must be a valid timestamp" }, { status: 400 });
     }
-    if (dueAt <= Date.now()) {
+    // Allow up to 60 s in the past to absorb network latency (matches isValidFutureIsoDate).
+    if (dueAt < Date.now() - 60_000) {
       return NextResponse.json({ error: "dueAt must be in the future" }, { status: 400 });
     }
   }

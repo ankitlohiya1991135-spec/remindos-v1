@@ -2967,33 +2967,39 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       void (async () => {
         const validRecurrences = ["none", "daily", "weekly", "monthly"] as const;
         const validDomains = ["health", "finance", "career", "hobby", "fun"] as const;
-        const res = await fetch("/api/reminders", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            title,
-            dueAt: new Date(dueAt).getTime(),
-            notes: action.notes?.trim() ? action.notes : undefined,
-            recurrence: validRecurrences.includes(action.recurrence as typeof validRecurrences[number])
-              ? action.recurrence
-              : "none",
-            priority:
-              typeof action.priority === "number" && action.priority >= 1 && action.priority <= 5
-                ? action.priority
-                : 3,
-            domain: validDomains.includes(action.domain as typeof validDomains[number])
-              ? action.domain
-              : undefined,
-            linkedTaskId: action.linkedTaskId?.trim() ? action.linkedTaskId : undefined,
-          }),
-        });
-        const data = (await res.json().catch(() => ({}))) as {
-          created?: boolean;
-        };
-        if (res.ok) {
+        try {
+          const res = await fetch("/api/reminders", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              title,
+              dueAt: new Date(dueAt).getTime(),
+              notes: action.notes?.trim() ? action.notes : undefined,
+              recurrence: validRecurrences.includes(action.recurrence as typeof validRecurrences[number])
+                ? action.recurrence
+                : "none",
+              priority:
+                typeof action.priority === "number" && action.priority >= 1 && action.priority <= 5
+                  ? action.priority
+                  : 3,
+              domain: validDomains.includes(action.domain as typeof validDomains[number])
+                ? action.domain
+                : undefined,
+              linkedTaskId: action.linkedTaskId?.trim() ? action.linkedTaskId : undefined,
+            }),
+          });
+          const data = (await res.json().catch(() => ({}))) as {
+            created?: boolean;
+            error?: string;
+          };
+          if (!res.ok) {
+            showShareToast(data.error ?? "Could not save the reminder. Please try again.");
+            return;
+          }
           await refreshReminders();
           playReminderSuccessAnimation();
-          if (data.created === false) return;
+        } catch {
+          showShareToast("Could not save the reminder. Please try again.");
         }
       })();
       return;
