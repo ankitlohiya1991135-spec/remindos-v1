@@ -5384,7 +5384,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                       <button
                         key={item.label}
                         type="button"
-                        onClick={() => { setReminderListTab(item.tab); showReminderListOverlay(); }}
+                        onClick={() => showReminderListOverlay(true, item.tab)}
                         className="flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold transition active:scale-95"
                         style={{ background: item.bg, border: `1px solid ${item.border}`, color: item.text }}
                       >
@@ -5451,7 +5451,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
               {(snapshot.missed > 0 || snapshot.today > 0 || snapshot.tomorrow > 0) && (
                 <div className="hidden shrink-0 items-center gap-2 overflow-x-auto border-b border-[rgba(255,255,255,0.06)] bg-[rgba(255,255,255,0.04)] px-4 py-2 scrollbar-none lg:flex">
                   {snapshot.missed > 0 && (
-                    <button type="button" onClick={() => { setReminderListTab("missed"); showReminderListOverlay(); }}
+                    <button type="button" onClick={() => showReminderListOverlay(true, "missed")}
                       className="flex shrink-0 items-center gap-1.5 rounded-full border border-rose-500/30 bg-rose-500/10 px-3 py-1 text-xs font-semibold text-rose-300 transition hover:bg-rose-500/20">
                       <span className="h-1.5 w-1.5 rounded-full bg-rose-500" />Overdue
                       <span className="rounded-full bg-rose-600 px-1.5 py-0.5 text-[10px] leading-none text-white">{snapshot.missed}</span>
