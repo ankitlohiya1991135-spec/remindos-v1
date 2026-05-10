@@ -297,6 +297,11 @@ export function looksLikeCreateIntent(message: string): boolean {
   if (/^going\s+to\b/.test(n) && /\b(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|at \d|tonight|morning|evening|afternoon)\b/.test(n)) return true;
   // "Taking a flight on Thursday"
   if (/^(taking|meeting|calling|visiting|attending|catching)\b.{0,60}\b(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|at \d|tonight|morning|evening|afternoon)\b/.test(n)) return true;
+  // "I have a meeting today at 10pm" / "today at 10pm I have a meeting"
+  if (
+    /\bi\s+have\s+(a\s+|an\s+)?(meeting|appointment|call|session|standup|class|event|interview|review|dinner|lunch|flight|game|practice|exam)\b/.test(n) &&
+    (/\b(today|tomorrow|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/.test(n) || /\bat\s+\d/.test(n))
+  ) return true;
   // Hindi / Marathi
   if (/\b(याद\s+दिलाना|याद\s+कराना|याद\s+रखना|रिमाइंडर\s+लगाओ)\b/.test(n)) return true;
   return false;
@@ -354,6 +359,28 @@ export function looksLikeDeleteIntent(message: string): boolean {
   if (/\b(already\s+deleted|check if|look up)\b/.test(n)) return false;
   // Explicit delete commands
   if (/\b(delete|remove|cancel|dismiss|drop|trash|erase)\s+(?:the\s+|my\s+|this\s+|that\s+)?(?:reminder\s+(?:for\s+)?)?(\w)/i.test(n)) return true;
+  return false;
+}
+
+export function looksLikeRescheduleIntent(message: string): boolean {
+  const n = message.toLowerCase().trim();
+  // Guard: questions not commands
+  if (/^(did i|have i|do i|does|is there|was there|what|which|show|list|how many)\b/.test(n)) return false;
+  // Explicit reschedule keyword
+  if (/\breschedule\b/.test(n)) return true;
+  // "change/update the time/date of X" — covers "change the time of playing to 5pm"
+  if (/\b(change|update)\s+the\s+(time|date|due\s+date|due\s+time|schedule)\b/.test(n)) return true;
+  // "change X's time" / "change time of X"
+  if (/\bchange\b.{0,40}\btime\b.{0,30}\b(to|of|for)\b/.test(n)) return true;
+  // "move X to [date/time]" — "move meeting to tomorrow 3pm"
+  if (
+    /\bmove\b.{0,60}\b(to|from)\b/.test(n) &&
+    /\b(today|tomorrow|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday|morning|evening|afternoon|at\s+\d)\b/.test(n)
+  ) return true;
+  // "shift X to [date/time]"
+  if (/\bshift\b.{0,60}\b(to|from)\b/.test(n) && /\b(today|tomorrow|tonight|at\s+\d)\b/.test(n)) return true;
+  // "set X for [new time]" — only when a reminder is targeted (not "set a reminder")
+  if (/\bset\s+it\s+(for|to)\b/.test(n)) return true;
   return false;
 }
 

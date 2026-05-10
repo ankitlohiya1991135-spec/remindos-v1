@@ -14,6 +14,7 @@ import {
   looksLikeBulkIntent,
   looksLikeSnoozeIntent,
   looksLikeEditIntent,
+  looksLikeRescheduleIntent,
   getReminderBucket,
   filterRemindersByListScope,
   describeReminderForChat,
@@ -603,6 +604,7 @@ function extractTitleFromCreateInput(input: string) {
     /\bping\s+me\s+(at|about|for|when)\s+/i,
     /\b(alert|notify)\s+me\s+(at|about|for|when|to)\s+/i,
     /\bput\s+(a\s+)?reminder\s+(for|to|about)\s+/i,
+    /\bi\s+have\s+(a\s+|an\s+)?/i,
     /\b(याद\s+दिलाना|याद\s+कराना|याद\s+रखना|रिमाइंडर\s+लगाओ)\s+/i,
   ];
 
@@ -740,6 +742,26 @@ function extractTargetFromDelete(message: string): string {
     .replace(/^(please\s+)?/i, "")
     .replace(/\b(delete|remove|cancel|dismiss|drop|trash|erase)\s*(it|them|this|that)?\s*/gi, " ")
     .replace(/\b(my|the|a|an|reminder|reminders|for|about)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function extractTargetFromReschedule(message: string): string {
+  return message
+    .replace(/^(please\s+)?/i, "")
+    // Strip the action phrase "change the time/date of"
+    .replace(/\b(change|update)\s+the\s+(time|date|due\s+date|due\s+time|schedule)\s*(of|for|on)?\s*/gi, " ")
+    // Strip "reschedule/move/shift"
+    .replace(/\b(reschedule|move|shift)\s*/gi, " ")
+    // Strip everything from the new time onwards: "to today at 5pm", "to 5pm", "for tomorrow"
+    .replace(/\b(to|for)\s+(today|tomorrow|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b.*/gi, " ")
+    .replace(/\bto\s+\d{1,2}(:\d{2})?\s*(am|pm)\b.*/gi, " ")
+    // Strip loose date/time words left behind
+    .replace(/\b(today|tomorrow|tonight|at|on|by|next|this|coming|morning|evening|afternoon|night|noon|midnight)\b/gi, " ")
+    .replace(/\b\d{1,2}(?:[:.]\d{2})?\s?([ap]\.?m\.?)\b/gi, " ")
+    .replace(/\b\d{1,2}[:.]\d{2}\b/g, " ")
+    // Strip articles and reminder-type words
+    .replace(/\b(my|the|a|an|reminder|reminders|for|about|it|that|this)\b/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
@@ -1524,6 +1546,54 @@ export async function POST(request: Request) {
       }
       // Zero matches — fall through to LLM
     }
+  }
+
+  // ─── Reschedule fast path ─────────────────────────────────────────────────
+  if (looksLikeRescheduleIntent(message)) {
+    const newDueAt = parseDateTimeFromInput(message, timeZone);
+
+    if (!newDueAt || !isValidFutureIsoDate(newDueAt)) {
+      const r: ReminderAgentResponse = {
+        reply: "What time should I reschedule it to?",
+        action: { type: "clarify" },
+      };
+      void saveMessageServerSide(userId, "user", message);
+      void saveMessageServerSide(userId, "assistant", r.reply);
+      return NextResponse.json(r);
+    }
+
+    const ordinalTarget = resolveByOrdinal(message, reminders, body.recentListedIds);
+    const rawTarget = extractTargetFromReschedule(message);
+    const isPronoun = !rawTarget || rawTarget.length < 2 || PRONOUN_TARGETS.has(rawTarget.toLowerCase());
+    let target: ReminderItem | undefined = ordinalTarget ?? undefined;
+
+    if (!target && !isPronoun) {
+      const matches = reminders.filter(
+        (r) => r.status === "pending" && r.title.toLowerCase().includes(rawTarget.toLowerCase()),
+      );
+      if (matches.length === 1) target = matches[0];
+      if (matches.length > 1) {
+        const sample = matches.slice(0, 2).map((r) => `"${r.title}" at ${formatDueInUserZone(r.dueAt, timeZone)}`);
+        const r: ReminderAgentResponse = {
+          reply: `Which one do you mean — ${sample.join(" or ")}?`,
+          action: { type: "clarify" },
+        };
+        void saveMessageServerSide(userId, "user", effectiveMessage);
+        void saveMessageServerSide(userId, "assistant", r.reply);
+        return NextResponse.json(r);
+      }
+    }
+
+    if (target) {
+      const r: ReminderAgentResponse = {
+        reply: `Rescheduled "${target.title}" to ${formatDueInUserZone(newDueAt, timeZone)}.`,
+        action: { type: "reschedule_reminder", targetId: target.id, targetTitle: target.title, dueAt: newDueAt },
+      };
+      void saveMessageServerSide(userId, "user", effectiveMessage);
+      void saveMessageServerSide(userId, "assistant", r.reply);
+      return NextResponse.json(r);
+    }
+    // Target not resolved — fall through to LLM
   }
 
   // ─── Gap 5: edit title/notes fast path ────────────────────────────────────
