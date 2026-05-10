@@ -5356,50 +5356,43 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
             ) : null}
 
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden" style={{ background: "#1a1625" }}>
-              {/* ── Mobile top bar ── */}
-              {/* The global app header (in app/layout.tsx) already shows the
-                  RemindOS brand mark, so we don't repeat it here — just the
-                  personalised greeting goes in this row to save vertical space. */}
-              <div className="flex shrink-0 items-center justify-between px-4 pb-2 pt-[max(0.875rem,env(safe-area-inset-top))] lg:hidden">
-                <div>
-                  <p className="text-[15px] font-semibold leading-tight text-white">
-                    {(() => {
-                      const h = new Date().getHours();
-                      const g = h < 12 ? "morning" : h < 18 ? "afternoon" : "evening";
-                      const name = user?.firstName?.trim();
-                      return name ? `Good ${g}, ${name} ${h < 18 ? "☀️" : "🌙"}` : `Good ${g}`;
-                    })()}
-                  </p>
+              {/* ── Mobile top bar — greeting + compact stat pills in one slim row ──
+                  The global header already has RemindOS brand + hamburger + bell,
+                  so we only show a subtle greeting and non-zero reminder counts. */}
+              <div className="flex shrink-0 items-center gap-2 border-b border-[rgba(255,255,255,0.07)] px-4 py-2 lg:hidden">
+                {/* Greeting — small and unobtrusive */}
+                <p className="flex-1 truncate text-xs font-medium text-[rgba(255,255,255,0.45)]">
+                  {(() => {
+                    const h = new Date().getHours();
+                    const g = h < 12 ? "Morning" : h < 18 ? "Afternoon" : "Evening";
+                    const name = user?.firstName?.trim();
+                    return name ? `Good ${g}, ${name} ${h < 18 ? "☀️" : "🌙"}` : `Good ${g}`;
+                  })()}
+                </p>
+                {/* Compact stat pills — only render when count > 0 */}
+                <div className="flex items-center gap-1.5">
+                  {(
+                    [
+                      { count: snapshot.missed,         label: "Missed",  bg: "rgba(244,63,94,0.15)",  border: "rgba(244,63,94,0.35)",  text: "#fda4af", tab: "missed"   as const },
+                      { count: snapshot.today,          label: "Today",   bg: "rgba(245,158,11,0.15)", border: "rgba(245,158,11,0.35)", text: "#fcd34d", tab: "today"    as const },
+                      { count: snapshot.tomorrow,       label: "Tmr",     bg: "rgba(124,58,237,0.15)", border: "rgba(124,58,237,0.35)", text: "#c4b5fd", tab: "tomorrow" as const },
+                      { count: grouped.upcoming.length, label: "Later",   bg: "rgba(6,182,212,0.15)",  border: "rgba(6,182,212,0.35)",  text: "#67e8f9", tab: "upcoming" as const },
+                    ] as const
+                  )
+                    .filter((item) => item.count > 0)
+                    .map((item) => (
+                      <button
+                        key={item.label}
+                        type="button"
+                        onClick={() => { setReminderListTab(item.tab); showReminderListOverlay(); }}
+                        className="flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold transition active:scale-95"
+                        style={{ background: item.bg, border: `1px solid ${item.border}`, color: item.text }}
+                      >
+                        <span className="font-bold">{item.count}</span>
+                        <span className="opacity-80">{item.label}</span>
+                      </button>
+                    ))}
                 </div>
-                <div className="flex items-center gap-2">
-                  <NotificationBell pollIntervalMs={30_000} />
-                  <div
-                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white"
-                    style={{ background: "linear-gradient(135deg,#7c3aed,#06b6d4)" }}
-                  >
-                    {user?.firstName?.[0]?.toUpperCase() ?? "U"}
-                  </div>
-                </div>
-              </div>
-
-              {/* ── Mobile urgency stats grid (4 cols) ── */}
-              <div className="grid shrink-0 grid-cols-4 border-b border-[rgba(255,255,255,0.07)] px-3 py-2 lg:hidden">
-                {[
-                  { count: snapshot.missed,           label: "MISSED",   color: "#f43f5e", tab: "missed"   as const },
-                  { count: snapshot.today,            label: "TODAY",    color: "#f59e0b", tab: "today"    as const },
-                  { count: snapshot.tomorrow,         label: "TOMORROW", color: "#7c3aed", tab: "tomorrow" as const },
-                  { count: grouped.upcoming.length,   label: "LATER",    color: "#06b6d4", tab: "upcoming" as const },
-                ].map((item) => (
-                  <button
-                    key={item.label}
-                    type="button"
-                    onClick={() => { setReminderListTab(item.tab); showReminderListOverlay(); }}
-                    className="flex flex-col items-center gap-0.5 py-1"
-                  >
-                    <span className="text-[22px] font-extrabold leading-none text-white">{item.count}</span>
-                    <span className="text-[8px] font-bold tracking-wide" style={{ color: item.color }}>{item.label}</span>
-                  </button>
-                ))}
               </div>
 
               {/* Inner toolbar — hidden on mobile, shown sm+ (desktop chat panel header) */}
