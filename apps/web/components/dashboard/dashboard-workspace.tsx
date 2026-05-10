@@ -1962,6 +1962,17 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     if (isListOpen) void loadShareInbox();
   }, [isListOpen, loadShareInbox]);
 
+  // Auto-scroll the active tab into view when the overlay opens or tab changes
+  useEffect(() => {
+    if (!isListOpen) return;
+    const activeTabEl = document.querySelector(
+      `[data-testid="reminder-tab-${reminderListTab}"]`,
+    );
+    if (activeTabEl) {
+      activeTabEl.scrollIntoView({ behavior: "instant" as ScrollBehavior, block: "nearest", inline: "center" });
+    }
+  }, [isListOpen, reminderListTab]);
+
   const refreshRemindersRef = useRef(refreshReminders);
   refreshRemindersRef.current = refreshReminders;
 
@@ -5209,6 +5220,8 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                       ? grouped.today
                       : reminderListTabDesktop === "tomorrow"
                       ? grouped.tomorrow
+                      : reminderListTabDesktop === "all"
+                      ? reminders
                       : [];
                   const desktopRows = reminderListTabDesktop === "shared"
                     ? desktopRowsRaw
