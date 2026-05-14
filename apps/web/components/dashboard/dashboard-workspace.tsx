@@ -58,304 +58,70 @@ import { BottomNav } from "./bottom-nav";
 import { ChatPanelHeader } from "./chat-panel-header";
 import { NotificationPrefsPanel } from "../notifications/notification-prefs-panel";
 
-type ChatRole = "user" | "assistant" | "system";
+// ─── Types — see ./dashboard-types.ts ─────────────────────────────────────
+import type {
+  ChatRole,
+  ChatReplyToRef,
+  ChatMessageMeta,
+  ChatMessage,
+  AgentAction,
+  AgentResponse,
+  PendingCreateDraft,
+  WorkspaceProps,
+  DashboardOverlay,
+  DashboardOverlayState,
+  DirectoryUser,
+  ShareInboxRow,
+  TaskWarningAction,
+  TaskActionWarning,
+  ReminderListTab,
+} from "./dashboard-types";
+// Re-export so existing consumers (snapshot-overlay, chat-panel-header, bottom-nav) keep working
+export type { ReminderListTab };
 
-interface ChatReplyToRef {
-  id: string;
-  content: string;
-  role: ChatRole;
-}
-
-interface ChatMessageMeta {
-  kind?: "due_reminder" | "briefing" | "opening_summary";
-  /** Which slice of the session briefing this bubble is (split messages). */
-  briefingSection?: BriefingSection;
-  reminderId?: string;
-  dueAt?: number;
-  title?: string;
-  notes?: string;
-  /** When true, message is not written to chat history file */
-  skipPersist?: boolean;
-  replyTo?: ChatReplyToRef;
-  editedAt?: string;
-}
-
-interface ChatMessage {
-  id: string;
-  role: ChatRole;
-  content: string;
-  createdAt: string;
-  meta?: ChatMessageMeta;
-}
-
-interface AgentAction {
-  type:
-    | "create_reminder"
-    | "list_reminders"
-    | "mark_done"
-    | "delete_reminder"
-    | "reschedule_reminder"
-    | "snooze_reminder"
-    | "edit_reminder"
-    | "bulk_action"
-    | "clarify"
-    | "pending_confirm"
-    | "unknown";
-  title?: string;
-  dueAt?: string;
-  notes?: string;
-  linkedTaskId?: string;
-  priority?: number;
-  domain?: string;
-  recurrence?: string;
-  pendingType?: "mark_done" | "delete_reminder" | "edit_reminder";
-  delayMinutes?: number;
-  newTitle?: string;
-  newNotes?: string;
-  bulkOperation?: "mark_done" | "delete";
-  bulkTargetIds?: string[];
-  listedIds?: string[];
-  suggestedDueAt?: string;
-  targetTitle?: string;
-  targetId?: string;
-  scope?: "today" | "tomorrow" | "missed" | "done" | "pending" | "all" | "later" | "future";
-  /** Only on clarify (disambiguation): pending operation type */
-  pendingOp?: "mark_done" | "delete" | "reschedule" | "edit" | "snooze";
-  /** Only on clarify (disambiguation): IDs of ambiguous reminder candidates */
-  candidateIds?: string[];
-  /** Only on clarify (reschedule disambiguation): already-parsed new due date ISO */
-  pendingDueAt?: string;
-  /** Only on clarify (edit disambiguation): which field is being edited */
-  pendingField?: "title" | "notes";
-  /** Only on clarify (edit disambiguation): the new field value */
-  pendingValue?: string;
-  /** Only on clarify (snooze disambiguation): snooze delay in minutes */
-  pendingDelayMinutes?: number;
-}
-
-interface AgentResponse {
-  reply: string;
-  action: AgentAction;
-}
-interface PendingCreateDraft {
-  step: "title" | "date" | "time" | "task" | "priority";
-  title?: string;
-  notes?: string;
-  dateIso?: string;
-  dueAt?: string;
-  linkedTaskId?: string;
-  priority?: number;
-}
-
-interface WorkspaceProps {
-  userId: string;
-}
-
-type DashboardOverlay =
-  | "snapshot"
-  | "create"
-  | "reminders"
-  | "tasks"
-  | "share"
-  | "import"
-  | "batch";
-
-interface DashboardOverlayState {
-  overlay: DashboardOverlay;
-  taskMode?: "create" | "browse";
-  shareReminderIds?: string[];
-}
-
-interface DirectoryUser {
-  id: string;
-  email: string;
-  firstName: string;
-  lastName: string;
-  username: string;
-  imageUrl: string;
-}
-
-interface ShareInboxRow {
-  _id: string;
-  reminderId: string;
-  token: string;
-  fromUserId: string;
-  fromDisplayName: string;
-  toUserId: string;
-  title: string;
-  dueAt: number;
-  createdAt: number;
-  shareBatchId?: string;
-}
-
-type TaskWarningAction = "delete" | "complete";
-
-interface TaskActionWarning {
-  task: TaskRow;
-  action: TaskWarningAction;
-  pendingReminderCount: number;
-}
-
-export type ReminderListTab =
-  | "all"
-  | "missed"
-  | "today"
-  | "tomorrow"
-  | "next2hours"
-  | "upcoming"
-  | "done"
-  | "shared"
-  | "sent";
-
-
-function groupShareInboxRows(
-  rows: ShareInboxRow[],
-): { batchKey: string; rows: ShareInboxRow[] }[] {
-  const map = new Map<string, ShareInboxRow[]>();
-  for (const row of rows) {
-    const key = row.shareBatchId ?? `legacy:${row._id}`;
-    if (!map.has(key)) map.set(key, []);
-    map.get(key)!.push(row);
-  }
-  return [...map.entries()].map(([batchKey, list]) => ({
-    batchKey,
-    rows: list,
-  }));
-}
-
-function directoryDisplayName(u: DirectoryUser): string {
-  const n = [u.firstName, u.lastName].filter(Boolean).join(" ").trim();
-  if (n) return n;
-  if (u.username) return `@${u.username}`;
-  return u.email || "User";
-}
-
-const loadingTexts = [
-  "Processing your message...",
-  "Understanding your reminder intent...",
-  "Preparing the best response for you...",
-  "Almost there, finalizing your reminder assistant reply...",
-];
-
-const STARTER_MESSAGE = {
-  id: "starter",
-  role: "assistant" as const,
-  content:
-    "Hi! Ask me anything about your reminders—what's next, times, notes, or compare your day. I can also create or complete them. Example: 'Create reminder tomorrow at 9am for gym'.",
-  createdAt: new Date().toISOString(),
-  meta: {
-    skipPersist: true,
-  },
-};
-
-function formatSummaryTime(value: string) {
-  try {
-    return new Date(value).toLocaleTimeString(undefined, {
-      hour: "numeric",
-      minute: "2-digit",
-    });
-  } catch {
-    return value;
-  }
-}
-
-function formatDisplayDateTime(value: string | number) {
-  try {
-    return new Date(value).toLocaleString(undefined, {
-      month: "long",
-      day: "numeric",
-      hour: "numeric",
-      minute: "2-digit",
-    });
-  } catch {
-    return String(value);
-  }
-}
-
-function buildOpeningSummaryMessage(input: {
-  reminders: ReminderItem[];
-  tasks: TaskItemBrief[];
-  firstName?: string | null;
-  now?: Date;
-}): ChatMessage {
-  const now = input.now ?? new Date();
-  const startToday = new Date(now);
-  startToday.setHours(0, 0, 0, 0);
-  const next2h = new Date(now.getTime() + 2 * 60 * 60 * 1000);
-
-  const overdueToday: ReminderItem[] = [];
-  const nextTwoHours: ReminderItem[] = [];
-  const upcomingLater: ReminderItem[] = [];
-
-  for (const reminder of input.reminders) {
-    if (reminder.status === "done" || reminder.status === "archived") continue;
-    const dueMs = new Date(reminder.dueAt).getTime();
-    if (!Number.isFinite(dueMs)) continue;
-
-    if (dueMs >= startToday.getTime() && dueMs < now.getTime()) {
-      overdueToday.push(reminder);
-      continue;
-    }
-    if (dueMs >= now.getTime() && dueMs < next2h.getTime()) {
-      nextTwoHours.push(reminder);
-      continue;
-    }
-    if (dueMs >= next2h.getTime()) {
-      upcomingLater.push(reminder);
-    }
-  }
-
-  overdueToday.sort((a, b) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime());
-  nextTwoHours.sort((a, b) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime());
-  upcomingLater.sort((a, b) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime());
-
-  const name = input.firstName?.trim();
-  const lines = [
-    name ? `Good ${now.getHours() < 12 ? "morning" : now.getHours() < 18 ? "afternoon" : "evening"}, ${name}.` : "Here is your reminder overview:",
-    "",
-    `### 1) Today's overdue reminders (${overdueToday.length})`,
-  ];
-
-  if (overdueToday.length === 0) {
-    lines.push("- None");
-  } else {
-    for (const item of overdueToday) {
-      lines.push(`- ${formatSummaryTime(item.dueAt)} — **${item.title}**`);
-    }
-  }
-
-  lines.push("", `### 2) Next 2 hours reminders (${nextTwoHours.length})`);
-  if (nextTwoHours.length === 0) {
-    lines.push("- None");
-  } else {
-    for (const item of nextTwoHours) {
-      lines.push(`- ${formatSummaryTime(item.dueAt)} — **${item.title}**`);
-    }
-  }
-
-  lines.push("", `### 3) Remaining upcoming reminders (${upcomingLater.length})`);
-  if (upcomingLater.length === 0) {
-    lines.push("- None");
-  } else {
-    for (const item of upcomingLater.slice(0, 12)) {
-      lines.push(`- ${new Date(item.dueAt).toLocaleDateString(undefined, { month: "long", day: "numeric" })} ${formatSummaryTime(item.dueAt)} — **${item.title}**`);
-    }
-  }
-
-  return {
-    id: `opening-summary-${Date.now()}`,
-    role: "assistant",
-    content: lines.join("\n"),
-    createdAt: now.toISOString(),
-    meta: {
-      kind: "opening_summary",
-      skipPersist: true,
-    },
-  };
-}
-
-const SHOW_SUGGESTED_QUESTIONS_KEY = "remindos:showSuggestedQuestions";
-const DEFAULT_CHAT_REMINDER_TITLE = "Reminder";
+// ─── Utils — see ./dashboard-utils.ts ──────────────────────────────────────
+import {
+  SHOW_SUGGESTED_QUESTIONS_KEY,
+  DEFAULT_CHAT_REMINDER_TITLE,
+  CHAT_THREAD_BACKUP_PREFIX,
+  WALKTHROUGH_RELEASE_AT,
+  WALKTHROUGH_STORAGE_PREFIX,
+  WALKTHROUGH_STEPS,
+  DUE_SHOWN_KEY,
+  STARTER_MESSAGE,
+  loadingTexts,
+  walkthroughStorageKey,
+  chatThreadBackupKey,
+  loadChatBackup,
+  saveChatBackup,
+  clearChatBackup,
+  readDueShown,
+  markDueShown,
+  dedupeMessagesById,
+  mergeRemoteChat,
+  toReplyContextPayload,
+  chatReplyLabel,
+  briefingSectionLabel,
+  clientTimeZonePayload,
+  formatSummaryTime,
+  formatDisplayDateTime,
+  toDateTimeLocalValue,
+  currentDateTimeLocalValue,
+  fromApiReminder,
+  matchesReminder,
+  dueMinuteKey,
+  isDueThisMinute,
+  isNextTwoHoursReminder,
+  reminderStateLabel,
+  buildOpeningSummaryMessage,
+  fromApiTask,
+  taskBucket,
+  groupShareInboxRows,
+  directoryDisplayName,
+  extractInviteToken,
+  parseLifeDomain,
+  LIFE_DOMAINS,
+} from "./dashboard-utils";
 
 function usePersistentReminders(userId: string) {
   const [reminders, setReminders] = useState<ReminderItem[]>([]);
@@ -395,370 +161,10 @@ function usePersistentReminders(userId: string) {
   return [reminders, updateReminders, isLoaded] as const;
 }
 
-function dedupeMessagesById(messages: ChatMessage[]) {
-  const map = new Map<string, ChatMessage>();
-  for (const message of messages) {
-    if (!message?.id) continue;
-    map.set(message.id, message);
-  }
-  return Array.from(map.values()).sort(
-    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
-  );
-}
-
-/** Ensures server-side chat uses the same IANA zone as the browser (fixes UTC vs local due times). */
-function clientTimeZonePayload(): { timeZone?: string } {
-  try {
-    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
-    return tz ? { timeZone: tz } : {};
-  } catch {
-    return {};
-  }
-}
-
-function mergeRemoteChat(
-  local: ChatMessage[],
-  remote: ChatMessage[],
-): ChatMessage[] {
-  if (remote.length === 0) return local;
-  const localBase = local.filter((m) => m.id !== "starter");
-  const remoteMap = new Map(remote.map((m) => [m.id, m]));
-  const out: ChatMessage[] = [];
-  const seen = new Set<string>();
-  for (const m of localBase) {
-    if (m.meta?.skipPersist) {
-      out.push(m);
-      seen.add(m.id);
-      continue;
-    }
-    const r = remoteMap.get(m.id);
-    out.push(r ?? m);
-    seen.add(m.id);
-  }
-  for (const m of remote) {
-    if (!seen.has(m.id)) {
-      out.push(m);
-      seen.add(m.id);
-    }
-  }
-  return dedupeMessagesById(out);
-}
-
-const CHAT_THREAD_BACKUP_PREFIX = "remindos:chatThread:";
-const WALKTHROUGH_RELEASE_AT = Date.parse("2026-04-20T00:00:00.000Z");
-const WALKTHROUGH_STORAGE_PREFIX = "remindos:walkthrough-completed:";
-
-const WALKTHROUGH_STEPS: WalkthroughStep[] = [
-  {
-    id: "all-tasks",
-    line1: "This is All tasks.",
-    line2: "Open it to view, edit, and track all tasks quickly.",
-    targetSelectors: [
-      '[data-walkthrough="all-tasks-trigger"]',
-      '[aria-label="All tasks"]',
-    ],
-    nextLabel: "Next",
-  },
-  {
-    id: "briefing",
-    line1: "This is Briefing.",
-    line2: "Tap it for a quick summary of what needs attention now.",
-    targetSelectors: [
-      '[data-walkthrough="briefing-trigger"]',
-      '[aria-label="Run briefing"]',
-    ],
-    nextLabel: "Next",
-  },
-  {
-    id: "create-reminder",
-    line1: "This is Create reminder.",
-    line2: "Add a reminder in seconds with date, priority, and notes.",
-    targetSelectors: [
-      '[data-walkthrough="create-reminder-trigger"]',
-      '[data-testid="chat-mobile-create-reminder"]',
-      '[aria-label="Create reminder"]',
-    ],
-    nextLabel: "Next",
-  },
-  {
-    id: "menu",
-    line1: "This is your workspace menu.",
-    line2: "Use it to open snapshot and other quick actions.",
-    targetSelectors: [
-      '[data-walkthrough="snapshot-trigger"]',
-      '[aria-label="Open workspace menu"]',
-    ],
-    nextLabel: "Finish",
-  },
-];
-
-function walkthroughStorageKey(userId: string) {
-  return `${WALKTHROUGH_STORAGE_PREFIX}${userId}`;
-}
-
-function chatThreadBackupKey(userId: string) {
-  return `${CHAT_THREAD_BACKUP_PREFIX}${userId}`;
-}
-
-function loadChatBackup(userId: string): ChatMessage[] | null {
-  if (typeof localStorage === "undefined" || !userId) return null;
-  try {
-    const raw = localStorage.getItem(chatThreadBackupKey(userId));
-    if (!raw) return null;
-    const data = JSON.parse(raw) as unknown;
-    if (!Array.isArray(data) || data.length === 0) return null;
-    const out: ChatMessage[] = [];
-    for (const item of data) {
-      if (!item || typeof item !== "object") continue;
-      const m = item as Record<string, unknown>;
-      const id = typeof m.id === "string" ? m.id : null;
-      const role = m.role;
-      const content = typeof m.content === "string" ? m.content : "";
-      const createdAt = typeof m.createdAt === "string" ? m.createdAt : null;
-      if (!id || !createdAt) continue;
-      if (role !== "user" && role !== "assistant" && role !== "system")
-        continue;
-      if (!content.trim()) continue;
-      out.push({
-        id,
-        role,
-        content,
-        createdAt,
-        meta: m.meta as ChatMessage["meta"],
-      });
-    }
-    return out.length > 0 ? dedupeMessagesById(out) : null;
-  } catch {
-    return null;
-  }
-}
-
-function saveChatBackup(userId: string, messages: ChatMessage[]): void {
-  if (typeof localStorage === "undefined" || !userId) return;
-  try {
-    const persistable = dedupeMessagesById(messages).filter(
-      (m) => !m.meta?.skipPersist,
-    );
-    if (persistable.length === 0) {
-      localStorage.removeItem(chatThreadBackupKey(userId));
-      return;
-    }
-    const capped = persistable.slice(-400);
-    localStorage.setItem(chatThreadBackupKey(userId), JSON.stringify(capped));
-  } catch {
-    /* quota or private mode */
-  }
-}
-
-function clearChatBackup(userId: string): void {
-  if (typeof localStorage === "undefined" || !userId) return;
-  try {
-    localStorage.removeItem(chatThreadBackupKey(userId));
-  } catch {
-    /* ignore */
-  }
-}
-
-const LIFE_DOMAINS = new Set<string>([
-  "health",
-  "finance",
-  "career",
-  "hobby",
-  "fun",
-]);
-
-function parseLifeDomain(value: unknown): LifeDomain | undefined {
-  return typeof value === "string" && LIFE_DOMAINS.has(value)
-    ? (value as LifeDomain)
-    : undefined;
-}
-
-function fromApiTask(row: Record<string, unknown>): TaskRow {
-  const pr = row.priority;
-  return {
-    id: String(row._id ?? row.id ?? crypto.randomUUID()),
-    title: String(row.title ?? ""),
-    notes: typeof row.notes === "string" ? row.notes : undefined,
-    dueAt:
-      row.dueAt != null ? new Date(Number(row.dueAt)).toISOString() : undefined,
-    status: row.status === "done" ? "done" : "pending",
-    priority: typeof pr === "number" && Number.isFinite(pr) ? pr : undefined,
-    domain: parseLifeDomain(row.domain),
-  };
-}
-
-function taskBucket(task: TaskRow, now: Date): "missed" | "later" | "done" {
-  if (task.status === "done") return "done";
-  if (task.dueAt && new Date(task.dueAt).getTime() < now.getTime())
-    return "missed";
-  return "later";
-}
-
-function fromApiReminder(item: Record<string, unknown>): ReminderItem {
-  const access = item._access === "shared" ? "shared" : "owner";
-  const p = item.priority;
-  const linked = item.linkedTaskId;
-  const ownerUserId =
-    access === "shared" && typeof item.userId === "string"
-      ? item.userId
-      : undefined;
-  const shareRecipients = Array.isArray(item._shareRecipients)
-    ? (item._shareRecipients as { userId: string; displayName: string }[])
-    : undefined;
-  const outgoingShared = item._outgoingShared === true;
-  return {
-    id: String(item._id ?? item.id ?? crypto.randomUUID()),
-    title: String(item.title ?? ""),
-    dueAt: new Date(Number(item.dueAt ?? Date.now())).toISOString(),
-    notes: typeof item.notes === "string" ? item.notes : "",
-    recurrence:
-      item.recurrence === "daily" ||
-      item.recurrence === "weekly" ||
-      item.recurrence === "monthly"
-        ? item.recurrence
-        : "none",
-    status:
-      item.status === "done" || item.status === "archived"
-        ? item.status
-        : "pending",
-    priority: typeof p === "number" && Number.isFinite(p) ? p : undefined,
-    createdAt: new Date(Number(item.createdAt ?? Date.now())).toISOString(),
-    updatedAt: new Date(Number(item.updatedAt ?? Date.now())).toISOString(),
-    access,
-    ownerUserId,
-    shareRecipients: access === "owner" ? shareRecipients : undefined,
-    outgoingShared: access === "owner" ? outgoingShared : undefined,
-    linkedTaskId: typeof linked === "string" ? linked : undefined,
-    domain: parseLifeDomain(item.domain),
-  };
-}
-
-function matchesReminder(
-  reminder: ReminderItem,
-  targetId?: string,
-  targetTitle?: string,
-) {
-  if (targetId && reminder.id === targetId) return true;
-  if (!targetTitle) return false;
-  return reminder.title.toLowerCase().includes(targetTitle.toLowerCase());
-}
-
-const DUE_SHOWN_KEY = "remindos:dueShown";
-
-function dueMinuteKey(reminder: ReminderItem) {
-  const d = new Date(reminder.dueAt);
-  return `${reminder.id}|${d.getFullYear()}-${d.getMonth()}-${d.getDate()}-${d.getHours()}-${d.getMinutes()}`;
-}
-
-function isDueThisMinute(dueAtIso: string, now: Date) {
-  const d = new Date(dueAtIso);
-  return (
-    d.getFullYear() === now.getFullYear() &&
-    d.getMonth() === now.getMonth() &&
-    d.getDate() === now.getDate() &&
-    d.getHours() === now.getHours() &&
-    d.getMinutes() === now.getMinutes()
-  );
-}
 
 
-function isNextTwoHoursReminder(reminder: ReminderItem, now = new Date()) {
-  if (reminder.status === "done" || reminder.status === "archived") return false;
-  const dueMs = new Date(reminder.dueAt).getTime();
-  if (!Number.isFinite(dueMs)) return false;
-  const nextTwoHoursMs = now.getTime() + 2 * 60 * 60 * 1000;
-  return dueMs >= now.getTime() && dueMs < nextTwoHoursMs;
-}
-
-function reminderStateLabel(reminder: ReminderItem, now = new Date()) {
-  if (reminder.status === "done" || reminder.status === "archived") return "Done";
-  if (getReminderBucket(reminder, now) === "missed") return "Missed";
-  return "Upcoming";
-}
-
-function readDueShown(): Set<string> {
-  if (typeof sessionStorage === "undefined") return new Set();
-  try {
-    const raw = sessionStorage.getItem(DUE_SHOWN_KEY);
-    if (!raw) return new Set();
-    return new Set(JSON.parse(raw) as string[]);
-  } catch {
-    return new Set();
-  }
-}
-
-function markDueShown(key: string) {
-  if (typeof sessionStorage === "undefined") return;
-  const next = readDueShown();
-  next.add(key);
-  sessionStorage.setItem(DUE_SHOWN_KEY, JSON.stringify([...next]));
-}
-
-function toReplyContextPayload(
-  target: ChatMessage | null | undefined,
-): ReplyContextPayload | undefined {
-  if (!target?.content?.trim()) return undefined;
-  return {
-    id: target.id,
-    content: target.content,
-    role: target.role === "system" ? "system" : target.role,
-  };
-}
-
-function chatReplyLabel(role: ChatRole): string {
-  if (role === "user") return "You";
-  if (role === "assistant") return "RemindOS";
-  return "Notice";
-}
-
-function briefingSectionLabel(section: BriefingSection | undefined): string {
-  switch (section) {
-    case "greeting":
-      return "Briefing";
-    case "completed":
-      return "Completed";
-    case "overdue":
-      return "Overdue";
-    case "today":
-      return "Today";
-    case "tomorrow":
-      return "Tomorrow";
-    case "later":
-      return "Coming up";
-    case "tasks":
-      return "Tasks by priority";
-    case "closing":
-      return "Next step";
-    default:
-      return "Session briefing";
-  }
-}
-
-// ChatBubbleShell is now a standalone component — see ./chat-bubble-shell.tsx
-
-function toDateTimeLocalValue(iso?: string): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (!Number.isFinite(d.getTime())) return "";
-  const pad = (n: number) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-function currentDateTimeLocalValue(): string {
-  return toDateTimeLocalValue(new Date().toISOString());
-}
-
-function extractInviteToken(text: string): string | null {
-  const trimmed = text.trim();
-  const fromUrl = trimmed.match(/[?&]invite=([^&\s#]+)/i);
-  if (fromUrl?.[1]) return decodeURIComponent(fromUrl[1]);
-  const acceptHex = trimmed.match(/\baccept\s+invite\s+([a-f\d]{16,64})\b/i);
-  if (acceptHex?.[1]) return acceptHex[1];
-  const plainHex = trimmed.match(/\b([a-f\d]{24,40})\b/i);
-  if (plainHex?.[1] && /\b(accept|invite|join)\b/i.test(trimmed))
-    return plainHex[1];
-  return null;
-}
+// toDateTimeLocalValue, currentDateTimeLocalValue, extractInviteToken
+// are imported from ./dashboard-utils above.
 
 // ─────────────────────────────────────────────────────────────
 // ShareOverlay – Screen 11 · Sharing & Collaboration
