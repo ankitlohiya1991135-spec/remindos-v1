@@ -115,6 +115,10 @@ interface AgentAction {
   targetTitle?: string;
   targetId?: string;
   scope?: "today" | "tomorrow" | "missed" | "done" | "pending" | "all" | "later" | "future";
+  /** Only on clarify (disambiguation): pending operation type */
+  pendingOp?: "mark_done" | "delete";
+  /** Only on clarify (disambiguation): IDs of ambiguous reminder candidates */
+  candidateIds?: string[];
 }
 
 interface AgentResponse {
@@ -1523,6 +1527,9 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     useState<PendingCreateDraft | null>(null);
   const [pendingConfirmAction, setPendingConfirmAction] =
     useState<{ type: "mark_done" | "delete_reminder" | "edit_reminder"; targetId?: string; targetTitle?: string; targetIds?: string[]; newTitle?: string; newNotes?: string } | null>(null);
+  /** Tracks an in-progress mark_done/delete disambiguation: user was asked "which one?" and hasn't answered yet */
+  const [pendingDisambig, setPendingDisambig] =
+    useState<{ op: "mark_done" | "delete"; candidateIds: string[] } | null>(null);
   const [recentListedIds, setRecentListedIds] = useState<string[]>([]);
   const [pendingTimeSuggestion, setPendingTimeSuggestion] = useState<{
     title: string;
@@ -2965,6 +2972,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
 
     if (action.type === "create_reminder" && action.title && action.dueAt) {
       setPendingCreateDraft(null);
+      setPendingDisambig(null);
       const title = action.title;
       const dueAt = action.dueAt;
       const isDuplicate = reminders.some(
@@ -3138,6 +3146,15 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     }
 
     if (action.type === "clarify") {
+      // Disambiguation clarify: user was asked "which one?" for mark_done/delete.
+      // Store context so the next reply resolves the correct reminder instead of
+      // starting the create-reminder wizard.
+      if (action.pendingOp && action.candidateIds?.length) {
+        setPendingDisambig({ op: action.pendingOp, candidateIds: action.candidateIds });
+        setPendingCreateDraft(null);
+        return;
+      }
+
       // Gap 8: if the server included a time suggestion, store it for confirmation on next turn.
       // Fix: don't activate BOTH wizard and suggestion simultaneously — pick suggestion path only,
       // skip setPendingCreateDraft so the two flows don't conflict.
@@ -3152,10 +3169,12 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
           domain: typeof action.domain === "string" ? action.domain : undefined,
           recurrence: typeof action.recurrence === "string" ? action.recurrence : undefined,
         });
-        // Clear any stale wizard so it doesn't conflict
+        // Clear any stale wizard/disambig so it doesn't conflict
         setPendingCreateDraft(null);
+        setPendingDisambig(null);
         return;
       }
+      setPendingDisambig(null);
       setPendingCreateDraft({
         step: action.title ? "date" : "title",
         title: action.title,
@@ -3330,6 +3349,85 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
               createdAt: new Date().toISOString(),
             },
           ]);
+          return;
+        }
+
+        // ─── Disambiguation resolution for mark_done / delete ────────────────
+        // When user was asked "Which one do you mean?" for a multi-match operation,
+        // their next reply is a clarifying title — resolve it here without going to
+        // the server, so we never accidentally start the create-reminder wizard.
+        if (pendingDisambig) {
+          const text = messageText.trim().toLowerCase();
+
+          // Escape hatch: user explicitly cancels
+          if (/^(cancel|nevermind|never mind|stop|abort|no|nope)\b/i.test(messageText.trim())) {
+            setPendingDisambig(null);
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: crypto.randomUUID(),
+                role: "assistant",
+                content: "Got it — operation cancelled.",
+                createdAt: new Date().toISOString(),
+              },
+            ]);
+            return;
+          }
+
+          const candidates = reminders.filter((r) =>
+            pendingDisambig.candidateIds.includes(r.id),
+          );
+
+          // Match strategy: exact substring → token overlap → first candidate
+          const match =
+            candidates.find((r) => {
+              const title = r.title.toLowerCase();
+              return text.includes(title) || title.includes(text);
+            }) ??
+            candidates.find((r) => {
+              const tokens = r.title
+                .toLowerCase()
+                .split(/\s+/)
+                .filter((t) => t.length >= 4);
+              return tokens.some((token) => text.includes(token));
+            });
+
+          if (match) {
+            setPendingDisambig(null);
+            const op = pendingDisambig.op;
+            const confirmType =
+              op === "mark_done" ? "mark_done" : "delete_reminder";
+            const actionVerb =
+              op === "mark_done" ? "mark as done" : "delete";
+            const confirmMsg = `Are you sure you want to ${actionVerb} "${match.title}"? Reply **yes** to confirm.`;
+            setPendingConfirmAction({
+              type: confirmType as "mark_done" | "delete_reminder",
+              targetId: match.id,
+              targetTitle: match.title,
+            });
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: crypto.randomUUID(),
+                role: "assistant",
+                content: confirmMsg,
+                createdAt: new Date().toISOString(),
+              },
+            ]);
+          } else {
+            // No candidate matched — clear the context and let the user retry
+            setPendingDisambig(null);
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: crypto.randomUUID(),
+                role: "assistant",
+                content:
+                  "I couldn't match that to any of the reminders I mentioned. Please try again with the full reminder name.",
+                createdAt: new Date().toISOString(),
+              },
+            ]);
+          }
           return;
         }
 
@@ -3512,6 +3610,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
             const dueAt = pendingCreateDraft.dueAt;
             if (!title || !dueAt) {
               setPendingCreateDraft(null);
+              setPendingDisambig(null);
               setMessages((prev) => [
                 ...prev,
                 {
@@ -3550,6 +3649,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
             await refreshReminders();
             playReminderSuccessAnimation();
             setPendingCreateDraft(null);
+            setPendingDisambig(null);
             setMessages((prev) => [
               ...prev,
               {
@@ -3817,6 +3917,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       // Extend suppress window to 60s so in-flight polls from other tabs don't restore cleared history
       skipRemotePollMergeUntilRef.current = Date.now() + 60_000;
       setPendingCreateDraft(null);
+      setPendingDisambig(null);
       setPendingConfirmAction(null);
       setPendingTimeSuggestion(null);
       setRecentListedIds([]);

@@ -76,6 +76,10 @@ interface ReminderAgentAction {
   listedIds?: string[];
   /** Only on clarify (no-time create): suggested dueAt ISO from profile/domain analysis */
   suggestedDueAt?: string;
+  /** Only on clarify (disambiguation): pending operation type so the client doesn't start the create wizard */
+  pendingOp?: "mark_done" | "delete";
+  /** Only on clarify (disambiguation): IDs of ambiguous reminder candidates */
+  candidateIds?: string[];
 }
 
 interface ReminderAgentResponse {
@@ -1497,7 +1501,7 @@ export async function POST(request: Request) {
         const sample = matches.slice(0, 2).map((r) => `"${r.title}" at ${formatDueInUserZone(r.dueAt, timeZone)}`);
         const r: ReminderAgentResponse = {
           reply: `Which one do you mean — ${sample.join(" or ")}?`,
-          action: { type: "clarify" },
+          action: { type: "clarify", pendingOp: "mark_done", candidateIds: matches.map((m) => m.id) },
         };
         void saveMessageServerSide(userId, "user", effectiveMessage);
         void saveMessageServerSide(userId, "assistant", r.reply);
@@ -1538,7 +1542,7 @@ export async function POST(request: Request) {
         const sample = matches.slice(0, 2).map((r) => `"${r.title}" at ${formatDueInUserZone(r.dueAt, timeZone)}`);
         const r: ReminderAgentResponse = {
           reply: `Which one do you mean — ${sample.join(" or ")}?`,
-          action: { type: "clarify" },
+          action: { type: "clarify", pendingOp: "delete", candidateIds: matches.map((m) => m.id) },
         };
         void saveMessageServerSide(userId, "user", effectiveMessage);
         void saveMessageServerSide(userId, "assistant", r.reply);
