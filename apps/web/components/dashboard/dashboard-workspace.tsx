@@ -54,6 +54,8 @@ import { playDueChime, playPreDuePing, playOverdueNudge } from "../../lib/notifi
 import { NotificationBell } from "../notifications/notification-bell";
 import { ChatBubbleShell } from "./chat-bubble-shell";
 import { SnapshotOverlay } from "./snapshot-overlay";
+import { BottomNav } from "./bottom-nav";
+import { ChatPanelHeader } from "./chat-panel-header";
 import { NotificationPrefsPanel } from "../notifications/notification-prefs-panel";
 
 type ChatRole = "user" | "assistant" | "system";
@@ -5324,124 +5326,20 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
             ) : null}
 
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden" style={{ background: "#1a1625" }}>
-              {/* ── Mobile top bar — greeting + compact stat pills in one slim row ──
-                  The global header already has RemindOS brand + hamburger + bell,
-                  so we only show a subtle greeting and non-zero reminder counts. */}
-              <div className="flex shrink-0 items-center gap-2 border-b border-[rgba(255,255,255,0.07)] px-4 py-2 lg:hidden">
-                {/* Greeting — small and unobtrusive */}
-                <p className="flex-1 truncate text-xs font-medium text-[rgba(255,255,255,0.45)]">
-                  {(() => {
-                    const h = new Date().getHours();
-                    const g = h < 12 ? "Morning" : h < 18 ? "Afternoon" : "Evening";
-                    const name = user?.firstName?.trim();
-                    return name ? `Good ${g}, ${name} ${h < 18 ? "☀️" : "🌙"}` : `Good ${g}`;
-                  })()}
-                </p>
-                {/* Compact stat pills — only render when count > 0 */}
-                <div className="flex items-center gap-1.5">
-                  {(
-                    [
-                      { count: snapshot.missed,         label: "Missed",  bg: "rgba(244,63,94,0.15)",  border: "rgba(244,63,94,0.35)",  text: "#fda4af", tab: "missed"   as const },
-                      { count: snapshot.today,          label: "Today",   bg: "rgba(245,158,11,0.15)", border: "rgba(245,158,11,0.35)", text: "#fcd34d", tab: "today"    as const },
-                      { count: snapshot.tomorrow,       label: "Tmr",     bg: "rgba(124,58,237,0.15)", border: "rgba(124,58,237,0.35)", text: "#c4b5fd", tab: "tomorrow" as const },
-                      { count: grouped.upcoming.length, label: "Later",   bg: "rgba(6,182,212,0.15)",  border: "rgba(6,182,212,0.35)",  text: "#67e8f9", tab: "upcoming" as const },
-                    ] as const
-                  )
-                    .filter((item) => item.count > 0)
-                    .map((item) => (
-                      <button
-                        key={item.label}
-                        type="button"
-                        onClick={() => showReminderListOverlay(true, item.tab)}
-                        className="flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold transition active:scale-95"
-                        style={{ background: item.bg, border: `1px solid ${item.border}`, color: item.text }}
-                      >
-                        <span className="font-bold">{item.count}</span>
-                        <span className="opacity-80">{item.label}</span>
-                      </button>
-                    ))}
-                </div>
-              </div>
-
-              {/* Inner toolbar — hidden on mobile, shown sm+ (desktop chat panel header) */}
-              <div className="hidden shrink-0 items-center justify-end gap-2 border-b border-[rgba(255,255,255,0.08)] px-4 py-3 sm:flex sm:px-4">
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={openNextTwoHoursFromSnapshot}
-                    className="hidden h-10 items-center justify-center gap-2 rounded-full border border-[rgba(255,255,255,0.12)] bg-[rgba(255,255,255,0.07)] px-3 text-xs font-semibold text-amber-300 shadow-sm transition hover:bg-[rgba(255,255,255,0.12)] sm:inline-flex lg:hidden"
-                  >
-                    <span aria-hidden className="text-base">⏱</span>
-                    Next 2 hrs
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => showReminderListOverlay()}
-                    className="hidden h-10 items-center justify-center gap-2 rounded-full border border-[rgba(255,255,255,0.12)] bg-[rgba(255,255,255,0.07)] px-3 text-xs font-semibold text-slate-300 shadow-sm transition hover:bg-[rgba(255,255,255,0.12)] sm:inline-flex lg:hidden"
-                  >
-                    <span aria-hidden>☰</span>
-                    Reminders
-                  </button>
-                  <button
-                    type="button"
-                    onClick={openAllTasksFromSnapshot}
-                    data-walkthrough="all-tasks-trigger"
-                    className="hidden h-10 items-center justify-center gap-2 rounded-full border border-[rgba(255,255,255,0.12)] bg-[rgba(255,255,255,0.07)] px-3 text-xs font-semibold text-teal-300 shadow-sm transition hover:bg-[rgba(255,255,255,0.12)] sm:inline-flex lg:hidden"
-                  >
-                    <span aria-hidden>≣</span>
-                    Tasks
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => showSnapshotOverlay()}
-                    className="hidden h-10 items-center justify-center gap-2 rounded-full border border-[rgba(255,255,255,0.12)] bg-[rgba(255,255,255,0.07)] px-3 text-xs font-semibold text-slate-300 shadow-sm transition hover:bg-[rgba(255,255,255,0.12)] sm:inline-flex lg:hidden"
-                  >
-                    Menu
-                  </button>
-                </div>
-                {/* Notification bell */}
-                <NotificationBell pollIntervalMs={30_000} />
-
-                <button
-                  type="button"
-                  onClick={() => runBriefingStream()}
-                  data-walkthrough="briefing-trigger"
-                  disabled={
-                    !isHistoryLoaded || briefingStreaming || isLoading
-                  }
-                  className="inline-flex h-9 items-center justify-center rounded-full border border-violet-500/40 bg-violet-600/20 px-3 text-[11px] font-semibold text-violet-300 shadow-sm transition hover:bg-violet-600/30 disabled:cursor-not-allowed disabled:opacity-40 sm:h-10 sm:px-4 sm:text-xs"
-                >
-                  Briefing
-                </button>
-              </div>
-
-              {/* Urgency strip — desktop only (mobile uses the 4-col grid above) */}
-              {(snapshot.missed > 0 || snapshot.today > 0 || snapshot.tomorrow > 0) && (
-                <div className="hidden shrink-0 items-center gap-2 overflow-x-auto border-b border-[rgba(255,255,255,0.06)] bg-[rgba(255,255,255,0.04)] px-4 py-2 scrollbar-none lg:flex">
-                  {snapshot.missed > 0 && (
-                    <button type="button" onClick={() => showReminderListOverlay(true, "missed")}
-                      className="flex shrink-0 items-center gap-1.5 rounded-full border border-rose-500/30 bg-rose-500/10 px-3 py-1 text-xs font-semibold text-rose-300 transition hover:bg-rose-500/20">
-                      <span className="h-1.5 w-1.5 rounded-full bg-rose-500" />Overdue
-                      <span className="rounded-full bg-rose-600 px-1.5 py-0.5 text-[10px] leading-none text-white">{snapshot.missed}</span>
-                    </button>
-                  )}
-                  {snapshot.today > 0 && (
-                    <button type="button" onClick={() => showReminderListOverlay(true, "today")}
-                      className="flex shrink-0 items-center gap-1.5 rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-xs font-semibold text-amber-300 transition hover:bg-amber-500/20">
-                      <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />Today
-                      <span className="rounded-full bg-amber-600 px-1.5 py-0.5 text-[10px] leading-none text-white">{snapshot.today}</span>
-                    </button>
-                  )}
-                  {snapshot.tomorrow > 0 && (
-                    <button type="button" onClick={() => showReminderListOverlay(true, "tomorrow")}
-                      className="flex shrink-0 items-center gap-1.5 rounded-full border border-violet-500/30 bg-violet-500/10 px-3 py-1 text-xs font-semibold text-violet-300 transition hover:bg-violet-500/20">
-                      <span className="h-1.5 w-1.5 rounded-full bg-violet-500" />Tomorrow
-                      <span className="rounded-full bg-violet-600 px-1.5 py-0.5 text-[10px] leading-none text-white">{snapshot.tomorrow}</span>
-                    </button>
-                  )}
-                </div>
-              )}
-
+              {/* ── Chat panel header: mobile pills · tablet toolbar · desktop urgency strip ── */}
+              {/* See ./chat-panel-header.tsx */}
+              <ChatPanelHeader
+                firstName={user?.firstName}
+                snapshot={snapshot}
+                laterCount={grouped.upcoming.length}
+                onOpenReminderTab={(tab) => showReminderListOverlay(true, tab)}
+                onNextTwoHours={openNextTwoHoursFromSnapshot}
+                onAllReminders={() => showReminderListOverlay()}
+                onAllTasks={openAllTasksFromSnapshot}
+                onOpenMore={() => showSnapshotOverlay()}
+                onRunBriefing={() => runBriefingStream()}
+                isBriefingDisabled={!isHistoryLoaded || briefingStreaming || isLoading}
+              />
               <div
                 ref={chatScrollRef}
                 onScroll={onChatScroll}
@@ -5938,64 +5836,15 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
         </div>{/* end 3-panel container */}
       </section>
 
-      {/* Mobile bottom nav */}
-      <nav className="fixed inset-x-0 bottom-0 z-30 flex border-t border-[rgba(255,255,255,0.07)] bg-[#1a1625] lg:hidden" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
-        {([
-          {
-            label: "Chat", active: !isListOpen && !isTasksOpen, badge: 0, onClick: undefined,
-            icon: (active: boolean) => (
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
-                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" fill={active ? "rgba(139,92,246,0.2)" : "none"} />
-              </svg>
-            ),
-          },
-          {
-            label: "Reminders", active: isListOpen, badge: snapshot.missed, onClick: () => showReminderListOverlay(true, snapshot.missed > 0 ? "missed" : "all"),
-            icon: (_active: boolean) => (
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
-                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/>
-              </svg>
-            ),
-          },
-          {
-            label: "Tasks", active: isTasksOpen, badge: 0, onClick: openAllTasksFromSnapshot,
-            icon: (_active: boolean) => (
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
-                <polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>
-              </svg>
-            ),
-          },
-          {
-            label: "More", active: false, badge: 0, onClick: () => showSnapshotOverlay(),
-            icon: (_active: boolean) => (
-              <svg viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
-                <circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/>
-              </svg>
-            ),
-          },
-        ] as { label: string; active: boolean; badge: number; onClick: (() => void) | undefined; icon: (active: boolean) => React.ReactNode }[]).map((item) => (
-          <button
-            key={item.label}
-            type="button"
-            onClick={item.onClick}
-            className={`relative flex flex-1 flex-col items-center gap-0.5 pb-2 pt-2.5 text-[10px] font-semibold transition ${
-              item.active ? "text-violet-400" : "text-[rgba(255,255,255,0.38)]"
-            }`}
-          >
-            {/* Active indicator bar */}
-            {item.active && (
-              <span className="absolute inset-x-4 top-0 h-[2px] rounded-full bg-violet-500" />
-            )}
-            {item.icon(item.active)}
-            <span>{item.label}</span>
-            {item.badge > 0 && (
-              <span className="absolute right-3 top-1.5 min-w-[15px] rounded-full bg-rose-500 px-1 py-0.5 text-[8px] font-bold leading-none text-white">
-                {item.badge > 99 ? "99+" : item.badge}
-              </span>
-            )}
-          </button>
-        ))}
-      </nav>
+      {/* Mobile bottom nav — see ./bottom-nav.tsx */}
+      <BottomNav
+        isListOpen={isListOpen}
+        isTasksOpen={isTasksOpen}
+        missedCount={snapshot.missed}
+        onOpenReminders={(tab) => showReminderListOverlay(true, tab)}
+        onOpenTasks={openAllTasksFromSnapshot}
+        onOpenMore={() => showSnapshotOverlay()}
+      />
 
       {isSnapshotOpen && (
         <SnapshotOverlay
