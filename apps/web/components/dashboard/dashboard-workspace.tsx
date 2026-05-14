@@ -52,6 +52,8 @@ import {
 import { syncReminderPushSubscription } from "../../lib/push-subscription-client";
 import { playDueChime, playPreDuePing, playOverdueNudge } from "../../lib/notification-sounds";
 import { NotificationBell } from "../notifications/notification-bell";
+import { ChatBubbleShell } from "./chat-bubble-shell";
+import { SnapshotOverlay } from "./snapshot-overlay";
 import { NotificationPrefsPanel } from "../notifications/notification-prefs-panel";
 
 type ChatRole = "user" | "assistant" | "system";
@@ -192,7 +194,7 @@ interface TaskActionWarning {
   pendingReminderCount: number;
 }
 
-type ReminderListTab =
+export type ReminderListTab =
   | "all"
   | "missed"
   | "today"
@@ -730,270 +732,7 @@ function briefingSectionLabel(section: BriefingSection | undefined): string {
   }
 }
 
-/** Desktop (md+): chevron opens Reply / Edit. Mobile: swipe right → reply; long-press user bubble → edit. */
-function ChatBubbleShell({
-  children,
-  onReply,
-  onEdit,
-  showEdit,
-  actionAlign = "end",
-  showActionsAlways = false,
-  desktopHoverMenu = false,
-  onLongPressEdit,
-}: {
-  children: ReactNode;
-  onReply: () => void;
-  onEdit?: () => void;
-  showEdit: boolean;
-  actionAlign?: "start" | "center" | "end";
-  showActionsAlways?: boolean;
-  desktopHoverMenu?: boolean;
-  onLongPressEdit?: () => void;
-}) {
-  const touchStart = useRef({ x: 0, y: 0 });
-  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [desktopMenuOpen, setDesktopMenuOpen] = useState(false);
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [swipeOffset, setSwipeOffset] = useState(0);
-  const [swipeReleasing, setSwipeReleasing] = useState(false);
-
-  const clearLongPress = () => {
-    if (longPressTimer.current) {
-      clearTimeout(longPressTimer.current);
-      longPressTimer.current = null;
-    }
-  };
-
-  const justify =
-    actionAlign === "center"
-      ? "justify-center"
-      : actionAlign === "start"
-        ? "justify-start"
-        : "justify-end";
-
-  const runReplySwipeAnimation = () => {
-    setSwipeReleasing(true);
-    setSwipeOffset(96);
-    window.setTimeout(() => {
-      setSwipeOffset(0);
-    }, 110);
-    window.setTimeout(() => {
-      setSwipeReleasing(false);
-    }, 240);
-  };
-
-  return (
-    <div
-      className="group/msg relative min-w-0 w-full max-w-full"
-      onTouchStart={(e) => {
-        const t = e.touches[0];
-        if (!t) return;
-        touchStart.current = { x: t.clientX, y: t.clientY };
-        setSwipeReleasing(false);
-        if (swipeOffset !== 0) setSwipeOffset(0);
-        clearLongPress();
-        longPressTimer.current = setTimeout(() => {
-          longPressTimer.current = null;
-          setMobileMenuOpen(true);
-        }, 470);
-      }}
-      onTouchMove={(e) => {
-        const t = e.touches[0];
-        if (!t) return;
-        const dx = t.clientX - touchStart.current.x;
-        const dy = t.clientY - touchStart.current.y;
-
-        if (Math.abs(dx) > 6 || Math.abs(dy) > 6) {
-          clearLongPress();
-        }
-
-        if (dx > 0 && Math.abs(dy) < 72 && dx > Math.abs(dy)) {
-          setSwipeReleasing(false);
-          setSwipeOffset(Math.min(dx, 96));
-        } else if (swipeOffset !== 0) {
-          setSwipeOffset(0);
-        }
-      }}
-      onTouchEnd={(e) => {
-        clearLongPress();
-        const t = e.changedTouches[0];
-        if (!t) return;
-        const dx = t.clientX - touchStart.current.x;
-        const dy = t.clientY - touchStart.current.y;
-        if (dx > 84 && Math.abs(dy) < 64) {
-          runReplySwipeAnimation();
-          onReply();
-          return;
-        }
-        if (swipeOffset > 0) {
-          setSwipeReleasing(true);
-          setSwipeOffset(0);
-          window.setTimeout(() => {
-            setSwipeReleasing(false);
-          }, 180);
-        }
-      }}
-      onTouchCancel={() => {
-        clearLongPress();
-        if (swipeOffset > 0) {
-          setSwipeReleasing(true);
-          setSwipeOffset(0);
-          window.setTimeout(() => {
-            setSwipeReleasing(false);
-          }, 180);
-        }
-      }}
-    >
-      {desktopHoverMenu ? (
-        <div
-          className="pointer-events-none absolute -right-1 -top-1 z-30 hidden pb-10 pl-10 pt-1 md:block"
-          onMouseEnter={() => setDesktopMenuOpen(true)}
-          onMouseLeave={() => setDesktopMenuOpen(false)}
-        >
-          <div
-            className={`pointer-events-auto transition-opacity duration-150 ${
-              desktopMenuOpen
-                ? "opacity-100"
-                : "opacity-0 group-hover/msg:opacity-100"
-            }`}
-          >
-            <div className="relative">
-              <button
-                type="button"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setDesktopMenuOpen((o) => !o);
-                }}
-                className="flex h-7 w-7 items-center justify-center rounded-full border border-slate-300/50 bg-white/95 text-slate-600 shadow-sm backdrop-blur-sm hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800/95 dark:text-slate-200 dark:hover:bg-slate-700"
-                aria-expanded={desktopMenuOpen}
-                aria-haspopup="menu"
-                aria-label="Message options"
-              >
-                <span className="text-base leading-none" aria-hidden>
-                  ⌄
-                </span>
-              </button>
-              {desktopMenuOpen ? (
-                <div
-                  role="menu"
-                  className="absolute right-0 top-full z-40 mt-1 min-w-[9rem] rounded-xl border border-slate-200 bg-white py-1 text-xs font-medium text-slate-800 shadow-lg dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
-                >
-                  <button
-                    type="button"
-                    role="menuitem"
-                    className="block w-full px-3 py-2.5 text-left hover:bg-slate-50 dark:hover:bg-slate-700"
-                    onClick={() => {
-                      setDesktopMenuOpen(false);
-                      onReply();
-                    }}
-                  >
-                    Reply
-                  </button>
-                  {showEdit && onEdit ? (
-                    <button
-                      type="button"
-                      role="menuitem"
-                      className="block w-full px-3 py-2.5 text-left hover:bg-slate-50 dark:hover:bg-slate-700"
-                      onClick={() => {
-                        setDesktopMenuOpen(false);
-                        onEdit();
-                      }}
-                    >
-                      Edit message
-                    </button>
-                  ) : null}
-                </div>
-              ) : null}
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {mobileMenuOpen ? (
-        <div
-          className="fixed inset-0 z-50 flex items-end bg-slate-950/20 p-3 md:hidden"
-          onClick={() => setMobileMenuOpen(false)}
-        >
-          <div
-            className="w-full rounded-2xl border border-slate-200 bg-white p-2 shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <button
-              type="button"
-              onClick={() => {
-                setMobileMenuOpen(false);
-                onReply();
-              }}
-              className="block w-full rounded-xl px-3 py-3 text-left text-sm font-medium text-slate-800 hover:bg-slate-50"
-            >
-              Reply
-            </button>
-            {showEdit && (onEdit || onLongPressEdit) ? (
-              <button
-                type="button"
-                onClick={() => {
-                  setMobileMenuOpen(false);
-                  (onEdit ?? onLongPressEdit)?.();
-                }}
-                className="block w-full rounded-xl px-3 py-3 text-left text-sm font-medium text-violet-700 hover:bg-violet-50"
-              >
-                Edit
-              </button>
-            ) : null}
-          </div>
-        </div>
-      ) : null}
-
-      <div className="relative">
-        <div className="pointer-events-none absolute inset-y-0 left-2 z-0 flex items-center md:hidden">
-          <span
-            className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-violet-600 text-white shadow-md"
-            style={{
-              opacity: Math.min(1, swipeOffset / 34),
-              transform: `scale(${0.7 + Math.min(0.3, (swipeOffset / 96) * 0.3)})`,
-            }}
-            aria-hidden
-          >
-            ↩
-          </span>
-        </div>
-        <div
-          className={`relative z-10 ${swipeReleasing ? "transition-transform duration-200 ease-out" : ""}`}
-          style={{ transform: `translateX(${swipeOffset}px)` }}
-        >
-          {children}
-        </div>
-      </div>
-
-      <div
-        className={`mt-1 flex flex-wrap gap-2 ${justify} transition-opacity ${
-          desktopHoverMenu
-            ? "hidden"
-            : showActionsAlways
-              ? "opacity-100"
-              : "opacity-100 sm:opacity-0 sm:group-hover/msg:opacity-100"
-        }`}
-      >
-        <button
-          type="button"
-          className="rounded-full border border-slate-200 bg-white/90 px-2.5 py-1 text-[10px] font-semibold text-slate-500 shadow-sm transition hover:border-slate-300 hover:text-slate-900"
-          onClick={onReply}
-        >
-          Reply
-        </button>
-        {showEdit && onEdit ? (
-          <button
-            type="button"
-            className="rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-[10px] font-semibold text-violet-700 shadow-sm transition hover:border-violet-300 hover:bg-violet-100"
-            onClick={onEdit}
-          >
-            Edit
-          </button>
-        ) : null}
-      </div>
-    </div>
-  );
-}
+// ChatBubbleShell is now a standalone component — see ./chat-bubble-shell.tsx
 
 function toDateTimeLocalValue(iso?: string): string {
   if (!iso) return "";
@@ -6259,377 +5998,47 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       </nav>
 
       {isSnapshotOpen && (
-        <div
-          className="fixed inset-0 z-50 bg-black/50"
-          onClick={closeSnapshotOverlay}
-        >
-          <aside
-            className="absolute right-0 top-0 flex h-full w-[min(22rem,92vw)] flex-col overflow-hidden border-l border-slate-100 bg-white shadow-2xl dark:border-slate-800 dark:bg-slate-950"
-            onClick={(event) => event.stopPropagation()}
-          >
-            {/* ── Header ── */}
-            <div className="flex shrink-0 items-center justify-between border-b border-slate-100 px-5 pb-3 pt-[max(1rem,env(safe-area-inset-top))] dark:border-slate-800">
-              <span className="text-[11px] font-extrabold uppercase tracking-[0.2em] text-violet-600 dark:text-violet-400">
-                Workspace
-              </span>
-              <button
-                type="button"
-                onClick={closeSnapshotOverlay}
-                className="flex h-8 w-8 items-center justify-center rounded-full text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200"
-                aria-label="Close"
-              >
-                <svg viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
-                  <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22z" />
-                </svg>
-              </button>
-            </div>
-
-            {/* ── Scrollable body ── */}
-            <div className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain px-4 pb-[max(1.5rem,env(safe-area-inset-bottom))] pt-4">
-
-              {/* Stats row — each tile is tappable and opens the matching reminder tab */}
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => { closeSnapshotOverlay(); showReminderListOverlay(true, "missed"); }}
-                  className="flex flex-col items-center justify-center rounded-xl border border-rose-100 bg-rose-50 px-1 py-3 text-center transition hover:bg-rose-100 active:scale-95 dark:border-rose-900/40 dark:bg-rose-950/30 dark:hover:bg-rose-950/50"
-                >
-                  <span className="text-2xl font-extrabold tabular-nums leading-none text-rose-600 dark:text-rose-400">
-                    {snapshot.missed}
-                  </span>
-                  <span className="mt-0.5 text-[9px] font-bold uppercase tracking-widest text-rose-500/80 dark:text-rose-400/70">
-                    Missed
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => { closeSnapshotOverlay(); showReminderListOverlay(true, "today"); }}
-                  className="flex flex-col items-center justify-center rounded-xl border border-amber-100 bg-amber-50 px-1 py-3 text-center transition hover:bg-amber-100 active:scale-95 dark:border-amber-900/40 dark:bg-amber-950/30 dark:hover:bg-amber-950/50"
-                >
-                  <span className="text-2xl font-extrabold tabular-nums leading-none text-amber-600 dark:text-amber-400">
-                    {snapshot.today}
-                  </span>
-                  <span className="mt-0.5 text-[9px] font-bold uppercase tracking-widest text-amber-500/80 dark:text-amber-400/70">
-                    Today
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => { closeSnapshotOverlay(); showReminderListOverlay(true, "tomorrow"); }}
-                  className="flex flex-col items-center justify-center rounded-xl border border-sky-100 bg-sky-50 px-1 py-3 text-center transition hover:bg-sky-100 active:scale-95 dark:border-sky-900/40 dark:bg-sky-950/30 dark:hover:bg-sky-950/50"
-                >
-                  <span className="text-2xl font-extrabold tabular-nums leading-none text-sky-600 dark:text-sky-400">
-                    {snapshot.tomorrow}
-                  </span>
-                  <span className="mt-0.5 text-[9px] font-bold uppercase tracking-widest text-sky-500/80 dark:text-sky-400/70">
-                    Tomorrow
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => { closeSnapshotOverlay(); showReminderListOverlay(true, "upcoming"); }}
-                  className="flex flex-col items-center justify-center rounded-xl border border-slate-200 bg-slate-50 px-1 py-3 text-center transition hover:bg-slate-100 active:scale-95 dark:border-slate-700 dark:bg-slate-900 dark:hover:bg-slate-800"
-                >
-                  <span className="text-2xl font-extrabold tabular-nums leading-none text-slate-700 dark:text-slate-300">
-                    {grouped.upcoming.length}
-                  </span>
-                  <span className="mt-0.5 text-[9px] font-bold uppercase tracking-widest text-slate-400">
-                    Later
-                  </span>
-                </button>
-              </div>
-
-              {/* Quick actions grid */}
-              <p className="mb-2.5 mt-5 text-[10px] font-extrabold uppercase tracking-[0.18em] text-slate-400">
-                Quick Actions
-              </p>
-              <div className="grid grid-cols-2 gap-2">
-                {([
-                  {
-                    icon: "⏱",
-                    label: "Next 2 Hours",
-                    onClick: openNextTwoHoursFromSnapshot,
-                    color: "from-amber-500 to-orange-600 ring-1 ring-amber-400/25",
-                  },
-                  {
-                    icon: "+",
-                    label: "New Reminder",
-                    onClick: () => showCreateOverlay(),
-                    color: "from-violet-500 to-violet-700 ring-1 ring-violet-400/25",
-                  },
-                  {
-                    icon: "☰",
-                    label: "All Reminders",
-                    onClick: () => showReminderListOverlay(),
-                    color: "from-violet-500 to-violet-700 ring-1 ring-violet-400/25",
-                  },
-                  {
-                    icon: "✓",
-                    label: "Create Task",
-                    onClick: () => showTasksOverlay("create"),
-                    color: "from-violet-500 to-violet-700 ring-1 ring-violet-400/25",
-                  },
-                  {
-                    icon: "≣",
-                    label: "All Tasks",
-                    onClick: openAllTasksFromSnapshot,
-                    color: "from-teal-500 to-teal-700 ring-1 ring-teal-400/25",
-                  },
-                  {
-                    icon: "✦",
-                    label: "Run Briefing",
-                    onClick: () => {
-                      closeSnapshotOverlay();
-                      runBriefingStream();
-                    },
-                    color: "from-cyan-500 to-cyan-700 ring-1 ring-cyan-400/25",
-                  },
-                ] as { icon: string; label: string; onClick: () => void; color: string }[]).map(
-                  (action) => (
-                    <button
-                      key={action.label}
-                      type="button"
-                      onClick={action.onClick}
-                      className={`flex min-h-[3rem] flex-col items-center justify-center gap-0.5 rounded-xl bg-gradient-to-b px-2 py-2 text-center text-[10px] font-bold uppercase tracking-wide text-white shadow-sm transition hover:brightness-110 active:scale-[0.97] ${action.color}`}
-                    >
-                      <span className="text-sm leading-none opacity-90">{action.icon}</span>
-                      <span className="mt-0.5 leading-tight">{action.label}</span>
-                    </button>
-                  )
-                )}
-              </div>
-
-              {/* Import / Export / Batch */}
-              <div className="mt-3 grid grid-cols-3 gap-2">
-                <button
-                  type="button"
-                  onClick={() => showImportOverlay()}
-                  className="flex min-h-[2.25rem] items-center justify-center rounded-xl border border-slate-200 bg-slate-50/90 text-xs font-semibold text-slate-700 transition hover:bg-white hover:shadow-sm active:scale-[0.97] dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
-                >
-                  Import
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    closeSnapshotOverlay();
-                    handleExportChat();
-                  }}
-                  disabled={isLoading || messages.length === 0}
-                  className="flex min-h-[2.25rem] items-center justify-center rounded-xl border border-slate-200 bg-slate-50/90 text-xs font-semibold text-slate-700 transition hover:bg-white hover:shadow-sm active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-45 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
-                >
-                  Export
-                </button>
-                <button
-                  type="button"
-                  onClick={() => showBatchOverlay()}
-                  disabled={isBatchRunning || isLoading}
-                  className="flex min-h-[2.25rem] items-center justify-center rounded-xl border border-slate-200 bg-slate-50/90 text-xs font-semibold text-slate-700 transition hover:bg-white hover:shadow-sm active:scale-[0.97] disabled:cursor-not-allowed disabled:opacity-45 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-200 dark:hover:bg-slate-800"
-                >
-                  Batch
-                </button>
-              </div>
-
-              {/* Quick settings */}
-              <p className="mb-1 mt-5 text-[10px] font-extrabold uppercase tracking-[0.18em] text-slate-400">
-                Quick Settings
-              </p>
-              <div className="overflow-hidden rounded-2xl border border-slate-100 dark:border-slate-800">
-                {/* Suggested questions toggle */}
-                <label className="flex cursor-pointer items-center justify-between gap-3 border-b border-slate-100 px-4 py-3 dark:border-slate-800">
-                  <span className="text-sm font-medium text-slate-800 dark:text-slate-200">
-                    Suggested questions
-                  </span>
-                  <div className="relative shrink-0">
-                    <input
-                      type="checkbox"
-                      className="sr-only"
-                      checked={showSuggestedQuestions}
-                      onChange={(e) => {
-                        const on = e.target.checked;
-                        setShowSuggestedQuestions(on);
-                        try {
-                          localStorage.setItem(
-                            SHOW_SUGGESTED_QUESTIONS_KEY,
-                            on ? "1" : "0",
-                          );
-                        } catch {
-                          /* ignore */
-                        }
-                      }}
-                    />
-                    <div
-                      className={`h-6 w-11 rounded-full transition-colors ${
-                        showSuggestedQuestions ? "bg-violet-600" : "bg-slate-200 dark:bg-slate-700"
-                      }`}
-                    />
-                    <div
-                      className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
-                        showSuggestedQuestions ? "translate-x-6" : "translate-x-1"
-                      }`}
-                    />
-                  </div>
-                </label>
-                {/* Push notifications toggle */}
-                <label className="flex cursor-pointer items-center justify-between gap-3 border-b border-slate-100 px-4 py-3 dark:border-slate-800">
-                  <span className="text-sm font-medium text-slate-800 dark:text-slate-200">
-                    Push notifications
-                  </span>
-                  <div className="relative shrink-0">
-                    <input
-                      type="checkbox"
-                      className="sr-only"
-                      checked={
-                        dueNotifPrefs.enabled &&
-                        typeof Notification !== "undefined" &&
-                        Notification.permission === "granted"
-                      }
-                      onChange={(e) => {
-                        if (e.target.checked)
-                          void requestDueNotificationPermission();
-                        else persistDueNotifPrefs({ enabled: false });
-                      }}
-                      disabled={
-                        typeof Notification !== "undefined" &&
-                        Notification.permission === "denied"
-                      }
-                    />
-                    <div
-                      className={`h-6 w-11 rounded-full transition-colors ${
-                        dueNotifPrefs.enabled &&
-                        typeof Notification !== "undefined" &&
-                        Notification.permission === "granted"
-                          ? "bg-violet-600"
-                          : "bg-slate-200 dark:bg-slate-700"
-                      }`}
-                    />
-                    <div
-                      className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
-                        dueNotifPrefs.enabled &&
-                        typeof Notification !== "undefined" &&
-                        Notification.permission === "granted"
-                          ? "translate-x-6"
-                          : "translate-x-1"
-                      }`}
-                    />
-                  </div>
-                </label>
-                {/* Morning briefing toggle */}
-                <label className="flex cursor-pointer items-center justify-between gap-3 border-b border-slate-100 px-4 py-3 dark:border-slate-800">
-                  <span className="text-sm font-medium text-slate-800 dark:text-slate-200">
-                    Morning briefing
-                  </span>
-                  <div className="relative shrink-0">
-                    <input
-                      type="checkbox"
-                      className="sr-only"
-                      checked={dueNotifPrefs.morningBriefingEnabled}
-                      onChange={(e) =>
-                        persistDueNotifPrefs({ morningBriefingEnabled: e.target.checked })
-                      }
-                    />
-                    <div
-                      className={`h-6 w-11 rounded-full transition-colors ${
-                        dueNotifPrefs.morningBriefingEnabled ? "bg-violet-600" : "bg-slate-200 dark:bg-slate-700"
-                      }`}
-                    />
-                    <div
-                      className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
-                        dueNotifPrefs.morningBriefingEnabled ? "translate-x-6" : "translate-x-1"
-                      }`}
-                    />
-                  </div>
-                </label>
-                {/* Sound alerts toggle */}
-                <label className="flex cursor-pointer items-center justify-between gap-3 px-4 py-3">
-                  <span className="text-sm font-medium text-slate-800 dark:text-slate-200">
-                    Sound alerts
-                  </span>
-                  <div className="relative shrink-0">
-                    <input
-                      type="checkbox"
-                      className="sr-only"
-                      checked={dueNotifPrefs.soundEnabled}
-                      onChange={(e) => persistDueNotifPrefs({ soundEnabled: e.target.checked })}
-                    />
-                    <div
-                      className={`h-6 w-11 rounded-full transition-colors ${
-                        dueNotifPrefs.soundEnabled ? "bg-violet-600" : "bg-slate-200 dark:bg-slate-700"
-                      }`}
-                    />
-                    <div
-                      className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${
-                        dueNotifPrefs.soundEnabled ? "translate-x-6" : "translate-x-1"
-                      }`}
-                    />
-                  </div>
-                </label>
-              </div>
-
-              {/* Full prefs panel (collapsed by default) */}
-              <details className="mt-2">
-                <summary className="cursor-pointer rounded-xl border border-slate-100 px-4 py-2.5 text-xs font-semibold text-slate-500 hover:bg-slate-50 dark:border-slate-800 dark:text-slate-400 dark:hover:bg-slate-900">
-                  More notification options…
-                </summary>
-                <div className="mt-2">
-                  <NotificationPrefsPanel
-                    prefs={dueNotifPrefs}
-                    onChange={(next) => {
-                      setDueNotifPrefs(next);
-                    }}
-                    onRequestPermission={() => void requestDueNotificationPermission()}
-                  />
-                </div>
-              </details>
-
-              {/* Divider */}
-              <div className="my-4 h-px bg-slate-100 dark:bg-slate-800" />
-
-              {/* Clear chat */}
-              <button
-                type="button"
-                onClick={() => {
-                  closeSnapshotOverlay();
-                  void handleClearChat();
-                }}
-                disabled={isClearingChat || isLoading}
-                className="w-full rounded-xl border border-rose-200 bg-rose-50/80 py-2.5 text-center text-xs font-semibold text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-45 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-400 dark:hover:bg-rose-950/60"
-              >
-                {isClearingChat ? "Clearing…" : "Clear Chat History"}
-              </button>
-
-              {/* Account */}
-              <div className="mt-3 overflow-hidden rounded-2xl border border-slate-100 dark:border-slate-800">
-                {user && (
-                  <div className="flex items-center gap-3 border-b border-slate-100 px-4 py-3 dark:border-slate-800">
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[linear-gradient(135deg,#7c3aed_0%,#5b7bff_100%)] text-sm font-bold text-white">
-                      {(user.firstName?.[0] ?? user.emailAddresses[0]?.emailAddress?.[0] ?? "U").toUpperCase()}
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-semibold text-slate-800 dark:text-slate-100">
-                        {user.firstName
-                          ? `${user.firstName}${user.lastName ? ` ${user.lastName}` : ""}`
-                          : (user.emailAddresses[0]?.emailAddress ?? "Account")}
-                      </p>
-                      <p className="truncate text-[11px] text-slate-400">
-                        {user.emailAddresses[0]?.emailAddress ?? ""}
-                      </p>
-                    </div>
-                  </div>
-                )}
-                <button
-                  type="button"
-                  onClick={() => void signOut(() => router.push("/sign-in"))}
-                  className="flex w-full items-center gap-2 px-4 py-3 text-sm font-semibold text-rose-600 transition hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-950/40"
-                >
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 shrink-0" aria-hidden>
-                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
-                  </svg>
-                  Sign out
-                </button>
-              </div>
-            </div>
-          </aside>
-        </div>
+        <SnapshotOverlay
+          snapshot={snapshot}
+          laterCount={grouped.upcoming.length}
+          onClose={closeSnapshotOverlay}
+          onOpenReminderTab={(tab) => {
+            closeSnapshotOverlay();
+            showReminderListOverlay(true, tab);
+          }}
+          onNextTwoHours={openNextTwoHoursFromSnapshot}
+          onCreateReminder={() => showCreateOverlay()}
+          onAllReminders={() => showReminderListOverlay()}
+          onCreateTask={() => showTasksOverlay("create")}
+          onAllTasks={openAllTasksFromSnapshot}
+          onRunBriefing={() => {
+            closeSnapshotOverlay();
+            runBriefingStream();
+          }}
+          onImport={() => showImportOverlay()}
+          onExport={() => {
+            closeSnapshotOverlay();
+            handleExportChat();
+          }}
+          onBatch={() => showBatchOverlay()}
+          isExportDisabled={isLoading || messages.length === 0}
+          isBatchDisabled={isBatchRunning || isLoading}
+          showSuggestedQuestions={showSuggestedQuestions}
+          onToggleSuggestedQuestions={setShowSuggestedQuestions}
+          dueNotifPrefs={dueNotifPrefs}
+          onChangeDueNotifPrefs={(next) => {
+            setDueNotifPrefs(next);
+          }}
+          onRequestNotifPermission={() => void requestDueNotificationPermission()}
+          onClearChat={() => {
+            closeSnapshotOverlay();
+            void handleClearChat();
+          }}
+          isClearingChat={isClearingChat}
+          isClearingChatDisabled={isClearingChat || isLoading}
+          user={user}
+          onSignOut={() => void signOut(() => router.push("/sign-in"))}
+        />
       )}
 
       {isCreateOpen && (
