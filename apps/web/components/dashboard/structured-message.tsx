@@ -86,6 +86,12 @@ export function StructuredMessage({
     }
 
     if (block.kind === "bullet" || block.kind === "number") {
+      // Collect a run of consecutive bullet/number lines.
+      // Numbered lines get their index displayed; bullet lines get a dot marker.
+      // When a numbered item is immediately followed by bullet sub-items we
+      // render the number as a mini-section label and the bullets as an
+      // indented sub-list so the LLM's typical "1) SECTION\n• item" format
+      // displays with clear visual hierarchy.
       const items: Block[] = [];
       while (
         i < blocks.length &&
@@ -94,15 +100,69 @@ export function StructuredMessage({
         items.push(blocks[i]!);
         i += 1;
       }
+
+      // Group: split into runs of [number + following bullets] OR standalone bullets
+      const segments: Array<{ header: (Extract<Block, { kind: "number" }>) | null; bullets: Block[] }> = [];
+      let j = 0;
+      while (j < items.length) {
+        const cur = items[j]!;
+        if (cur.kind === "number") {
+          const sub: Block[] = [];
+          let k = j + 1;
+          while (k < items.length && items[k]?.kind === "bullet") {
+            sub.push(items[k]!);
+            k += 1;
+          }
+          segments.push({ header: cur as Extract<Block, { kind: "number" }>, bullets: sub });
+          j = k;
+        } else {
+          // standalone bullet(s) with no preceding number header
+          const sub: Block[] = [];
+          while (j < items.length && items[j]?.kind === "bullet") {
+            sub.push(items[j]!);
+            j += 1;
+          }
+          segments.push({ header: null, bullets: sub });
+        }
+      }
+
       output.push(
-        <ul key={`list-${i}`} className="space-y-1 pl-4">
-          {items.map((item, idx) => (
-            <li key={`${i}-${idx}`} className="flex gap-2">
-              <span className="mt-[0.55em] h-1.5 w-1.5 shrink-0 rounded-full bg-current/70" aria-hidden />
-              <span className="min-w-0 flex-1">{renderInline((item as Extract<Block, { kind: "bullet" | "number" }>).text)}</span>
-            </li>
-          ))}
-        </ul>,
+        <div key={`section-${i}`} className="space-y-1">
+          {segments.map((seg, si) =>
+            seg.header !== null ? (
+              <div key={`seg-${si}`} className="space-y-0.5">
+                {/* Numbered section header */}
+                <p className="flex items-baseline gap-1.5 font-semibold">
+                  <span className="shrink-0 tabular-nums text-[0.8em] opacity-80">
+                    {seg.header.index}
+                  </span>
+                  <span className="min-w-0">{renderInline(seg.header.text)}</span>
+                </p>
+                {/* Sub-bullets indented under the number */}
+                {seg.bullets.length > 0 && (
+                  <ul className="ml-4 space-y-0.5 border-l border-current/15 pl-3">
+                    {seg.bullets.map((b, bi) => (
+                      <li key={`b-${si}-${bi}`} className="flex gap-2">
+                        <span className="mt-[0.55em] h-1.5 w-1.5 shrink-0 rounded-full bg-current/60" aria-hidden />
+                        <span className="min-w-0 flex-1">{renderInline((b as Extract<Block, { kind: "bullet" }>).text)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            ) : (
+              /* Standalone bullets (no number header) */
+              <ul key={`seg-${si}`} className="space-y-1 pl-4">
+                {seg.bullets.map((b, bi) => (
+                  <li key={`b-${si}-${bi}`} className="flex gap-2">
+                    <span className="mt-[0.55em] h-1.5 w-1.5 shrink-0 rounded-full bg-current/70" aria-hidden />
+                    <span className="min-w-0 flex-1">{renderInline((b as Extract<Block, { kind: "bullet" }>).text)}</span>
+                  </li>
+                ))}
+              </ul>
+            ),
+          )}
+        </div>,
       );
       continue;
     }

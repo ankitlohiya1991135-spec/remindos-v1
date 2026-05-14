@@ -14,7 +14,7 @@ import {
   type ReminderRecurrence,
   type ReminderItem,
 } from "@repo/reminder";
-import { useUser } from "@clerk/nextjs";
+import { useUser, useClerk } from "@clerk/nextjs";
 import {
   FormEvent,
   useCallback,
@@ -24,7 +24,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useSearchParams } from "next/navigation";
+import { useSearchParams, useRouter } from "next/navigation";
 import { StarRating, priorityStarsLabel } from "./star-rating";
 import { StructuredMessage } from "./structured-message";
 import {
@@ -947,8 +947,11 @@ function ChatBubbleShell({
       <div className="relative">
         <div className="pointer-events-none absolute inset-y-0 left-2 z-0 flex items-center md:hidden">
           <span
-            className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-violet-100 text-violet-700"
-            style={{ opacity: Math.min(1, swipeOffset / 34) }}
+            className="inline-flex h-8 w-8 items-center justify-center rounded-full bg-violet-600 text-white shadow-md"
+            style={{
+              opacity: Math.min(1, swipeOffset / 34),
+              transform: `scale(${0.7 + Math.min(0.3, (swipeOffset / 96) * 0.3)})`,
+            }}
             aria-hidden
           >
             ↩
@@ -1493,6 +1496,8 @@ function ReminderCard({
 
 export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const { user } = useUser();
+  const { signOut } = useClerk();
+  const router = useRouter();
   const searchParams = useSearchParams();
   const notifUrlHandledRef = useRef<string | null>(null);
   const shareBatchUrlHandledRef = useRef<string | null>(null);
@@ -5759,7 +5764,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                     const bubbleClass =
                       message.role === "user"
                         ? "relative ml-auto min-w-0 max-w-[42rem] overflow-hidden rounded-[28px] rounded-br-[12px] bg-[linear-gradient(135deg,#7c3aed_0%,#5b7bff_100%)] px-4 py-3 text-sm text-white shadow-[0_24px_45px_-28px_rgba(91,123,255,0.9)]"
-                        : "min-w-0 max-w-[42rem] overflow-hidden rounded-[28px] rounded-bl-[12px] border border-[rgba(255,255,255,0.1)] bg-[rgba(255,255,255,0.08)] px-4 py-3 text-sm text-[rgba(255,255,255,0.88)] shadow-none";
+                        : "min-w-0 max-w-[42rem] overflow-hidden rounded-[28px] rounded-bl-[12px] border border-[rgba(255,255,255,0.18)] bg-[rgba(255,255,255,0.13)] px-4 py-3 text-sm text-[rgba(255,255,255,0.92)] shadow-none";
 
                     const inner = (
                       <div
@@ -5882,6 +5887,16 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                           </>
                         ) : (
                           <>
+                            {/* Sender label */}
+                            <p
+                              className={`mb-1 text-[10px] font-bold uppercase tracking-[0.18em] ${
+                                message.role === "user"
+                                  ? "text-violet-100/70"
+                                  : "text-[rgba(255,255,255,0.38)]"
+                              }`}
+                            >
+                              {message.role === "user" ? "You" : "RemindOS"}
+                            </p>
                             {message.meta?.kind === "briefing" ? (
                               <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-400">
                                 {briefingSectionLabel(
@@ -6214,8 +6229,8 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
           {
             label: "More", active: false, badge: 0, onClick: () => showSnapshotOverlay(),
             icon: (_active: boolean) => (
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-5 w-5">
-                <line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="18" x2="21" y2="18"/>
+              <svg viewBox="0 0 24 24" fill="currentColor" className="h-5 w-5">
+                <circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/>
               </svg>
             ),
           },
@@ -6557,6 +6572,37 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
               >
                 {isClearingChat ? "Clearing…" : "Clear Chat History"}
               </button>
+
+              {/* Account */}
+              <div className="mt-3 overflow-hidden rounded-2xl border border-slate-100 dark:border-slate-800">
+                {user && (
+                  <div className="flex items-center gap-3 border-b border-slate-100 px-4 py-3 dark:border-slate-800">
+                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[linear-gradient(135deg,#7c3aed_0%,#5b7bff_100%)] text-sm font-bold text-white">
+                      {(user.firstName?.[0] ?? user.emailAddresses[0]?.emailAddress?.[0] ?? "U").toUpperCase()}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-semibold text-slate-800 dark:text-slate-100">
+                        {user.firstName
+                          ? `${user.firstName}${user.lastName ? ` ${user.lastName}` : ""}`
+                          : (user.emailAddresses[0]?.emailAddress ?? "Account")}
+                      </p>
+                      <p className="truncate text-[11px] text-slate-400">
+                        {user.emailAddresses[0]?.emailAddress ?? ""}
+                      </p>
+                    </div>
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => void signOut(() => router.push("/sign-in"))}
+                  className="flex w-full items-center gap-2 px-4 py-3 text-sm font-semibold text-rose-600 transition hover:bg-rose-50 dark:text-rose-400 dark:hover:bg-rose-950/40"
+                >
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="h-4 w-4 shrink-0" aria-hidden>
+                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/>
+                  </svg>
+                  Sign out
+                </button>
+              </div>
             </div>
           </aside>
         </div>

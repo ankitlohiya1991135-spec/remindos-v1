@@ -94,7 +94,9 @@ export default async function RootLayout({
                   </Show>
                   <Show when="signed-in">
                     <OpenRemindersButton />
-                    <DrawerTrigger />
+                    <span className="hidden lg:inline-flex">
+                      <DrawerTrigger />
+                    </span>
                   </Show>
                 </div>
               </div>
