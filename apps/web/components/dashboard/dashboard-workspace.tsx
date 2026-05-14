@@ -116,9 +116,17 @@ interface AgentAction {
   targetId?: string;
   scope?: "today" | "tomorrow" | "missed" | "done" | "pending" | "all" | "later" | "future";
   /** Only on clarify (disambiguation): pending operation type */
-  pendingOp?: "mark_done" | "delete";
+  pendingOp?: "mark_done" | "delete" | "reschedule" | "edit" | "snooze";
   /** Only on clarify (disambiguation): IDs of ambiguous reminder candidates */
   candidateIds?: string[];
+  /** Only on clarify (reschedule disambiguation): already-parsed new due date ISO */
+  pendingDueAt?: string;
+  /** Only on clarify (edit disambiguation): which field is being edited */
+  pendingField?: "title" | "notes";
+  /** Only on clarify (edit disambiguation): the new field value */
+  pendingValue?: string;
+  /** Only on clarify (snooze disambiguation): snooze delay in minutes */
+  pendingDelayMinutes?: number;
 }
 
 interface AgentResponse {
@@ -1527,9 +1535,15 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     useState<PendingCreateDraft | null>(null);
   const [pendingConfirmAction, setPendingConfirmAction] =
     useState<{ type: "mark_done" | "delete_reminder" | "edit_reminder"; targetId?: string; targetTitle?: string; targetIds?: string[]; newTitle?: string; newNotes?: string } | null>(null);
-  /** Tracks an in-progress mark_done/delete disambiguation: user was asked "which one?" and hasn't answered yet */
-  const [pendingDisambig, setPendingDisambig] =
-    useState<{ op: "mark_done" | "delete"; candidateIds: string[] } | null>(null);
+  /** Tracks an in-progress disambiguation: user was asked "which one?" for any CRUD op */
+  const [pendingDisambig, setPendingDisambig] = useState<
+    | { op: "mark_done"; candidateIds: string[] }
+    | { op: "delete"; candidateIds: string[] }
+    | { op: "reschedule"; candidateIds: string[]; pendingDueAt: string }
+    | { op: "edit"; candidateIds: string[]; pendingField: "title" | "notes"; pendingValue: string }
+    | { op: "snooze"; candidateIds: string[]; pendingDelayMinutes: number }
+    | null
+  >(null);
   const [recentListedIds, setRecentListedIds] = useState<string[]>([]);
   const [pendingTimeSuggestion, setPendingTimeSuggestion] = useState<{
     title: string;
@@ -3146,11 +3160,19 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     }
 
     if (action.type === "clarify") {
-      // Disambiguation clarify: user was asked "which one?" for mark_done/delete.
-      // Store context so the next reply resolves the correct reminder instead of
-      // starting the create-reminder wizard.
+      // Disambiguation clarify: user was asked "which one?" for any CRUD op.
+      // Store full context so the next reply resolves the correct reminder
+      // instead of accidentally starting the create-reminder wizard.
       if (action.pendingOp && action.candidateIds?.length) {
-        setPendingDisambig({ op: action.pendingOp, candidateIds: action.candidateIds });
+        if (action.pendingOp === "reschedule" && action.pendingDueAt) {
+          setPendingDisambig({ op: "reschedule", candidateIds: action.candidateIds, pendingDueAt: action.pendingDueAt });
+        } else if (action.pendingOp === "edit" && action.pendingField && action.pendingValue != null) {
+          setPendingDisambig({ op: "edit", candidateIds: action.candidateIds, pendingField: action.pendingField, pendingValue: action.pendingValue });
+        } else if (action.pendingOp === "snooze" && action.pendingDelayMinutes) {
+          setPendingDisambig({ op: "snooze", candidateIds: action.candidateIds, pendingDelayMinutes: action.pendingDelayMinutes });
+        } else if (action.pendingOp === "mark_done" || action.pendingOp === "delete") {
+          setPendingDisambig({ op: action.pendingOp, candidateIds: action.candidateIds });
+        }
         setPendingCreateDraft(null);
         return;
       }
@@ -3352,10 +3374,10 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
           return;
         }
 
-        // ─── Disambiguation resolution for mark_done / delete ────────────────
-        // When user was asked "Which one do you mean?" for a multi-match operation,
-        // their next reply is a clarifying title — resolve it here without going to
-        // the server, so we never accidentally start the create-reminder wizard.
+        // ─── Disambiguation resolution (all CRUD ops) ────────────────────────
+        // User was asked "Which one do you mean?" — their reply is a clarifying
+        // title. Resolve it here, client-side, without hitting the server so we
+        // never accidentally fall into the create-reminder wizard.
         if (pendingDisambig) {
           const text = messageText.trim().toLowerCase();
 
@@ -3378,30 +3400,69 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
             pendingDisambig.candidateIds.includes(r.id),
           );
 
-          // Match strategy: exact substring → token overlap → first candidate
-          const match =
-            candidates.find((r) => {
-              const title = r.title.toLowerCase();
-              return text.includes(title) || title.includes(text);
-            }) ??
-            candidates.find((r) => {
-              const tokens = r.title
-                .toLowerCase()
-                .split(/\s+/)
-                .filter((t) => t.length >= 4);
-              return tokens.some((token) => text.includes(token));
-            });
+          // Match strategy — require exactly ONE candidate to match to avoid
+          // silently picking the wrong reminder when both share keywords.
+          // Phase 1: exact substring (title fully inside text, or text inside title)
+          const exactMatches = candidates.filter((r) => {
+            const title = r.title.toLowerCase();
+            return text.includes(title) || title.includes(text);
+          });
+          // Phase 2: any meaningful token (≥4 chars) from the title appears in user text
+          const tokenMatches =
+            exactMatches.length > 0
+              ? exactMatches
+              : candidates.filter((r) => {
+                  const tokens = r.title
+                    .toLowerCase()
+                    .split(/\s+/)
+                    .filter((t) => t.length >= 4);
+                  return tokens.some((token) => text.includes(token));
+                });
 
-          if (match) {
+          if (tokenMatches.length > 1) {
+            // Still ambiguous — ask again with more detail
+            const sample = tokenMatches.slice(0, 3).map((r) => `"${r.title}"`);
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: crypto.randomUUID(),
+                role: "assistant",
+                content: `I still can't tell which one. Please give more of the title — ${sample.join(", ")}.`,
+                createdAt: new Date().toISOString(),
+              },
+            ]);
+            return; // keep pendingDisambig active
+          }
+
+          const match = tokenMatches[0] ?? null;
+
+          if (!match) {
+            // No candidate matched — clear context and let user retry from scratch
             setPendingDisambig(null);
-            const op = pendingDisambig.op;
-            const confirmType =
-              op === "mark_done" ? "mark_done" : "delete_reminder";
-            const actionVerb =
-              op === "mark_done" ? "mark as done" : "delete";
-            const confirmMsg = `Are you sure you want to ${actionVerb} "${match.title}"? Reply **yes** to confirm.`;
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: crypto.randomUUID(),
+                role: "assistant",
+                content:
+                  "I couldn't match that to any of the reminders I mentioned. Please try again.",
+                createdAt: new Date().toISOString(),
+              },
+            ]);
+            return;
+          }
+
+          // Unique match found — capture state snapshot BEFORE clearing,
+          // then resolve based on op type.
+          const disambigSnapshot = pendingDisambig;
+          setPendingDisambig(null);
+          const { op } = disambigSnapshot;
+
+          if (op === "mark_done" || op === "delete") {
+            // Needs "are you sure?" confirmation before executing
+            const actionVerb = op === "mark_done" ? "mark as done" : "delete";
             setPendingConfirmAction({
-              type: confirmType as "mark_done" | "delete_reminder",
+              type: op === "mark_done" ? "mark_done" : "delete_reminder",
               targetId: match.id,
               targetTitle: match.title,
             });
@@ -3410,20 +3471,69 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
               {
                 id: crypto.randomUUID(),
                 role: "assistant",
-                content: confirmMsg,
+                content: `Are you sure you want to ${actionVerb} "${match.title}"? Reply **yes** to confirm.`,
                 createdAt: new Date().toISOString(),
               },
             ]);
-          } else {
-            // No candidate matched — clear the context and let the user retry
-            setPendingDisambig(null);
+          } else if (op === "reschedule") {
+            // Execute directly — reschedule doesn't need a "are you sure?" step
+            const newDueAt = disambigSnapshot.pendingDueAt;
+            void refreshAfterReminderMutation(
+              fetch(`/api/reminders/${match.id}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ dueAt: new Date(newDueAt).getTime() }),
+              }),
+            ).catch(() => showShareToast("Could not reschedule reminder. Try again."));
             setMessages((prev) => [
               ...prev,
               {
                 id: crypto.randomUUID(),
                 role: "assistant",
-                content:
-                  "I couldn't match that to any of the reminders I mentioned. Please try again with the full reminder name.",
+                content: `Rescheduled "${match.title}" to ${new Date(newDueAt).toLocaleString()}.`,
+                createdAt: new Date().toISOString(),
+              },
+            ]);
+          } else if (op === "edit") {
+            // Needs confirmation before applying (consistent with normal edit flow)
+            const { pendingField, pendingValue } = disambigSnapshot;
+            const previewValue = pendingValue.length > 40 ? `${pendingValue.slice(0, 40)}…` : pendingValue;
+            setPendingConfirmAction({
+              type: "edit_reminder",
+              targetId: match.id,
+              targetTitle: match.title,
+              ...(pendingField === "title" ? { newTitle: pendingValue } : { newNotes: pendingValue }),
+            });
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: crypto.randomUUID(),
+                role: "assistant",
+                content: `Change the ${pendingField} of "${match.title}" to "${previewValue}"? Reply **yes** to confirm.`,
+                createdAt: new Date().toISOString(),
+              },
+            ]);
+          } else if (op === "snooze") {
+            // Execute directly — snooze doesn't need a "are you sure?" step
+            const { pendingDelayMinutes } = disambigSnapshot;
+            const newDueAt = Date.now() + pendingDelayMinutes * 60_000;
+            const label =
+              pendingDelayMinutes >= 60
+                ? `${Math.round(pendingDelayMinutes / 60)} hour${Math.round(pendingDelayMinutes / 60) !== 1 ? "s" : ""}`
+                : `${pendingDelayMinutes} minute${pendingDelayMinutes !== 1 ? "s" : ""}`;
+            void refreshAfterReminderMutation(
+              fetch(`/api/reminders/${match.id}`, {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ dueAt: newDueAt }),
+              }),
+            ).catch(() => showShareToast("Could not snooze reminder. Try again."));
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: crypto.randomUUID(),
+                role: "assistant",
+                content: `Snoozed "${match.title}" — I'll remind you again in ${label}.`,
                 createdAt: new Date().toISOString(),
               },
             ]);
