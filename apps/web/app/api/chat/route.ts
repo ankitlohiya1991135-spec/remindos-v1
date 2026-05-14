@@ -100,7 +100,7 @@ interface ReminderAgentResponse {
 const NIM_BASE_URL = "https://integrate.api.nvidia.com/v1";
 const DEFAULT_MODEL = "mistralai/mistral-medium-3.5-128b";
 const DEFAULT_CHAT_REMINDER_TITLE = "Reminder";
-const MAX_HISTORY_TURNS = 20; // last 10 user/assistant pairs — Issue 5 fix
+const MAX_HISTORY_TURNS = 10; // last 5 user/assistant pairs — reduced to prevent context bloat
 
 // ─── FLAW-3: simple per-user rate limiter (20 req/min) ───────────────────────
 const rateLimitStore = new Map<string, { count: number; resetAt: number }>();
@@ -1866,9 +1866,24 @@ export async function POST(request: Request) {
     const llmReminders = filterRemindersForLLM(reminders);
     const digest = buildLifeOsContextBlock(llmReminders, tasks, new Date(), displayOptions);
 
-    // Issue 6 fix: wiki is the single source of behavioral context — no need for
-    // the redundant buildBehaviorContext which queries the same Convex tables again.
-    const wikiCtx = await loadUserWiki(userId);
+    // Intent-based context selection — prevents context-window bloat and hallucination in
+    // long sessions.  The wiki and the machine-readable JSON are each expensive in tokens;
+    // only include them when the current message actually benefits from them.
+    //
+    // Wiki (~9 pages × 1 000 tokens) is behavioural knowledge — only useful for insight /
+    // planning queries.  CRUD and list queries already have everything they need from the
+    // live digest.
+    //
+    // JSON (3 000–5 000 tokens) duplicates the digest but adds raw Convex IDs.  It is only
+    // needed when the LLM must output a precise entity-ID in its action payload (i.e. when
+    // the intent is update_reminder and the fast path fell through to the LLM).  For all
+    // other intents the digest is authoritative and the JSON adds no value.
+    const needsWiki =
+      intent === "decision_query" || intent === "planning_query" || intent === "ambiguous";
+    const needsJson = intent === "update_reminder";
+
+    // Only fetch wiki from Convex when we actually need it — avoids the I/O cost for CRUD calls.
+    const wikiCtx = needsWiki ? await loadUserWiki(userId) : null;
 
     // BUG-1 / MISSING-1 fix: inject recent conversation history (already loaded above)
     const recentHistory = history
@@ -1877,7 +1892,7 @@ export async function POST(request: Request) {
 
     // Build the user turn content — wiki comes first (rich synthesised knowledge),
     // then the live digest (current reminders),
-    // then the machine-readable JSON for precise CRUD actions.
+    // then the machine-readable JSON for precise CRUD actions (only when needed).
     // NOTE: Always use `message` (the raw user text) here — never effectiveMessage which
     // contains a [The user is replying to...] wrapper that causes the LLM to echo it back.
     // Reply context is provided as a clean bracketed note instead.
@@ -1887,9 +1902,11 @@ export async function POST(request: Request) {
     const contextParts = [
       message,
       replyContextNote,
-      wikiCtx ? `\n\n${wikiCtx}` : "",
+      needsWiki && wikiCtx ? `\n\n${wikiCtx}` : "",
       `\n\n--- LIFE OS DIGEST (authoritative) ---\n${digest}`,
-      `\n\n--- LIFE OS JSON (same data, machine-readable) ---\n${JSON.stringify({ reminders: llmReminders, tasks })}`,
+      needsJson
+        ? `\n\n--- LIFE OS JSON (machine-readable IDs) ---\n${JSON.stringify({ reminders: llmReminders, tasks })}`
+        : "",
     ].join("");
 
     const nimMessages = [
