@@ -734,6 +734,22 @@ function safeAgentResponse(
   }
 }
 
+// ─── Normalised title matching ──────────────────────────────────────────────
+// Collapse whitespace, hyphens and underscores so "fix up" ≡ "fixup".
+// Used in every fast-path `includes()` check so user phrasing differences
+// (e.g. "bathroom door fix up" vs "Bathroom door fixup") don't cause misses.
+function normalizeForMatch(s: string): string {
+  return s.toLowerCase().replace(/[\s\-_]+/g, "");
+}
+
+/** True if `rawTarget` appears in `title` under normalised comparison. */
+function titleIncludesTarget(title: string, rawTarget: string): boolean {
+  return (
+    title.toLowerCase().includes(rawTarget.toLowerCase()) ||
+    normalizeForMatch(title).includes(normalizeForMatch(rawTarget))
+  );
+}
+
 // ─── Gap 2: deterministic target extraction for mark-done / delete ────────────
 
 function extractTargetFromMarkDone(message: string): string {
@@ -1493,7 +1509,7 @@ export async function POST(request: Request) {
     const rawTarget = extractTargetFromMarkDone(message);
     if (rawTarget.length >= 2) {
       const matches = reminders.filter(
-        (r) => r.status === "pending" && r.title.toLowerCase().includes(rawTarget.toLowerCase()),
+        (r) => r.status === "pending" && titleIncludesTarget(r.title, rawTarget),
       );
       if (matches.length === 1) {
         const target = matches[0]!;
@@ -1534,7 +1550,7 @@ export async function POST(request: Request) {
     const rawTarget = extractTargetFromDelete(message);
     if (rawTarget.length >= 2) {
       const matches = reminders.filter(
-        (r) => r.status === "pending" && r.title.toLowerCase().includes(rawTarget.toLowerCase()),
+        (r) => r.status === "pending" && titleIncludesTarget(r.title, rawTarget),
       );
       if (matches.length === 1) {
         const target = matches[0]!;
@@ -1581,7 +1597,7 @@ export async function POST(request: Request) {
 
     if (!target && !isPronoun) {
       const matches = reminders.filter(
-        (r) => r.status === "pending" && r.title.toLowerCase().includes(rawTarget.toLowerCase()),
+        (r) => r.status === "pending" && titleIncludesTarget(r.title, rawTarget),
       );
       if (matches.length === 1) target = matches[0];
       if (matches.length > 1) {
@@ -1656,7 +1672,7 @@ export async function POST(request: Request) {
 
     if (!isPronoun) {
       const matches = reminders.filter(
-        (r) => r.status === "pending" && r.title.toLowerCase().includes(rawTarget.toLowerCase()),
+        (r) => r.status === "pending" && titleIncludesTarget(r.title, rawTarget),
       );
       if (matches.length === 1) {
         const target = matches[0]!;
@@ -1711,7 +1727,7 @@ export async function POST(request: Request) {
       if (recoveredDelay) {
         const rawTarget = message.trim();
         const matches = reminders.filter(
-          (r) => r.status === "pending" && r.title.toLowerCase().includes(rawTarget.toLowerCase()),
+          (r) => r.status === "pending" && titleIncludesTarget(r.title, rawTarget),
         );
         const target = matches.length === 1 ? matches[0] : (matches[0] ?? undefined);
         if (target) {
@@ -1755,7 +1771,7 @@ export async function POST(request: Request) {
 
     if (!target && !isPronoun) {
       const matches = reminders.filter(
-        (r) => r.status === "pending" && r.title.toLowerCase().includes(rawTarget.toLowerCase()),
+        (r) => r.status === "pending" && titleIncludesTarget(r.title, rawTarget),
       );
       if (matches.length === 1) {
         target = matches[0];

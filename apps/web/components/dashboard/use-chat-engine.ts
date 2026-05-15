@@ -10,6 +10,8 @@
 import { type FormEvent, type Dispatch, type SetStateAction, type MutableRefObject } from "react";
 import {
   tryGroundedReminderAnswer,
+  looksLikeMarkDoneIntent,
+  looksLikeDeleteIntent,
   type ReminderItem,
 } from "@repo/reminder";
 import type { TaskRow } from "./task-panels";
@@ -430,13 +432,26 @@ export function useChatEngine(params: UseChatEngineParams) {
             pendingDisambig.candidateIds.includes(r.id),
           );
 
+          // Collapse spaces, hyphens and underscores so "fix up" ≡ "fixup".
+          const normalizeForMatch = (s: string) =>
+            s.toLowerCase().replace(/[\s\-_]+/g, "");
+          const normText = normalizeForMatch(text);
+
           // Match strategy — require exactly ONE candidate to match to avoid
           // silently picking the wrong reminder when both share keywords.
-          // Phase 1: exact substring (title fully inside text, or text inside title)
-          const exactMatches = candidates.filter((r) => {
-            const title = r.title.toLowerCase();
-            return text.includes(title) || title.includes(text);
+          // Phase 0: normalised exact match — handles "fix up" vs "fixup" variants
+          const normalizedMatches = candidates.filter((r) => {
+            const normTitle = normalizeForMatch(r.title);
+            return normText.includes(normTitle) || normTitle.includes(normText);
           });
+          // Phase 1: raw exact substring (title fully inside text, or text inside title)
+          const exactMatches =
+            normalizedMatches.length > 0
+              ? normalizedMatches
+              : candidates.filter((r) => {
+                  const title = r.title.toLowerCase();
+                  return text.includes(title) || title.includes(text);
+                });
           // Phase 2: any meaningful token (≥4 chars) from the title appears in user text
           const tokenMatches =
             exactMatches.length > 0
@@ -571,8 +586,35 @@ export function useChatEngine(params: UseChatEngineParams) {
           return;
         }
 
-        if (pendingCreateDraft) {
+        // ── Create-wizard escape hatch ──────────────────────────────────────────
+        // CRUD intent (mark done / delete) while in a structured step means the
+        // user wants to do something else. Clear the draft and let the message
+        // fall through to normal processing. The title step is exempt because any
+        // text is a valid reminder title there.
+        const skipWizardForCrud =
+          pendingCreateDraft !== null &&
+          pendingCreateDraft.step !== "title" &&
+          (looksLikeMarkDoneIntent(messageText.trim()) ||
+            looksLikeDeleteIntent(messageText.trim()));
+        if (skipWizardForCrud) setPendingCreateDraft(null);
+
+        if (pendingCreateDraft && !skipWizardForCrud) {
           const text = messageText.trim();
+
+          // Explicit cancel at any step
+          if (/^(cancel|nevermind|never mind|stop|abort|quit)\b/i.test(text)) {
+            setPendingCreateDraft(null);
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: crypto.randomUUID(),
+                role: "assistant",
+                content: "Got it — reminder creation cancelled.",
+                createdAt: new Date().toISOString(),
+              },
+            ]);
+            return;
+          }
 
           if (pendingCreateDraft.step === "title") {
             if (!text) {
