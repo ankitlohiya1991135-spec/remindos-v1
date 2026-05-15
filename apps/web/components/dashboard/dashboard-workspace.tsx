@@ -34,7 +34,6 @@ import {
 import type { ReplyContextPayload } from "../../lib/chat-reply-context";
 import type { DueNotificationPrefs } from "../../lib/reminder-notification-prefs";
 import { playPreDuePing, playOverdueNudge } from "../../lib/notification-sounds";
-import { NotificationBell } from "../notifications/notification-bell";
 import { ChatBubbleShell } from "./chat-bubble-shell";
 import { SnapshotOverlay } from "./snapshot-overlay";
 import { BottomNav } from "./bottom-nav";

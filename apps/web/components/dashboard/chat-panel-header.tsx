@@ -134,18 +134,16 @@ export function ChatPanelHeader({
           <button
             type="button"
             onClick={onAllReminders}
-            className="hidden h-10 items-center justify-center gap-2 rounded-full border border-[rgba(255,255,255,0.12)] bg-[rgba(255,255,255,0.07)] px-3 text-xs font-semibold text-slate-300 shadow-sm transition hover:bg-[rgba(255,255,255,0.12)] sm:inline-flex lg:hidden"
+            className="hidden h-10 items-center justify-center rounded-full border border-[rgba(255,255,255,0.12)] bg-[rgba(255,255,255,0.07)] px-3 text-xs font-semibold text-slate-300 shadow-sm transition hover:bg-[rgba(255,255,255,0.12)] sm:inline-flex lg:hidden"
           >
-            <span aria-hidden>☰</span>
             Reminders
           </button>
           <button
             type="button"
             onClick={onAllTasks}
             data-walkthrough="all-tasks-trigger"
-            className="hidden h-10 items-center justify-center gap-2 rounded-full border border-[rgba(255,255,255,0.12)] bg-[rgba(255,255,255,0.07)] px-3 text-xs font-semibold text-teal-300 shadow-sm transition hover:bg-[rgba(255,255,255,0.12)] sm:inline-flex lg:hidden"
+            className="hidden h-10 items-center justify-center rounded-full border border-[rgba(255,255,255,0.12)] bg-[rgba(255,255,255,0.07)] px-3 text-xs font-semibold text-teal-300 shadow-sm transition hover:bg-[rgba(255,255,255,0.12)] sm:inline-flex lg:hidden"
           >
-            <span aria-hidden>≣</span>
             Tasks
           </button>
           <button
