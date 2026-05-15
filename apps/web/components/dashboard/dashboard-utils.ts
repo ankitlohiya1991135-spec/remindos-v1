@@ -569,3 +569,109 @@ export function extractInviteToken(text: string): string | null {
     return plainHex[1];
   return null;
 }
+
+// ─── Chat input parsing helpers ─────────────────────────────────────────────
+
+/** Strip "create reminder for …" prefix from raw user input. */
+export function extractCreateTitle(value: string): string {
+  return value
+    .replace(/^\s*create(\s+a)?\s+reminder\s*/i, "")
+    .replace(/^\s*(for|about)\s+/i, "")
+    .trim();
+}
+
+/** Return true if the message already contains a date/time hint. */
+export function hasInlineCreateDetails(value: string): boolean {
+  return (
+    /\b(today|tomorrow|tmrw|tomorow|tommarow|day after tomorrow|after tomorrow|आज|कल|उद्या|परसों|परवा|noon|midnight)\b/i.test(value) ||
+    /\b\d{1,2}(?:[:.]\d{2})?\s*(am|pm)\b/i.test(value) ||
+    /\b\d{1,2}[:.]\d{2}\b/.test(value)
+  );
+}
+
+/** Parse a fuzzy date string ("today", "tomorrow", "2025-06-01", etc.) into ISO date. */
+export function parseDateInput(value: string, now: Date): string | null {
+  const text = value
+    .trim()
+    .toLowerCase()
+    .replace(/[०-९]/g, (d) => String("०१२३४५६७८९".indexOf(d)));
+  const base = new Date(now);
+  base.setHours(0, 0, 0, 0);
+
+  if (/^(today|आज)$/.test(text)) return base.toISOString().slice(0, 10);
+  if (/^(tomorrow|tmrw|tomorow|tommarow|कल|उद्या)$/.test(text)) {
+    const d = new Date(base);
+    d.setDate(d.getDate() + 1);
+    return d.toISOString().slice(0, 10);
+  }
+  if (/^(day after tomorrow|after tomorrow|परसों|परवा)$/.test(text)) {
+    const d = new Date(base);
+    d.setDate(d.getDate() + 2);
+    return d.toISOString().slice(0, 10);
+  }
+
+  const m = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const y = Number(m[1]);
+  const mo = Number(m[2]);
+  const d = Number(m[3]);
+  const parsed = new Date(y, mo - 1, d);
+  if (
+    parsed.getFullYear() !== y ||
+    parsed.getMonth() !== mo - 1 ||
+    parsed.getDate() !== d
+  ) {
+    return null;
+  }
+  return `${y.toString().padStart(4, "0")}-${mo.toString().padStart(2, "0")}-${d.toString().padStart(2, "0")}`;
+}
+
+/** Parse a fuzzy time string ("3pm", "14:30", "noon", etc.) into "HH:MM". */
+export function parseTimeInput(value: string): string | null {
+  const text = value
+    .trim()
+    .toLowerCase()
+    .replace(/[०-९]/g, (d) => String("०१२३४५६७८९".indexOf(d)))
+    .replace(/\b([ap])\.\s?m\.\b/g, "$1m");
+  if (text === "noon") return "12:00";
+  if (text === "midnight") return "00:00";
+  if (/^(दोपहर|दुपारी)$/.test(text)) return "12:00";
+  if (/^(आधी रात|मध्यरात्र)$/.test(text)) return "00:00";
+
+  const meridiem = text.match(/\b(\d{1,2})(?:[:.]\s*(\d{2}))?\s?(am|pm)\b/i);
+  if (meridiem) {
+    const hourRaw = Number(meridiem[1] ?? "0");
+    const minute = Number(meridiem[2] ?? "0");
+    if (!Number.isFinite(hourRaw) || hourRaw < 1 || hourRaw > 12) return null;
+    if (!Number.isFinite(minute) || minute < 0 || minute > 59) return null;
+    let hour = hourRaw % 12;
+    if ((meridiem[3] ?? "am").toLowerCase() === "pm") hour += 12;
+    return `${hour.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}`;
+  }
+
+  const clock = text.match(/^\s*(\d{1,2})[:.]\s*(\d{2})\s*$/);
+  if (clock) {
+    const hour = Number(clock[1] ?? "-1");
+    const minute = Number(clock[2] ?? "-1");
+    if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return null;
+    return `${hour.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}`;
+  }
+
+  const regional = text.match(
+    /^\s*(\d{1,2})(?:[:.]\s*(\d{2}))?\s*(?:बजे|वाजता|वाजले)?\s*(सुबह|सकाळी|दोपहर|दुपारी|शाम|सायंकाळी|रात)?\s*$/,
+  );
+  if (!regional) return null;
+  const rawHour = Number(regional[1] ?? "-1");
+  const minute = Number(regional[2] ?? "0");
+  if (rawHour < 0 || rawHour > 23 || minute < 0 || minute > 59) return null;
+  const part = (regional[3] ?? "").toLowerCase();
+  if (!part && !/(?:बजे|वाजता|वाजले)/i.test(text)) return null;
+
+  let hour = rawHour;
+  if (/सुबह|सकाळी/i.test(part)) {
+    if (hour === 12) hour = 0;
+  } else if (/दोपहर|दुपारी|शाम|सायंकाळी|रात/i.test(part)) {
+    if (hour >= 1 && hour <= 11) hour += 12;
+  }
+  return `${hour.toString().padStart(2, "0")}:${minute.toString().padStart(2, "0")}`;
+}

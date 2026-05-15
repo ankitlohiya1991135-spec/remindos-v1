@@ -121,7 +121,7 @@ export function ChatPanelHeader({
       </div>
 
       {/* ── Tablet toolbar (sm+, hidden on desktop) ── */}
-      <div className="hidden shrink-0 items-center justify-end gap-2 border-b border-[rgba(255,255,255,0.08)] px-4 py-3 sm:flex sm:px-4">
+      <div className="hidden shrink-0 items-center justify-end gap-2 border-b border-[rgba(255,255,255,0.08)] px-4 py-3 sm:flex sm:px-4 lg:hidden">
         <div className="flex items-center gap-2">
           <button
             type="button"

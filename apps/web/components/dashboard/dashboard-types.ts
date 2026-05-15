@@ -122,6 +122,7 @@ export interface DashboardOverlayState {
   overlay: DashboardOverlay;
   taskMode?: "create" | "browse";
   shareReminderIds?: string[];
+  reminderTab?: ReminderListTab;
 }
 
 export type ReminderListTab =
@@ -157,6 +158,32 @@ export interface ShareInboxRow {
   dueAt: number;
   createdAt: number;
   shareBatchId?: string;
+}
+
+// ─── Pending chat states ──────────────────────────────────────────────────
+
+export interface PendingConfirmAction {
+  type: "mark_done" | "delete_reminder" | "edit_reminder";
+  targetId?: string;
+  targetTitle?: string;
+  targetIds?: string[];
+  newTitle?: string;
+  newNotes?: string;
+}
+
+export type PendingDisambig =
+  | { op: "mark_done"; candidateIds: string[] }
+  | { op: "delete"; candidateIds: string[] }
+  | { op: "reschedule"; candidateIds: string[]; pendingDueAt: string }
+  | { op: "edit"; candidateIds: string[]; pendingField: "title" | "notes"; pendingValue: string }
+  | { op: "snooze"; candidateIds: string[]; pendingDelayMinutes: number };
+
+export interface PendingTimeSuggestion {
+  title: string;
+  suggestedDueAt: string;
+  priority?: number;
+  domain?: string;
+  recurrence?: string;
 }
 
 // ─── Task warnings ─────────────────────────────────────────────────────────
