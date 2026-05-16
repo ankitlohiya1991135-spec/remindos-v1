@@ -348,6 +348,19 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     [refreshReminders],
   );
 
+  /**
+   * Optimistically update local reminder state BEFORE an API call resolves.
+   * Accepts the same updater signature as React's setState so callers can
+   * splice, filter, or map the array cleanly.
+   * On API failure, callers should invoke refreshReminders() to roll back.
+   */
+  const optimisticUpdateReminder = useCallback(
+    (updater: (prev: ReminderItem[]) => ReminderItem[]) => {
+      setReminders(updater);
+    },
+    [setReminders],
+  );
+
   const playReminderSuccessAnimation = useCallback((info?: { title: string; time: string }) => {
     setShowReminderSuccess(true);
     if (info) setReminderSuccessInfo(info);
@@ -751,6 +764,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     recentListedIds,
     setRecentListedIds,
     refreshReminders,
+    optimisticUpdateReminder,
     playReminderSuccessAnimation,
     refreshAfterReminderMutation,
     showShareToast,
@@ -1274,15 +1288,32 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
           reminderLongPressTimerRef={reminderLongPressTimerRef}
           onClose={closeReminderListOverlay}
           onOpenCreate={() => showCreateOverlay()}
-          onMarkDone={(id) => void refreshAfterReminderMutation(
-            fetch(`/api/reminders/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "done" }) })
-          ).catch(() => showShareToast("Could not update reminder. Try again."))}
+          onMarkDone={(id) => {
+            optimisticUpdateReminder((prev) =>
+              prev.map((r) => r.id === id ? { ...r, status: "done" as const } : r),
+            );
+            void refreshAfterReminderMutation(
+              fetch(`/api/reminders/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "done" }) })
+            ).catch(() => {
+              showShareToast("Could not update reminder. Try again.");
+              void refreshReminders();
+            });
+          }}
           onDelete={(id, title) => setPendingReminderCardDelete({ id, title })}
           onEdit={openEditModal}
           onShare={showShareOverlay}
-          onSnooze={(id, dueAt) => void refreshAfterReminderMutation(
-            fetch(`/api/reminders/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dueAt: new Date(dueAt).getTime() + 60 * 60 * 1000 }) })
-          ).catch(() => showShareToast("Could not snooze reminder."))}
+          onSnooze={(id, dueAt) => {
+            const newDueAt = new Date(dueAt).getTime() + 60 * 60 * 1000;
+            optimisticUpdateReminder((prev) =>
+              prev.map((r) => r.id === id ? { ...r, dueAt: new Date(newDueAt).toISOString() } : r),
+            );
+            void refreshAfterReminderMutation(
+              fetch(`/api/reminders/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dueAt: newDueAt }) })
+            ).catch(() => {
+              showShareToast("Could not snooze reminder.");
+              void refreshReminders();
+            });
+          }}
           onAcceptShare={(batchKey) => void joinShareBatch(batchKey)}
           onDenyShare={(batchKey) => void dismissShareBatch(batchKey)}
           onShowToast={showShareToast}

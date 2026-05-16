@@ -66,6 +66,9 @@ export interface UseChatEngineParams {
   recentListedIds: string[];
   setRecentListedIds: Dispatch<SetStateAction<string[]>>;
   refreshReminders: () => Promise<void>;
+  /** Immediately update local reminder state for optimistic UI — before the API call resolves.
+   *  On API failure the caller should invoke refreshReminders() to re-sync from the server. */
+  optimisticUpdateReminder: (updater: (prev: ReminderItem[]) => ReminderItem[]) => void;
   playReminderSuccessAnimation: (info?: { title: string; time: string }) => void;
   refreshAfterReminderMutation: (promise: Promise<Response>) => Promise<void>;
   showShareToast: (msg: string) => void;
@@ -101,6 +104,7 @@ export function useChatEngine(params: UseChatEngineParams) {
     recentListedIds,
     setRecentListedIds,
     refreshReminders,
+    optimisticUpdateReminder,
     playReminderSuccessAnimation,
     refreshAfterReminderMutation,
     showShareToast,
@@ -197,13 +201,20 @@ export function useChatEngine(params: UseChatEngineParams) {
         matchesReminder(r, action.targetId, action.targetTitle),
       );
       if (!target) return;
+      // Optimistic: mark done instantly so the UI doesn't wait for the API
+      optimisticUpdateReminder((prev) =>
+        prev.map((r) => r.id === target.id ? { ...r, status: "done" as const } : r),
+      );
       void refreshAfterReminderMutation(
         fetch(`/api/reminders/${target.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ status: "done" }),
         }),
-      ).catch(() => showShareToast("Could not update reminder. Try again."));
+      ).catch(() => {
+        showShareToast("Could not update reminder. Try again.");
+        void refreshReminders(); // rollback to server state
+      });
       return;
     }
 
@@ -213,9 +224,14 @@ export function useChatEngine(params: UseChatEngineParams) {
         matchesReminder(r, action.targetId, action.targetTitle),
       );
       if (!target) return;
+      // Optimistic: remove immediately so the list updates before API returns
+      optimisticUpdateReminder((prev) => prev.filter((r) => r.id !== target.id));
       void refreshAfterReminderMutation(
         fetch(`/api/reminders/${target.id}`, { method: "DELETE" }),
-      ).catch(() => showShareToast("Could not delete reminder. Try again."));
+      ).catch(() => {
+        showShareToast("Could not delete reminder. Try again.");
+        void refreshReminders(); // rollback to server state
+      });
       return;
     }
 
@@ -225,13 +241,22 @@ export function useChatEngine(params: UseChatEngineParams) {
       );
       if (!target) return;
       const newDueAt = Date.now() + action.delayMinutes * 60_000;
+      // Optimistic: update due time immediately
+      optimisticUpdateReminder((prev) =>
+        prev.map((r) =>
+          r.id === target.id ? { ...r, dueAt: new Date(newDueAt).toISOString() } : r,
+        ),
+      );
       void refreshAfterReminderMutation(
         fetch(`/api/reminders/${target.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ dueAt: newDueAt }),
         }),
-      ).catch(() => showShareToast("Could not snooze reminder. Try again."));
+      ).catch(() => {
+        showShareToast("Could not snooze reminder. Try again.");
+        void refreshReminders(); // rollback
+      });
       return;
     }
 
@@ -245,13 +270,28 @@ export function useChatEngine(params: UseChatEngineParams) {
       };
       if (action.newTitle) patch.title = action.newTitle;
       if (typeof action.newNotes === "string") patch.notes = action.newNotes;
+      // Optimistic: apply the edit locally before the server confirms
+      optimisticUpdateReminder((prev) =>
+        prev.map((r) =>
+          r.id === target.id
+            ? {
+                ...r,
+                ...(action.newTitle ? { title: action.newTitle } : {}),
+                ...(typeof action.newNotes === "string" ? { notes: action.newNotes } : {}),
+              }
+            : r,
+        ),
+      );
       void refreshAfterReminderMutation(
         fetch(`/api/reminders/${target.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(patch),
         }),
-      ).catch(() => showShareToast("Could not edit reminder. Try again."));
+      ).catch(() => {
+        showShareToast("Could not edit reminder. Try again.");
+        void refreshReminders(); // rollback
+      });
       return;
     }
 
