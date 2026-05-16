@@ -611,6 +611,9 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
 
   const grouped = useMemo(() => {
     const now = new Date();
+    const tz = typeof Intl !== "undefined"
+      ? Intl.DateTimeFormat().resolvedOptions().timeZone
+      : undefined;
     const next = {
       missed: [] as ReminderItem[],
       today: [] as ReminderItem[],
@@ -620,7 +623,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     };
 
     for (const reminder of reminders) {
-      const bucket = getReminderBucket(reminder, now);
+      const bucket = getReminderBucket(reminder, now, tz);
       if (bucket === "missed") {
         next.missed.push(reminder);
         continue;

@@ -399,9 +399,10 @@ export function isNextTwoHoursReminder(
 export function reminderStateLabel(
   reminder: ReminderItem,
   now = new Date(),
+  timeZone?: string,
 ): string {
   if (reminder.status === "done" || reminder.status === "archived") return "Done";
-  if (getReminderBucket(reminder, now) === "missed") return "Missed";
+  if (getReminderBucket(reminder, now, timeZone) === "missed") return "Missed";
   return "Upcoming";
 }
 

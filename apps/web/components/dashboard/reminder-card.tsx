@@ -155,7 +155,11 @@ export function ReminderCard({
               }`}
               data-testid="reminder-state-label"
             >
-              {reminderStateLabel(reminder)}
+              {reminderStateLabel(
+                reminder,
+                new Date(),
+                typeof Intl !== "undefined" ? Intl.DateTimeFormat().resolvedOptions().timeZone : undefined,
+              )}
             </span>
           )}
           {/* Shared tag */}
