@@ -2142,10 +2142,14 @@ export async function POST(request: Request) {
                     else { emitEnd = (trailingBs(raw) % 2 === 1) ? raw.length - 1 : raw.length; }
                     const newRaw = raw.slice(rHead, emitEnd);
                     if (newRaw.length > 0) {
-                      const display = newRaw
-                        .replace(/\\"/g, '"').replace(/\\n/g, "\n")
-                        .replace(/\\t/g, "\t").replace(/\\r/g, "\r")
-                        .replace(/\\\\/g, "\\");
+                      // Single-pass unescape to avoid ordering bugs (e.g. \\n → \n
+                      // before \\ → \, which would corrupt literal backslash+n sequences).
+                      const display = newRaw.replace(/\\(["\\ntr])/g, (_, c: string) => {
+                        if (c === "n") return "\n";
+                        if (c === "t") return "\t";
+                        if (c === "r") return "\r";
+                        return c; // handles both \\ → \ and \" → "
+                      });
                       rHead = emitEnd;
                       eq(`data: ${JSON.stringify(display)}\n\n`);
                     }
