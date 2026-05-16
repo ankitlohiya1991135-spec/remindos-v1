@@ -160,7 +160,43 @@ IMPORTANT RULES FOR ACTIONS:
 - Never set action.type to "mark_done" or "delete_reminder" for bulk requests; use "bulk_action" instead.
 - Only emit one action per response. If the request is ambiguous, emit clarify.
 
-Keep "reply" helpful and concise but include enough detail (titles, times, notes) when relevant.
+REPLY FORMATTING — the UI renders markdown; use it whenever the reply has structure.
+
+RULE 1 — Simple action confirmations (created / done / deleted / rescheduled / snoozed):
+  One short sentence. No lists, no headers, no bold labels.
+  ✓ Reminder "Gym" created for tomorrow at 7:00 AM.
+  ✗ Here is the confirmation: the reminder titled Gym has been successfully created...
+
+RULE 2 — Clarify / single question: one sentence only.
+
+RULE 3 — Any list of 3 or more reminders or tasks: numbered list, one item per line.
+  Use format:  N. Title — Day Mon D at H:MM AM/PM
+  Example:
+  1. Pay rent — overdue 3d
+  2. Doctor call — Tue May 20 at 10:00 AM
+  3. Team standup — Today at 2:00 PM
+
+RULE 4 — Multi-period lists (Missed / Today / Tomorrow / Later): bold section headers + numbered sub-list.
+  Example:
+  **Missed (2):**
+  1. Pay rent — overdue 3d
+  2. Gym session — overdue 1d
+
+  **Today (3):**
+  1. Team standup — 2:00 PM
+  2. Call dentist — 4:00 PM
+  3. Evening walk — 6:00 PM
+
+RULE 5 — Insights, analysis, patterns, stats: one short intro sentence then bullet points, max 5 bullets.
+  Example:
+  Here are your patterns this week:
+  - Health reminders have a 40% completion rate.
+  - You consistently skip evening tasks after 8 PM.
+  - Finance tasks are your strongest domain (100% done).
+
+RULE 6 — NEVER write 3+ items as a comma-separated sentence. Always use a list.
+RULE 7 — NEVER exceed 2 prose sentences for any list-type answer.
+RULE 8 — Length limits: confirmations ≤ 100 chars · lists ≤ 400 chars · analysis ≤ 550 chars.
 
 SPELLING / TYPOS: Users often misspell reminder titles. If a message contains a word that closely resembles a reminder title in the digest (same first letter, similar length, off by 1-2 characters), treat it as that reminder. Match aggressively — better to answer about a probable reminder than to say you don't see it.
 
@@ -715,7 +751,7 @@ function safeAgentResponse(
     if (looksUnhelpful && reminders && reminders.length > 0) {
       return { reply: buildHelpfulFallback(reminders, timeZone), action: { type: "unknown" } };
     }
-    return parsed;
+    return { ...parsed, reply: polishReply(parsed.reply) };
   } catch {
     // Strip any code fences or JSON blobs (privacy: never leak full LLM JSON).
     const safe = text
@@ -724,7 +760,7 @@ function safeAgentResponse(
       .trim();
     // If the LLM produced any reasonable plain text, use it
     if (safe.length > 5 && safe.length < 600) {
-      return { reply: safe, action: { type: "unknown" } };
+      return { reply: polishReply(safe), action: { type: "unknown" } };
     }
     // Otherwise produce a helpful context-aware summary — NEVER a generic error
     const reply = reminders
@@ -732,6 +768,50 @@ function safeAgentResponse(
       : "I'm here to help with your reminders and tasks. Tell me what you'd like — list, create, complete, or update any reminder.";
     return { reply, action: { type: "unknown" } };
   }
+}
+
+// ─── Reply polish ─────────────────────────────────────────────────────────────
+// Lightweight post-processor that fixes the most common LLM formatting failures
+// without touching well-structured replies. Applied after safeAgentResponse so
+// even when the LLM ignores the system-prompt formatting rules, the UI still
+// receives clean, readable markdown.
+
+function polishReply(reply: string): string {
+  let r = reply.trim();
+
+  // 1. Collapse 3+ consecutive blank lines to a single blank line.
+  r = r.replace(/\n{3,}/g, "\n\n");
+
+  // 2. Convert inline numbered runs  "1) X  2) Y  3) Z"  to a newline list.
+  //    Matches when the same line contains at least three consecutive N) or N. tokens.
+  r = r.replace(
+    /^(.*?)(\d+[.)]\s+[^\n]+?)(?:\s{2,}|\s*[,;]\s*)(\d+[.)]\s+[^\n]+?)(?:\s{2,}|\s*[,;]\s*)(\d+[.)].+)$/gm,
+    (_, pre, a, b, c) => {
+      const prefix = pre.trim() ? `${pre.trim()}\n` : "";
+      return `${prefix}${a.trim()}\n${b.trim()}\n${c.trim()}`;
+    },
+  );
+
+  // 3. Convert "Section: item1, item2, item3" into a bold header + list when
+  //    there are 3+ comma-separated items after the colon.
+  r = r.replace(
+    /^([A-Z][^:\n]{1,30}):\s+([^\n]+,(?:[^\n]+,)+[^\n]+)$/gm,
+    (_, label, body) => {
+      const items = body.split(/,\s*/).map((s: string) => s.trim()).filter(Boolean);
+      if (items.length < 3) return `**${label}:**\n${body}`;
+      const list = items.map((item: string, i: number) => `${i + 1}. ${item}`).join("\n");
+      return `**${label} (${items.length}):**\n${list}`;
+    },
+  );
+
+  // 4. Convert "Section (N):\n" or "Section:\n" followed by plain sentences
+  //    (no existing bullet/number markers) to bolded headers so they stand out.
+  r = r.replace(/^([A-Z][^:\n]{1,30}(?:\s*\(\d+\))?):\s*$/gm, "**$1:**");
+
+  // 5. Trim trailing whitespace from each line.
+  r = r.split("\n").map((line) => line.trimEnd()).join("\n");
+
+  return r.trim();
 }
 
 // ─── Normalised title matching ──────────────────────────────────────────────
