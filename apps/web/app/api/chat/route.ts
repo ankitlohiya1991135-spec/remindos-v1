@@ -2011,16 +2011,47 @@ export async function POST(request: Request) {
     });
     const anchorLine = `[Current date/time: ${dateAnchor}${timeZone ? ` (${timeZone})` : ""}]\n\n`;
 
-    const contextParts = [
-      anchorLine,
-      message,
-      replyContextNote,
-      needsWiki && wikiCtx ? `\n\n${wikiCtx}` : "",
-      `\n\n--- LIFE OS DIGEST (authoritative) ---\n${digest}`,
-      needsJson
-        ? `\n\n--- LIFE OS JSON (machine-readable IDs) ---\n${JSON.stringify({ reminders: llmReminders, tasks })}`
-        : "",
-    ].join("");
+    // ── New-user onboarding scaffold ────────────────────────────────────────────
+    // When needsWiki is true but the wiki is empty (first session, no history yet),
+    // inject a short scaffold so the LLM doesn't hallucinate a persona or give a
+    // confusing "I don't see any patterns" reply to a first-time user.
+    const newUserScaffold =
+      needsWiki && (wikiCtx === "" || wikiCtx === null)
+        ? "\n\n[USER KNOWLEDGE WIKI: This is a new user with no prior history. Suggest creating a first reminder if the conversation is open-ended.]"
+        : "";
+
+    // ── Token budget guard ──────────────────────────────────────────────────────
+    // Estimate tokens as chars ÷ 4.  Drop lower-priority sections progressively if
+    // the assembled context exceeds the soft cap (200 k chars ≈ 50 k tokens).
+    // This prevents silent context overflow on large accounts and ensures the LLM
+    // always has room to produce a full response.
+    const TOKEN_CHAR_BUDGET = 200_000; // ~50 k tokens, well inside 128 k model limit
+
+    const jsonSection = needsJson
+      ? `\n\n--- LIFE OS JSON (machine-readable IDs) ---\n${JSON.stringify({ reminders: llmReminders, tasks })}`
+      : "";
+
+    const wikiSection = needsWiki && wikiCtx ? `\n\n${wikiCtx}` : newUserScaffold;
+
+    const digestSection = `\n\n--- LIFE OS DIGEST (authoritative) ---\n${digest}`;
+
+    let contextParts =
+      anchorLine + message + replyContextNote + wikiSection + digestSection + jsonSection;
+
+    // Drop JSON first if over budget
+    if (contextParts.length > TOKEN_CHAR_BUDGET) {
+      contextParts = anchorLine + message + replyContextNote + wikiSection + digestSection;
+    }
+    // Drop wiki next if still over budget
+    if (contextParts.length > TOKEN_CHAR_BUDGET) {
+      contextParts = anchorLine + message + replyContextNote + digestSection;
+    }
+
+    // ── Intent-based max_tokens ─────────────────────────────────────────────────
+    // Planning and decision queries need more room to enumerate items, explain
+    // patterns, and provide actionable breakdowns.  Everything else stays at 900.
+    const maxTokens =
+      intent === "planning_query" || intent === "decision_query" ? 1200 : 900;
 
     const nimMessages = [
       { role: "system" as const, content: systemPrompt },
@@ -2028,11 +2059,20 @@ export async function POST(request: Request) {
       { role: "user" as const, content: contextParts },
     ];
 
+    // ── AbortController with 12-second timeout ──────────────────────────────────
+    // Prevents hung requests from leaving the user waiting indefinitely.
+    // On timeout the catch block returns a deterministic fallback reply.
+    const nimAbortController = new AbortController();
+    const nimTimeoutId = setTimeout(() => nimAbortController.abort(), 12_000);
+
     const nimResponse = await fetch(`${NIM_BASE_URL}/chat/completions`, {
       method: "POST",
       headers: { Authorization: `Bearer ${nimApiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model, messages: nimMessages, temperature: 0.2, max_tokens: 900 }),
+      body: JSON.stringify({ model, messages: nimMessages, temperature: 0.2, max_tokens: maxTokens }),
+      signal: nimAbortController.signal,
     });
+
+    clearTimeout(nimTimeoutId);
 
     if (nimResponse.status === 429 || !nimResponse.ok) {
       const reply = fallbackDeterministicReply(message, reminders, timeZone);
@@ -2202,7 +2242,15 @@ export async function POST(request: Request) {
     void saveMessageServerSide(userId, "assistant", parsed.reply);
     return NextResponse.json(parsed);
 
-  } catch {
+  } catch (err: unknown) {
+    // AbortController timeout fires — the NIM call took > 12 s.
+    // Return a deterministic fallback so the user still gets a useful response.
+    if (err instanceof Error && err.name === "AbortError") {
+      const reply = fallbackDeterministicReply(message, reminders, timeZone);
+      void saveMessageServerSide(userId, "user", message);
+      void saveMessageServerSide(userId, "assistant", reply);
+      return NextResponse.json({ reply, action: { type: "unknown" } });
+    }
     const reply = fallbackDeterministicReply(message, reminders, timeZone);
     void saveMessageServerSide(userId, "user", message);
     void saveMessageServerSide(userId, "assistant", reply);
