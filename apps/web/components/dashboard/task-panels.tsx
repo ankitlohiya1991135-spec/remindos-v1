@@ -709,7 +709,7 @@ export function TaskFormOverlay({
                   </div>
                   <input
                     type="date"
-                    min={new Date().toISOString().slice(0, 10)}
+                    min={(() => { const d = new Date(); const p = (n: number) => String(n).padStart(2,"0"); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())}`; })()}
                     value={dueDatePart}
                     onChange={(e) => {
                       setTaskDueUserEdited(true);
@@ -731,7 +731,9 @@ export function TaskFormOverlay({
                     value={dueTimePart}
                     onChange={(e) => {
                       setTaskDueUserEdited(true);
-                      setTaskFormDue(`${dueDatePart || new Date().toISOString().slice(0, 10)}T${e.target.value}`);
+                      const _d = new Date(); const _p = (n: number) => String(n).padStart(2,"0");
+                      const _today = `${_d.getFullYear()}-${_p(_d.getMonth()+1)}-${_p(_d.getDate())}`;
+                      setTaskFormDue(`${dueDatePart || _today}T${e.target.value}`);
                     }}
                     className="absolute inset-0 cursor-pointer opacity-0"
                   />

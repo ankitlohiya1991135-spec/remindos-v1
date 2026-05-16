@@ -94,7 +94,11 @@ export function CreateReminderOverlay({
   const [reminderInlineTaskSaving, setReminderInlineTaskSaving] = useState(false);
   const [createFormError, setCreateFormError] = useState<string | null>(null);
 
-  const getMinDate = () => new Date().toISOString().slice(0, 10);
+  const getMinDate = () => {
+    const d = new Date();
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  };
 
   // ── Create inline task ────────────────────────────────────────────────────
   const handleCreateInlineTask = async () => {
