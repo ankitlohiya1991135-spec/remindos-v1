@@ -941,18 +941,68 @@ export function useChatEngine(params: UseChatEngineParams) {
           }),
         });
 
-        const data = (await response.json()) as AgentResponse;
-        applyAction(data.action);
+        if (response.headers.get("content-type")?.includes("text/event-stream")) {
+          // ── Streaming path (planning / decision intents) ───────────────────
+          const assistantId = crypto.randomUUID();
+          setMessages((prev) => [
+            ...prev,
+            { id: assistantId, role: "assistant", content: "", createdAt: new Date().toISOString() },
+          ]);
 
-        setMessages((prev) => [
-          ...prev,
-          {
-            id: crypto.randomUUID(),
-            role: "assistant",
-            content: data.reply || "Done.",
-            createdAt: new Date().toISOString(),
-          },
-        ]);
+          if (!response.body) throw new Error("No response body for SSE stream");
+          const sseReader = response.body.getReader();
+          const sseDec = new TextDecoder();
+          let sseBuf = "";
+          let sseEventType = "message";
+
+          while (true) {
+            const { done, value } = await sseReader.read();
+            if (done) break;
+            sseBuf += sseDec.decode(value, { stream: true });
+
+            // Split on double-newline (SSE event boundary)
+            const events = sseBuf.split("\n\n");
+            sseBuf = events.pop() ?? ""; // keep last incomplete event in buffer
+
+            for (const evt of events) {
+              if (!evt.trim()) continue;
+              sseEventType = "message"; // reset per event
+              let evtData = "";
+              for (const line of evt.split("\n")) {
+                if (line.startsWith("event: ")) sseEventType = line.slice(7).trim();
+                else if (line.startsWith("data: ")) evtData = line.slice(6);
+              }
+              if (!evtData) continue;
+              try {
+                if (sseEventType === "action") {
+                  const action = JSON.parse(evtData) as AgentAction;
+                  applyAction(action);
+                } else {
+                  // Default: token chunk
+                  const token = JSON.parse(evtData) as string;
+                  setMessages((prev) =>
+                    prev.map((m) =>
+                      m.id === assistantId ? { ...m, content: m.content + token } : m,
+                    ),
+                  );
+                }
+              } catch { /* skip malformed event */ }
+            }
+          }
+        } else {
+          // ── JSON path (all other intents) ──────────────────────────────────
+          const data = (await response.json()) as AgentResponse;
+          applyAction(data.action);
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: crypto.randomUUID(),
+              role: "assistant",
+              content: data.reply || "Done.",
+              createdAt: new Date().toISOString(),
+            },
+          ]);
+        }
       } catch {
         const grounded = tryGroundedReminderAnswer(
           messageText,

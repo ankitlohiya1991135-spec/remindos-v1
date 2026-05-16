@@ -2059,6 +2059,122 @@ export async function POST(request: Request) {
       { role: "user" as const, content: contextParts },
     ];
 
+    // ── Streaming path: planning_query and decision_query ─────────────────────
+    // These intents always produce action.type === "unknown" (no CRUD side-effects),
+    // so they are safe to stream — no post-LLM override branches fire for them.
+    // The client branches on Content-Type: text/event-stream vs application/json.
+    if (intent === "planning_query" || intent === "decision_query") {
+      const sseEnc = new TextEncoder();
+      const sseStream = new ReadableStream<Uint8Array>({
+        async start(ctrl) {
+          const eq = (s: string) => {
+            try { ctrl.enqueue(sseEnc.encode(s)); } catch { /* controller already closed */ }
+          };
+          const ac = new AbortController();
+          const tid = setTimeout(() => ac.abort(), 30_000); // 30 s for longer prose replies
+          try {
+            const nimStreamRes = await fetch(`${NIM_BASE_URL}/chat/completions`, {
+              method: "POST",
+              headers: { Authorization: `Bearer ${nimApiKey}`, "Content-Type": "application/json" },
+              body: JSON.stringify({ model, messages: nimMessages, temperature: 0.2, max_tokens: maxTokens, stream: true }),
+              signal: ac.signal,
+            });
+            clearTimeout(tid);
+            if (!nimStreamRes.ok || !nimStreamRes.body) throw new Error("NIM stream unavailable");
+
+            const nimReader = nimStreamRes.body.getReader();
+            const nimDec = new TextDecoder();
+            let accumulated = "";
+            // State machine for extracting "reply" value from streaming JSON
+            let rState: "notFound" | "inReply" | "done" = "notFound";
+            let rStart = 0; // index in `accumulated` where reply text begins
+            let rHead = 0;  // how many raw bytes of reply text already forwarded
+
+            /** Count consecutive trailing backslashes (odd = incomplete escape sequence) */
+            const trailingBs = (s: string) => {
+              let n = 0, i = s.length - 1;
+              while (i >= 0 && s[i] === "\\") { n++; i--; }
+              return n;
+            };
+            /** First unescaped `"` in s, or -1 */
+            const findQuote = (s: string) => {
+              for (let i = 0; i < s.length; i++) {
+                if (s[i] === '"') {
+                  let bs = 0, j = i - 1;
+                  while (j >= 0 && s[j] === "\\") { bs++; j--; }
+                  if (bs % 2 === 0) return i;
+                }
+              }
+              return -1;
+            };
+
+            let nimDone = false;
+            while (!nimDone) {
+              const { done, value } = await nimReader.read();
+              if (done) break;
+              const chunk = nimDec.decode(value, { stream: true });
+              for (const rawLine of chunk.split("\n")) {
+                const line = rawLine.trim();
+                if (!line.startsWith("data:")) continue;
+                const payload = line.slice(5).trim();
+                if (payload === "[DONE]") { nimDone = true; break; }
+                try {
+                  const obj = JSON.parse(payload) as {
+                    choices?: Array<{ delta?: { content?: string } }>;
+                  };
+                  const delta = obj.choices?.[0]?.delta?.content ?? "";
+                  if (!delta) continue;
+                  accumulated += delta;
+
+                  if (rState === "notFound") {
+                    const m = accumulated.match(/"reply"\s*:\s*"/);
+                    if (m?.index !== undefined) {
+                      rState = "inReply";
+                      rStart = m.index + m[0].length;
+                      rHead = 0;
+                    }
+                  }
+                  if (rState === "inReply") {
+                    const raw = accumulated.slice(rStart);
+                    const endIdx = findQuote(raw);
+                    let emitEnd: number;
+                    if (endIdx !== -1) { emitEnd = endIdx; rState = "done"; }
+                    else { emitEnd = (trailingBs(raw) % 2 === 1) ? raw.length - 1 : raw.length; }
+                    const newRaw = raw.slice(rHead, emitEnd);
+                    if (newRaw.length > 0) {
+                      const display = newRaw
+                        .replace(/\\"/g, '"').replace(/\\n/g, "\n")
+                        .replace(/\\t/g, "\t").replace(/\\r/g, "\r")
+                        .replace(/\\\\/g, "\\");
+                      rHead = emitEnd;
+                      eq(`data: ${JSON.stringify(display)}\n\n`);
+                    }
+                  }
+                } catch { /* skip malformed SSE chunk */ }
+              }
+            }
+
+            const parsedStream = safeAgentResponse(accumulated, reminders, timeZone);
+            void saveMessageServerSide(userId, "user", effectiveMessage);
+            void saveMessageServerSide(userId, "assistant", parsedStream.reply);
+            eq(`event: action\ndata: ${JSON.stringify(parsedStream.action)}\n\n`);
+          } catch {
+            const fbReply = fallbackDeterministicReply(message, reminders, timeZone);
+            void saveMessageServerSide(userId, "user", message);
+            void saveMessageServerSide(userId, "assistant", fbReply);
+            eq(`data: ${JSON.stringify(fbReply)}\n\n`);
+            eq(`event: action\ndata: ${JSON.stringify({ type: "unknown" })}\n\n`);
+          } finally {
+            clearTimeout(tid);
+            try { ctrl.close(); } catch { /* already closed */ }
+          }
+        },
+      });
+      return new Response(sseStream, {
+        headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" },
+      });
+    }
+
     // ── AbortController with 12-second timeout ──────────────────────────────────
     // Prevents hung requests from leaving the user waiting indefinitely.
     // On timeout the catch block returns a deterministic fallback reply.
