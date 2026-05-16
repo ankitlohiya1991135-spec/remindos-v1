@@ -13,7 +13,6 @@ const SEGMENTS: Array<{
 }> = [
   { value: "active_today", label: "Active today" },
   { value: "active_7d", label: "Active this week" },
-  // Label says "Staff" not "Admins" — keeps tier hierarchy invisible.
   { value: "admins_only", label: "Staff only" },
   { value: "all", label: "ALL users", caution: true },
 ];
@@ -31,10 +30,8 @@ function formatDateTime(ts: number | null): string {
 
 export function BroadcastsClient({
   viewerUserId,
-  viewerRole,
 }: {
   viewerUserId: string;
-  viewerRole: "admin" | "superadmin";
 }) {
   const [broadcasts, setBroadcasts] = useState<BroadcastListItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -114,12 +111,7 @@ export function BroadcastsClient({
   };
 
   const handleRecall = async (b: BroadcastListItem) => {
-    const isOverride =
-      viewerRole === "superadmin" && b.senderUserId !== viewerUserId;
-    const message = isOverride
-      ? `Recall this broadcast sent by ${b.senderDisplay}? (superadmin override)`
-      : "Recall this broadcast?";
-    if (!confirm(message)) return;
+    if (!confirm("Recall this broadcast?")) return;
     try {
       const res = await fetch(`/api/admin/broadcasts/${encodeURIComponent(b.id)}`, {
         method: "DELETE",
@@ -222,9 +214,7 @@ export function BroadcastsClient({
             </li>
           )}
           {broadcasts.map((b) => {
-            const isOwn = b.senderUserId === viewerUserId;
-            const canRecall =
-              !b.recalledAt && (isOwn || viewerRole === "superadmin");
+            const canRecall = !b.recalledAt;
             return (
               <li key={b.id} className="px-5 py-4">
                 <div className="flex flex-wrap items-start justify-between gap-3">
@@ -256,18 +246,10 @@ export function BroadcastsClient({
                     <button
                       type="button"
                       onClick={() => void handleRecall(b)}
-                      className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold transition ${
-                        isOwn
-                          ? "border border-rose-300 text-rose-700 hover:bg-rose-50 dark:border-rose-900 dark:text-rose-300 dark:hover:bg-rose-950/40"
-                          : "bg-rose-600 text-white hover:bg-rose-500"
-                      }`}
-                      title={
-                        isOwn
-                          ? "Recall your own broadcast"
-                          : "Superadmin override — recall someone else's broadcast"
-                      }
+                      className="shrink-0 rounded-full border border-rose-300 px-3 py-1.5 text-xs font-semibold text-rose-700 transition hover:bg-rose-50 dark:border-rose-900 dark:text-rose-300 dark:hover:bg-rose-950/40"
+                      title="Recall this broadcast"
                     >
-                      {isOwn ? "Recall" : "Recall (override)"}
+                      Recall
                     </button>
                   )}
                 </div>

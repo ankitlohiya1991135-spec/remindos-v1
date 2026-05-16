@@ -597,17 +597,21 @@ export function parseDateInput(value: string, now: Date): string | null {
     .replace(/[०-९]/g, (d) => String("०१२३४५६७८९".indexOf(d)));
   const base = new Date(now);
   base.setHours(0, 0, 0, 0);
+  // Use local-time getters (not toISOString which is UTC) so UTC+ users get the correct calendar day.
+  const pad2 = (n: number) => String(n).padStart(2, "0");
+  const localDateStr = (d: Date) =>
+    `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
 
-  if (/^(today|आज)$/.test(text)) return base.toISOString().slice(0, 10);
+  if (/^(today|आज)$/.test(text)) return localDateStr(base);
   if (/^(tomorrow|tmrw|tomorow|tommarow|कल|उद्या)$/.test(text)) {
     const d = new Date(base);
     d.setDate(d.getDate() + 1);
-    return d.toISOString().slice(0, 10);
+    return localDateStr(d);
   }
   if (/^(day after tomorrow|after tomorrow|परसों|परवा)$/.test(text)) {
     const d = new Date(base);
     d.setDate(d.getDate() + 2);
-    return d.toISOString().slice(0, 10);
+    return localDateStr(d);
   }
 
   const m = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);

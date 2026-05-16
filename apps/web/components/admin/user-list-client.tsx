@@ -128,10 +128,6 @@ export function AdminUserListClient() {
 
   if (!data) return null;
 
-  // Detect superadmin viewer the same way the user-detail page does:
-  // the API only includes `actualRole` for superadmins.
-  const callerIsSuperadmin = data.users.some((u) => u.actualRole !== undefined);
-
   const handleToggleSelect = (id: string) => {
     setSelected((prev) => {
       const next = new Set(prev);
@@ -204,10 +200,8 @@ export function AdminUserListClient() {
 
   return (
     <div className="space-y-4">
-      {/* Cost overview — quietly omitted for non-super viewers; admins
-          never see this section so they don't suspect there is a hidden
-          tier with extra capabilities. */}
-      {callerIsSuperadmin && <CostOverviewCard />}
+      {/* Cost overview */}
+      <CostOverviewCard />
 
       {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-200 bg-white p-3 dark:border-slate-800 dark:bg-slate-900">
@@ -253,26 +247,22 @@ export function AdminUserListClient() {
       {/* Stats summary */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <StatCard label="Total users" value={data.users.length} />
-        {callerIsSuperadmin && (
-          <StatCard
-            label="Active today"
-            value={data.users.filter((u) => u.activity.activeToday).length}
-          />
-        )}
-        {callerIsSuperadmin && (
-          <StatCard
-            label="Active this week"
-            value={data.users.filter((u) => u.activity.promptsLast7d > 0).length}
-          />
-        )}
+        <StatCard
+          label="Active today"
+          value={data.users.filter((u) => u.activity.activeToday).length}
+        />
+        <StatCard
+          label="Active this week"
+          value={data.users.filter((u) => u.activity.promptsLast7d > 0).length}
+        />
         <StatCard
           label="Admins"
-          value={data.users.filter((u) => u.role === "admin" || u.role === "superadmin").length}
+          value={data.users.filter((u) => u.role === "admin").length}
         />
       </div>
 
-      {/* Bulk action bar — only rendered for superadmin viewers. */}
-      {callerIsSuperadmin && selected.size > 0 && (
+      {/* Bulk action bar */}
+      {selected.size > 0 && (
         <div className="flex flex-wrap items-center gap-2 rounded-2xl border border-rose-200 bg-rose-50 p-3 dark:border-rose-900/60 dark:bg-rose-950/30">
           <span className="text-xs font-bold text-rose-700 dark:text-rose-300">
             {selected.size} selected
@@ -311,52 +301,44 @@ export function AdminUserListClient() {
           <table className="min-w-full text-sm">
             <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500 dark:bg-slate-950 dark:text-slate-400">
               <tr>
-                {callerIsSuperadmin && (
-                  <th className="px-3 py-3 text-left">
-                    <button
-                      type="button"
-                      onClick={handleSelectAllVisible}
-                      className="text-[10px] font-bold uppercase tracking-wider text-slate-400 hover:text-slate-700"
-                      title="Select all visible"
-                    >
-                      All
-                    </button>
-                  </th>
-                )}
+                <th className="px-3 py-3 text-left">
+                  <button
+                    type="button"
+                    onClick={handleSelectAllVisible}
+                    className="text-[10px] font-bold uppercase tracking-wider text-slate-400 hover:text-slate-700"
+                    title="Select all visible"
+                  >
+                    All
+                  </button>
+                </th>
                 <th className="px-4 py-3 text-left">User</th>
                 <th className="px-4 py-3 text-left">Role</th>
-                {callerIsSuperadmin && (
-                  <>
-                    <th className="px-4 py-3 text-right">Total prompts</th>
-                    <th className="px-4 py-3 text-right">Last 24h</th>
-                    <th className="px-4 py-3 text-right">Last 7d</th>
-                    <th className="px-4 py-3 text-left">Last active</th>
-                  </>
-                )}
+                <th className="px-4 py-3 text-right">Total prompts</th>
+                <th className="px-4 py-3 text-right">Last 24h</th>
+                <th className="px-4 py-3 text-right">Last 7d</th>
+                <th className="px-4 py-3 text-left">Last active</th>
                 <th className="px-4 py-3 text-right">View</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
               {filtered.length === 0 && (
                 <tr>
-                  <td colSpan={callerIsSuperadmin ? 8 : 3} className="px-4 py-8 text-center text-slate-400">
+                  <td colSpan={8} className="px-4 py-8 text-center text-slate-400">
                     No users match the current filter.
                   </td>
                 </tr>
               )}
               {filtered.map((u) => (
                 <tr key={u.id} className="transition hover:bg-slate-50 dark:hover:bg-slate-950/50">
-                  {callerIsSuperadmin && (
-                    <td className="px-3 py-3">
-                      <input
-                        type="checkbox"
-                        checked={selected.has(u.id)}
-                        onChange={() => handleToggleSelect(u.id)}
-                        className="h-4 w-4 cursor-pointer rounded border-slate-300"
-                        aria-label={`Select ${displayName(u)}`}
-                      />
-                    </td>
-                  )}
+                  <td className="px-3 py-3">
+                    <input
+                      type="checkbox"
+                      checked={selected.has(u.id)}
+                      onChange={() => handleToggleSelect(u.id)}
+                      className="h-4 w-4 cursor-pointer rounded border-slate-300"
+                      aria-label={`Select ${displayName(u)}`}
+                    />
+                  </td>
                   <td className="px-4 py-3">
                     <div className="flex items-center gap-3">
                       {u.imageUrl ? (
@@ -383,39 +365,27 @@ export function AdminUserListClient() {
                   </td>
                   <td className="px-4 py-3">
                     <RoleBadge role={u.role} />
-                    {u.actualRole && u.actualRole !== u.role && (
-                      <span
-                        className="ml-1.5 rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:bg-amber-900/40 dark:text-amber-300"
-                        title={`Real role: ${u.actualRole}. Visible only to superadmins.`}
-                      >
-                        actual: {u.actualRole}
-                      </span>
-                    )}
                     {u.deactivated && (
                       <span className="ml-1.5 rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold text-rose-700 dark:bg-rose-900/40 dark:text-rose-300">
                         deactivated
                       </span>
                     )}
                   </td>
-                  {callerIsSuperadmin && (
-                    <>
-                      <td className="px-4 py-3 text-right font-mono text-xs text-slate-700 dark:text-slate-200">
-                        {u.activity.totalPrompts}
-                      </td>
-                      <td className="px-4 py-3 text-right font-mono text-xs text-slate-700 dark:text-slate-200">
-                        {u.activity.promptsLast24h}
-                      </td>
-                      <td className="px-4 py-3 text-right font-mono text-xs text-slate-700 dark:text-slate-200">
-                        {u.activity.promptsLast7d}
-                      </td>
-                      <td className="px-4 py-3 text-xs text-slate-500 dark:text-slate-400">
-                        {u.activity.activeToday && (
-                          <span className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
-                        )}
-                        {formatRelativeTime(u.activity.lastPromptAt)}
-                      </td>
-                    </>
-                  )}
+                  <td className="px-4 py-3 text-right font-mono text-xs text-slate-700 dark:text-slate-200">
+                    {u.activity.totalPrompts}
+                  </td>
+                  <td className="px-4 py-3 text-right font-mono text-xs text-slate-700 dark:text-slate-200">
+                    {u.activity.promptsLast24h}
+                  </td>
+                  <td className="px-4 py-3 text-right font-mono text-xs text-slate-700 dark:text-slate-200">
+                    {u.activity.promptsLast7d}
+                  </td>
+                  <td className="px-4 py-3 text-xs text-slate-500 dark:text-slate-400">
+                    {u.activity.activeToday && (
+                      <span className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                    )}
+                    {formatRelativeTime(u.activity.lastPromptAt)}
+                  </td>
                   <td className="px-4 py-3 text-right">
                     <Link
                       href={`/admin/users/${u.id}`}
@@ -476,7 +446,7 @@ function CostOverviewCard() {
     );
   }
   if (error || !data) {
-    return null; // silent — admin never sees this either way, so no need to surface
+    return null;
   }
 
   return (
@@ -542,9 +512,7 @@ function MiniStat({ label, value, hint }: { label: string; value: string; hint?:
 
 function RoleBadge({ role }: { role: import("@repo/admin/types").UserRole }) {
   const cls =
-    role === "superadmin"
-      ? "bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300"
-      : role === "admin"
+    role === "admin"
       ? "bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300"
       : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300";
   return (

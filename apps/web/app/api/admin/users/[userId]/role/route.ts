@@ -1,8 +1,8 @@
 import { clerkClient } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import {
-  checkSuperadminRequest,
-  countActiveSuperadmins,
+  checkAdminRequest,
+  countActiveAdmins,
   recordAuditEvent,
 } from "@repo/admin/server";
 import {
@@ -29,21 +29,19 @@ function isValidRoleString(v: unknown): v is UserRole {
 /**
  * POST /api/admin/users/[userId]/role
  *
- * Superadmin-only. Updates EITHER `userType` (real role) OR `displayRole`
- * (UI-only override) OR both.
+ * Admin-only. Updates the user's `userType` (real role).
  *
  * Safety rules:
- *   - Caller must be superadmin (auth check FIRST, before body parse).
+ *   - Caller must be admin (auth check FIRST, before body parse).
  *   - Cannot change own userType (footgun — could lock you out mid-action).
- *   - Cannot demote the LAST active superadmin (prevents org lockout).
- *   - Display role is purely cosmetic; setting it has no auth impact.
+ *   - Cannot demote the LAST active admin (prevents org lockout).
  */
 export async function POST(
   request: Request,
   context: { params: Promise<{ userId: string }> },
 ) {
   // 1. Auth FIRST.
-  const guard = await checkSuperadminRequest();
+  const guard = await checkAdminRequest();
   if (!guard.ok) {
     return jsonError(
       { error: guard.reason, code: guard.status === 401 ? "UNAUTHORIZED" : "FORBIDDEN" },
@@ -64,44 +62,18 @@ export async function POST(
     return jsonError({ error: "Invalid JSON body", code: "BAD_REQUEST" }, 400);
   }
 
-  const wantsUserTypeChange = "userType" in body && body.userType !== undefined;
-  const wantsDisplayRoleChange = "displayRole" in body;
-
-  if (!wantsUserTypeChange && !wantsDisplayRoleChange) {
-    return jsonError(
-      { error: "Provide at least one of: userType, displayRole", code: "BAD_REQUEST" },
-      400,
-    );
-  }
-
-  if (wantsUserTypeChange && !isValidRoleString(body.userType)) {
+  if (!isValidRoleString(body.userType)) {
     return jsonError(
       { error: `userType must be one of: ${USER_ROLES.join(", ")}`, code: "BAD_REQUEST" },
       400,
     );
   }
 
-  // displayRole accepts null (clears the override) or a valid role string.
-  if (
-    wantsDisplayRoleChange &&
-    body.displayRole !== null &&
-    !isValidRoleString(body.displayRole)
-  ) {
-    return jsonError(
-      {
-        error: `displayRole must be null or one of: ${USER_ROLES.join(", ")}`,
-        code: "BAD_REQUEST",
-      },
-      400,
-    );
-  }
-
   // 3. Self-protection.
-  if (wantsUserTypeChange && targetUserId === guard.userId) {
+  if (targetUserId === guard.userId) {
     return jsonError(
       {
-        error:
-          "You cannot change your own userType. Ask another superadmin to do it.",
+        error: "You cannot change your own role. Ask another admin to do it.",
         code: "BAD_REQUEST",
       },
       400,
@@ -119,18 +91,13 @@ export async function POST(
 
     const currentRole = getRoleFromPublicMetadata(target.publicMetadata);
 
-    // 4. Last-superadmin protection.
-    if (
-      wantsUserTypeChange &&
-      currentRole === "superadmin" &&
-      body.userType !== "superadmin"
-    ) {
-      const activeSupers = await countActiveSuperadmins();
-      if (activeSupers <= 1) {
+    // 4. Last-admin protection.
+    if (currentRole === "admin" && body.userType !== "admin") {
+      const activeAdmins = await countActiveAdmins();
+      if (activeAdmins <= 1) {
         return jsonError(
           {
-            error:
-              "Cannot demote the last active superadmin. Promote another user first.",
+            error: "Cannot demote the last active admin. Promote another user first.",
             code: "BAD_REQUEST",
           },
           400,
@@ -138,74 +105,33 @@ export async function POST(
       }
     }
 
-    // 5. Build the merged publicMetadata patch (preserve other fields).
+    // 5. Apply the role change.
     const existing = target.publicMetadata ?? {};
     const next: Record<string, unknown> = { ...existing };
-
-    if (wantsUserTypeChange) {
-      next.userType = coerceUserRole(body.userType);
-    }
-    if (wantsDisplayRoleChange) {
-      if (body.displayRole === null) {
-        delete next.displayRole;
-      } else {
-        next.displayRole = coerceUserRole(body.displayRole);
-      }
-    }
-
-    // Auto-mask: when promoting someone to superadmin, default their
-    // displayRole to "admin" UNLESS the caller is explicitly setting one.
-    // Honors the project rule that superadmin is ALWAYS hidden in UI.
-    // Caller can subsequently set displayRole to anything (or null) but the
-    // initial promotion never leaks the superadmin status.
-    if (
-      wantsUserTypeChange &&
-      body.userType === "superadmin" &&
-      !wantsDisplayRoleChange
-    ) {
-      next.displayRole = "admin";
-    }
+    next.userType = coerceUserRole(body.userType);
 
     await client.users.updateUserMetadata(targetUserId, {
       publicMetadata: next,
     });
 
-    // Audit trail. Record AFTER the operation succeeded so the entry
-    // reflects reality. If the audit write itself fails, the helper
-    // logs to stderr and does not error the request.
+    // Audit trail.
     const convex = getConvexClient();
-    if (wantsUserTypeChange) {
-      await recordAuditEvent({
-        actor: { userId: guard.userId, role: "superadmin" },
-        action: "ROLE_CHANGED",
-        targetUserId,
-        metadata: {
-          from: currentRole,
-          to: next.userType,
-        },
-        convex,
-        mutationRef: api.admin.appendAuditEvent,
-      });
-    }
-    if (wantsDisplayRoleChange) {
-      await recordAuditEvent({
-        actor: { userId: guard.userId, role: "superadmin" },
-        action: "DISPLAY_ROLE_CHANGED",
-        targetUserId,
-        metadata: {
-          from: existing.displayRole ?? null,
-          to: next.displayRole ?? null,
-        },
-        convex,
-        mutationRef: api.admin.appendAuditEvent,
-      });
-    }
+    await recordAuditEvent({
+      actor: { userId: guard.userId, role: "admin" },
+      action: "ROLE_CHANGED",
+      targetUserId,
+      metadata: {
+        from: currentRole,
+        to: next.userType,
+      },
+      convex,
+      mutationRef: api.admin.appendAuditEvent,
+    });
 
     return NextResponse.json({
       ok: true,
       userId: targetUserId,
-      userType: next.userType ?? currentRole,
-      displayRole: next.displayRole ?? null,
+      userType: next.userType,
     });
   } catch (err) {
     return jsonError(

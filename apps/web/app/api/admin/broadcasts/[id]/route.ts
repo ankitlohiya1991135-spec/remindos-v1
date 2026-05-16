@@ -15,11 +15,7 @@ function jsonError(payload: AdminApiError, status: number) {
 /**
  * DELETE /api/admin/broadcasts/[id]
  *
- * Recall a broadcast. Authorization tier (the explicit override pattern):
- *   - Admin: may recall ONLY broadcasts they themselves sent.
- *   - Superadmin: may recall ANY broadcast (including those sent by an
- *     admin or another superadmin) — the override capability.
- *
+ * Recall a broadcast. Any admin may recall any broadcast.
  * Recall is idempotent — calling twice returns success without re-sending.
  */
 export async function DELETE(
@@ -42,7 +38,7 @@ export async function DELETE(
   try {
     const convex = getConvexClient();
 
-    // Fetch the broadcast first to check ownership for non-superadmin.
+    // Fetch the broadcast to verify it exists.
     const broadcasts = (await convex.query(api.admin.listBroadcasts, {
       adminSecret: getAdminConvexSecret(),
       limit: 500,
@@ -51,19 +47,6 @@ export async function DELETE(
     const target = broadcasts.find((b) => b.id === id);
     if (!target) {
       return jsonError({ error: "Broadcast not found", code: "BAD_REQUEST" }, 404);
-    }
-
-    // Override check: admins can only recall broadcasts they sent.
-    // Error message is generic — admin probers must NOT learn there's a
-    // higher tier with override capability.
-    if (guard.role === "admin" && target.senderUserId !== guard.userId) {
-      return jsonError(
-        {
-          error: "You can only recall broadcasts you sent.",
-          code: "FORBIDDEN",
-        },
-        403,
-      );
     }
 
     await convex.mutation(api.admin.recallBroadcast, {
@@ -80,8 +63,7 @@ export async function DELETE(
       metadata: {
         broadcastId: id,
         originalSender: target.senderUserId,
-        wasOverride:
-          guard.role === "superadmin" && target.senderUserId !== guard.userId,
+        wasOverride: false,
       },
       convex,
       mutationRef: api.admin.appendAuditEvent,

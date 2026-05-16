@@ -1915,7 +1915,24 @@ export async function POST(request: Request) {
     const replyContextNote = replyContext?.content?.trim()
       ? `\n\n[Reply context: responding to — "${replyContext.content.trim().slice(0, 200)}"]`
       : "";
+    // Prepend a hard-coded temporal anchor so the LLM knows the exact local date/time
+    // BEFORE it reads the user message. This prevents it from anchoring on training-data
+    // timestamps or drifting into UTC.
+    const nowForAnchor = new Date();
+    const dateAnchor = nowForAnchor.toLocaleString("en-US", {
+      timeZone: timeZone ?? "UTC",
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    });
+    const anchorLine = `[Current date/time: ${dateAnchor}${timeZone ? ` (${timeZone})` : ""}]\n\n`;
+
     const contextParts = [
+      anchorLine,
       message,
       replyContextNote,
       needsWiki && wikiCtx ? `\n\n${wikiCtx}` : "",
@@ -1964,6 +1981,13 @@ export async function POST(request: Request) {
         parsed.action.listedIds = listed.map((r) => r.id);
         parsed.reply = buildListRemindersReply(reminders, scope, new Date(), 5, displayOptions);
       }
+    }
+
+    // Override LLM-generated dueAt for reschedule with the same deterministic parser used for
+    // create_reminder. Without this, the LLM's potentially UTC-anchored timestamp is used as-is.
+    if (parsed.action.type === "reschedule_reminder") {
+      const deterministicDueAt = parseDateTimeFromInput(message, timeZone);
+      if (deterministicDueAt) parsed.action.dueAt = deterministicDueAt;
     }
 
     if (parsed.action.type === "create_reminder") {

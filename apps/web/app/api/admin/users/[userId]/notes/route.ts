@@ -23,7 +23,7 @@ interface RawNote {
   id: string;
   targetUserId: string;
   authorUserId: string;
-  authorRole: "admin" | "superadmin";
+  authorRole: "admin";
   content: string;
   createdAt: number;
   updatedAt: number;
@@ -32,9 +32,7 @@ interface RawNote {
 /**
  * GET /api/admin/users/[userId]/notes
  *
- * List notes about a user. Admin AND superadmin can read. The
- * `authorRole` field is masked: admin viewers always see "admin" even
- * when the note was authored by a superadmin (privacy hierarchy).
+ * List notes about a user. Any admin can read all notes.
  */
 export async function GET(
   _req: Request,
@@ -80,39 +78,20 @@ export async function GET(
       }
     }
 
-    const callerIsSuperadmin = guard.role === "superadmin";
-
     const notes: AdminNote[] = rows.map((r) => {
-      // Edit permission: own note OR superadmin (override).
       const isOwn = r.authorUserId === guard.userId;
-      const canEdit = isOwn || callerIsSuperadmin;
-
-      // PRIVACY: For admin viewers, anonymize ALL authors (including
-      // their own) to "Staff". Showing real names would let an admin
-      // deduce that a user masked as "user" is actually privileged
-      // when they see that same person authoring notes. Uniform
-      // anonymization closes the inference channel; `canEdit` is the
-      // signal the UI uses to show edit buttons, so admins don't lose
-      // the ability to edit their own notes.
-      const authorDisplay = callerIsSuperadmin
-        ? displayMap.get(r.authorUserId) ?? r.authorUserId
-        : isOwn
-          ? "You"
-          : "Staff";
+      const authorDisplay = displayMap.get(r.authorUserId) ?? (isOwn ? "You" : "Staff");
 
       return {
         id: r.id,
         targetUserId: r.targetUserId,
-        // Hide raw userId from non-superadmin viewers too — the userId
-        // alone is enough to look someone up and learn their identity.
-        authorUserId: callerIsSuperadmin ? r.authorUserId : "",
+        authorUserId: r.authorUserId,
         authorDisplay,
-        // PRIVACY: mask author role for admin viewers.
-        authorRole: callerIsSuperadmin ? r.authorRole : "admin",
+        authorRole: r.authorRole,
         content: r.content,
         createdAt: r.createdAt,
         updatedAt: r.updatedAt,
-        canEdit,
+        canEdit: true, // any admin can edit any note
       };
     });
 
@@ -128,7 +107,7 @@ export async function GET(
 /**
  * POST /api/admin/users/[userId]/notes
  *
- * Create a new admin note. Available to admin AND superadmin.
+ * Create a new admin note. Available to all admins.
  */
 export async function POST(
   request: Request,

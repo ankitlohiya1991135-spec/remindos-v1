@@ -1,8 +1,8 @@
 import { clerkClient } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import {
-  checkSuperadminRequest,
-  countActiveSuperadmins,
+  checkAdminRequest,
+  countActiveAdmins,
   getAdminConvexSecret,
   recordAuditEvent,
 } from "@repo/admin/server";
@@ -26,7 +26,7 @@ function jsonError(payload: AdminApiError, status: number) {
  * POST /api/admin/users/[userId]/hard-delete
  *
  * IRREVERSIBLE. Deletes the user from Clerk AND purges every Convex row
- * referencing that userId. Superadmin-only. Requires double-confirmation:
+ * referencing that userId. Admin-only. Requires double-confirmation:
  *   { confirmEmail: <target email>, confirmPhrase: "DELETE" }
  *
  * Audit-first ordering (per advisor): we record the audit row BEFORE the
@@ -38,7 +38,7 @@ export async function POST(
   request: Request,
   context: { params: Promise<{ userId: string }> },
 ) {
-  const guard = await checkSuperadminRequest();
+  const guard = await checkAdminRequest();
   if (!guard.ok) {
     return jsonError(
       { error: guard.reason, code: guard.status === 401 ? "UNAUTHORIZED" : "FORBIDDEN" },
@@ -91,15 +91,14 @@ export async function POST(
     );
   }
 
-  // Last-superadmin protection.
+  // Last-admin protection.
   const currentRole = getRoleFromPublicMetadata(target.publicMetadata);
-  if (currentRole === "superadmin") {
-    const activeSupers = await countActiveSuperadmins();
-    if (activeSupers <= 1) {
+  if (currentRole === "admin") {
+    const activeAdmins = await countActiveAdmins();
+    if (activeAdmins <= 1) {
       return jsonError(
         {
-          error:
-            "Cannot delete the last active superadmin. Promote someone else first.",
+          error: "Cannot delete the last active admin. Promote someone else first.",
           code: "BAD_REQUEST",
         },
         400,
@@ -111,7 +110,7 @@ export async function POST(
 
   // 1. AUDIT FIRST — evidence must persist even if downstream calls fail.
   await recordAuditEvent({
-    actor: { userId: guard.userId, role: "superadmin" },
+    actor: { userId: guard.userId, role: "admin" },
     action: "USER_HARD_DELETED",
     targetUserId,
     metadata: {
@@ -136,7 +135,7 @@ export async function POST(
 
     // 4. Final success audit (with the purge counts attached).
     await recordAuditEvent({
-      actor: { userId: guard.userId, role: "superadmin" },
+      actor: { userId: guard.userId, role: "admin" },
       action: "USER_HARD_DELETED",
       targetUserId,
       metadata: {
@@ -153,7 +152,7 @@ export async function POST(
   } catch (err) {
     // Failure audit. The "starting" entry above already proves the attempt.
     await recordAuditEvent({
-      actor: { userId: guard.userId, role: "superadmin" },
+      actor: { userId: guard.userId, role: "admin" },
       action: "USER_HARD_DELETED",
       targetUserId,
       metadata: {

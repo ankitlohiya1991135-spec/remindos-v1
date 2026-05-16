@@ -2,7 +2,6 @@ import { clerkClient } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { checkAdminRequest, getAdminConvexSecret } from "@repo/admin/server";
 import {
-  getDisplayRole,
   getRoleFromPublicMetadata,
   isDeactivatedFromMetadata,
 } from "@repo/admin";
@@ -25,8 +24,8 @@ function jsonError(payload: AdminApiError, status: number) {
 /**
  * GET /api/admin/users/[userId]/activity
  *
- * Returns user activity for a single user. Superadmins receive chat details;
- * admins receive non-chat totals only.
+ * Returns user activity for a single user. Admins receive full details
+ * including chat previews, notifications, and reminders.
  */
 export async function GET(
   _request: Request,
@@ -56,24 +55,14 @@ export async function GET(
     }
 
     const convex = getConvexClient();
-    const callerIsSuperadmin = guard.role === "superadmin";
     const activity = (await convex.query(api.admin.userActivityDetail, {
       userId,
       adminSecret: getAdminConvexSecret(),
-      includeNotifications: callerIsSuperadmin,
-      includeReminders: callerIsSuperadmin,
+      includeNotifications: true,
+      includeReminders: true,
     })) as AdminUserActivity;
-    // Admins (non-superadmin) see aggregate counts and timing — never any
-    // user content. Strip recent prompt previews, leave the numbers intact.
-    const safeActivity: AdminUserActivity = callerIsSuperadmin
-      ? activity
-      : {
-          ...activity,
-          recentPrompts: [],
-        };
 
-    const realRole: UserRole = getRoleFromPublicMetadata(clerkUser.publicMetadata);
-    const displayRole: UserRole = getDisplayRole(clerkUser.publicMetadata);
+    const role: UserRole = getRoleFromPublicMetadata(clerkUser.publicMetadata);
     const banned = Boolean((clerkUser as { banned?: boolean }).banned);
     const deactivated = banned || isDeactivatedFromMetadata(clerkUser.publicMetadata);
 
@@ -85,14 +74,12 @@ export async function GET(
         lastName: clerkUser.lastName ?? "",
         username: clerkUser.username ?? "",
         imageUrl: clerkUser.imageUrl,
-        role: displayRole,
-        // Real role is exposed ONLY to superadmins.
-        ...(callerIsSuperadmin ? { actualRole: realRole } : {}),
+        role,
         deactivated,
         createdAt: clerkUser.createdAt ?? 0,
         lastSignInAt: clerkUser.lastSignInAt ?? null,
       },
-      activity: safeActivity,
+      activity,
     });
   } catch (err) {
     return jsonError({ error: errorMessage(err), code: "INTERNAL" }, 500);

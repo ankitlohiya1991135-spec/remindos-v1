@@ -20,12 +20,7 @@ function jsonError(payload: AdminApiError, status: number) {
 /**
  * PATCH /api/admin/notes/[noteId] — edit a note.
  *
- * Permission tier:
- *   - Admin: can edit notes they themselves authored.
- *   - Superadmin: can edit ANY note (override).
- *
- * Override is recorded in the audit log with `wasOverride: true` so a
- * future superadmin can see when one of them stomped on an admin's note.
+ * Any admin can edit any note.
  */
 export async function PATCH(
   request: Request,
@@ -68,16 +63,14 @@ export async function PATCH(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       noteId: noteId as any,
       callerUserId: guard.userId,
-      callerIsSuperadmin: guard.role === "superadmin",
       content,
-    })) as { ok: boolean; wasOverride: boolean; originalAuthor: string };
+    })) as { ok: boolean; originalAuthor: string };
 
     await recordAuditEvent({
       actor: { userId: guard.userId, role: guard.role },
       action: "ADMIN_NOTE_EDITED",
       metadata: {
         noteId,
-        wasOverride: result.wasOverride,
         originalAuthor: result.originalAuthor,
       },
       convex,
@@ -87,9 +80,7 @@ export async function PATCH(
     return NextResponse.json({ ok: true });
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    // Convex `Forbidden` from the mutation → 403 (admin tried to edit
-    // someone else's note). Generic message — never reveal that a higher
-    // tier could have done it.
+    // Convex `Forbidden` from the mutation → 403.
     if (msg.toLowerCase().includes("forbidden")) {
       return jsonError(
         { error: "You can only edit notes you wrote.", code: "FORBIDDEN" },
@@ -103,7 +94,7 @@ export async function PATCH(
 /**
  * DELETE /api/admin/notes/[noteId]
  *
- * Same tier rules as PATCH: own-only for admin; any for superadmin.
+ * Any admin can delete any note.
  */
 export async function DELETE(
   _request: Request,
@@ -129,15 +120,13 @@ export async function DELETE(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       noteId: noteId as any,
       callerUserId: guard.userId,
-      callerIsSuperadmin: guard.role === "superadmin",
-    })) as { ok: boolean; wasOverride: boolean; originalAuthor: string };
+    })) as { ok: boolean; originalAuthor: string };
 
     await recordAuditEvent({
       actor: { userId: guard.userId, role: guard.role },
       action: "ADMIN_NOTE_DELETED",
       metadata: {
         noteId,
-        wasOverride: result.wasOverride,
         originalAuthor: result.originalAuthor,
       },
       convex,

@@ -188,16 +188,16 @@ const userWiki = defineTable({
   .index("by_user_page", ["userId", "pageType"]);
 
 /**
- * Append-only audit log of every admin / superadmin action.
+ * Append-only audit log of every admin action.
  * NEVER expose a delete mutation for this table — the log must be
- * tamper-evident even from superadmins. Retention is "forever" by
+ * tamper-evident. Retention is "forever" by
  * default; a separate internalMutation can purge >1y entries if needed.
  */
 const adminAuditLog = defineTable({
   /** Clerk userId of the admin who took the action. */
   actorUserId: v.string(),
   /** Role at the time of the action — captured for forensic clarity. */
-  actorRole: v.union(v.literal("admin"), v.literal("superadmin")),
+  actorRole: v.literal("admin"),
   /** Constant from `@repo/admin/audit` (typed enum). */
   action: v.string(),
   /** Target user, when applicable. Null/absent for org-wide actions. */
@@ -216,19 +216,16 @@ const adminAuditLog = defineTable({
   .index("by_target_created", ["targetUserId", "createdAt"]);
 
 /**
- * Internal notes admins leave on a user's profile. Visible to all admin
- * viewers (admin + superadmin). Authoring is open to any admin; editing
- * and deleting are tier-gated:
- *   - admin can edit/delete their OWN notes
- *   - superadmin can edit/delete ANY note (override pattern)
+ * Internal notes admins leave on a user's profile. Visible to all admins.
+ * Any admin can create, edit, or delete any note.
  */
 const userAdminNotes = defineTable({
   /** The user the note is ABOUT. */
   targetUserId: v.string(),
-  /** The admin/superadmin who wrote the note. */
+  /** The admin who wrote the note. */
   authorUserId: v.string(),
   /** Frozen role at write-time — used for display in admin UI. */
-  authorRole: v.union(v.literal("admin"), v.literal("superadmin")),
+  authorRole: v.literal("admin"),
   content: v.string(),
   createdAt: v.number(),
   updatedAt: v.number(),
@@ -237,16 +234,16 @@ const userAdminNotes = defineTable({
   .index("by_author_created", ["authorUserId", "createdAt"]);
 
 /**
- * Broadcast notifications sent by admins/superadmins to user segments.
+ * Broadcast notifications sent by admins to user segments.
  * Used together with the existing `notifications` table — sending a
  * broadcast inserts a `notifications` row per matched user AND records
  * the broadcast metadata here so it can be listed / recalled.
  */
 const adminBroadcasts = defineTable({
-  /** Clerk userId of the sender (admin or superadmin). */
+  /** Clerk userId of the admin sender. */
   senderUserId: v.string(),
   /** Stored at send-time. Frozen even if the user later changes role. */
-  senderRole: v.union(v.literal("admin"), v.literal("superadmin")),
+  senderRole: v.literal("admin"),
   title: v.string(),
   body: v.string(),
   /** Target segment. Server validates against this enum. */
@@ -258,9 +255,9 @@ const adminBroadcasts = defineTable({
   ),
   /** Number of `notifications` rows actually inserted at send-time. */
   recipientCount: v.number(),
-  /** When the sender (or a superadmin) recalled it; null = still active. */
+  /** When the broadcast was recalled; null = still active. */
   recalledAt: v.optional(v.number()),
-  /** Who recalled it (sender themselves, or an overriding superadmin). */
+  /** Who recalled it. */
   recalledBy: v.optional(v.string()),
   createdAt: v.number(),
 })

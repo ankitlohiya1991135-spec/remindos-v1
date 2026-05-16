@@ -18,7 +18,7 @@ export function coerceUserRole(value: unknown): UserRole {
 
 /**
  * Read the real, access-controlling role from Clerk publicMetadata.
- * NEVER read `displayRole` for authorization — only `userType` is
+ * NEVER use any display override for authorization — only `userType` is
  * authoritative.
  */
 export function getRoleFromPublicMetadata(
@@ -29,21 +29,12 @@ export function getRoleFromPublicMetadata(
 }
 
 /**
- * Compute the role to display in admin UIs. Falls back to the real role
- * when no override is set. This is what admins see for every user; only
- * superadmin-aware endpoints additionally expose `actualRole`.
+ * Compute the role to display in admin UIs.
+ * Returns the real role from publicMetadata.
  */
 export function getDisplayRole(
-  publicMetadata: { userType?: unknown; displayRole?: unknown } | null | undefined,
+  publicMetadata: { userType?: unknown } | null | undefined,
 ): UserRole {
-  if (!publicMetadata) return DEFAULT_USER_ROLE;
-  if (typeof publicMetadata.displayRole === "string") {
-    const coerced = coerceUserRole(publicMetadata.displayRole);
-    // Only use displayRole if it parses to a valid role and isn't the
-    // sentinel that would re-leak superadmin. Defensive — even though
-    // superadmins set their own override, allow them to choose anything.
-    return coerced;
-  }
   return getRoleFromPublicMetadata(publicMetadata);
 }
 
@@ -52,18 +43,12 @@ export function isAdminRole(role: UserRole): boolean {
   return role === "admin";
 }
 
-/** Exact-match: is this role exactly `superadmin`? */
-export function isSuperadminRole(role: UserRole): boolean {
-  return role === "superadmin";
-}
-
 /**
  * Authorization helper: can this role access the admin section?
- * True for `admin` AND `superadmin`. Use this everywhere you previously
- * called `isAdminRole` for a permission check.
+ * True only for `admin`.
  */
 export function canAccessAdmin(role: UserRole): boolean {
-  return role === "admin" || role === "superadmin";
+  return role === "admin";
 }
 
 /**

@@ -8,34 +8,21 @@ import { auth, clerkClient, currentUser } from "@clerk/nextjs/server";
 import {
   canAccessAdmin,
   getRoleFromPublicMetadata,
-  isSuperadminRole,
 } from "./roles";
 import type { UserRole } from "./types";
 import type { AuditAction } from "./audit";
 
 /**
- * Result of an admin guard check (admin OR superadmin). Discriminated by
- * `ok` so callers can narrow safely without casts.
- *
- * The `role` field carries the REAL role (`"admin" | "superadmin"`) so
- * downstream code can branch — e.g. include `actualRole` in responses
- * only when `role === "superadmin"`.
+ * Result of an admin guard check. Discriminated by `ok` so callers can
+ * narrow safely without casts.
  */
 export type AdminGuardResult =
-  | { ok: true; userId: string; role: "admin" | "superadmin" }
+  | { ok: true; userId: string; role: "admin" }
   | { ok: false; status: 401 | 403; reason: string };
 
 /**
- * Result of a superadmin-only guard.
- */
-export type SuperadminGuardResult =
-  | { ok: true; userId: string; role: "superadmin" }
-  | { ok: false; status: 401 | 403; reason: string };
-
-/**
- * Authoritative admin check. Allows BOTH admin and superadmin. Always reads
- * the user's CURRENT publicMetadata from Clerk (not from session JWT claims
- * which require a Clerk dashboard JWT-template config and may be cached).
+ * Authoritative admin check. Always reads the user's CURRENT publicMetadata
+ * from Clerk (not from session JWT claims which may be cached).
  *
  * Use this on every admin API route. Returns a discriminated result rather
  * than throwing so callers can choose the response shape.
@@ -53,32 +40,7 @@ export async function checkAdminRequest(): Promise<AdminGuardResult> {
   if (!canAccessAdmin(role)) {
     return { ok: false, status: 403, reason: "Admin role required" };
   }
-  // Type-safe narrowing: canAccessAdmin → role is "admin" | "superadmin".
-  return { ok: true, userId, role: role as "admin" | "superadmin" };
-}
-
-/**
- * Strict guard: only superadmin passes. Admin returns 403. Use this on
- * destructive endpoints (role updates, deactivation) and superadmin-only
- * data exposure.
- */
-export async function checkSuperadminRequest(): Promise<SuperadminGuardResult> {
-  const { userId } = await auth();
-  if (!userId) {
-    return { ok: false, status: 401, reason: "Not signed in" };
-  }
-  const user = await currentUser();
-  if (!user) {
-    return { ok: false, status: 401, reason: "User record not found" };
-  }
-  const role = getRoleFromPublicMetadata(user.publicMetadata);
-  if (!isSuperadminRole(role)) {
-    // Generic message: never say "superadmin" — an admin probing this
-    // endpoint must NOT learn that a higher tier exists. The string is
-    // identical to other "forbidden" responses.
-    return { ok: false, status: 403, reason: "Insufficient permissions" };
-  }
-  return { ok: true, userId, role: "superadmin" };
+  return { ok: true, userId, role: "admin" };
 }
 
 /**
@@ -97,14 +59,13 @@ export async function getCurrentUserRole(): Promise<{
 }
 
 /**
- * Count active (non-banned, non-deactivated) superadmins by paging
- * through Clerk users. Called only on demote / deactivate operations to
- * prevent the org from losing its last superadmin.
+ * Count active (non-banned, non-deactivated) admins by paging through
+ * Clerk users. Called only on demote / deactivate / delete operations to
+ * prevent the org from losing its last admin.
  *
- * Caps at 5000 users for sanity; if you have more, increase or move to
- * a Convex `roleRegistry` table maintained on every role change.
+ * Caps at 5000 users for sanity.
  */
-export async function countActiveSuperadmins(): Promise<number> {
+export async function countActiveAdmins(): Promise<number> {
   const client = await clerkClient();
   const PAGE = 200;
   const HARD_CAP = 5000;
@@ -116,7 +77,7 @@ export async function countActiveSuperadmins(): Promise<number> {
       const role = getRoleFromPublicMetadata(u.publicMetadata);
       const deactivatedFlag = Boolean(u.publicMetadata?.deactivated);
       const banned = Boolean((u as { banned?: boolean }).banned);
-      if (role === "superadmin" && !deactivatedFlag && !banned) {
+      if (role === "admin" && !deactivatedFlag && !banned) {
         count++;
       }
     }
@@ -142,7 +103,7 @@ export interface AuditMutationRunner {
     args: {
       adminSecret: string;
       actorUserId: string;
-      actorRole: "admin" | "superadmin";
+      actorRole: "admin";
       action: string;
       targetUserId?: string;
       metadataJson?: string;
@@ -153,8 +114,8 @@ export interface AuditMutationRunner {
 }
 
 export interface RecordAuditEventInput {
-  /** Caller pre-validated by `checkAdminRequest()` / `checkSuperadminRequest()`. */
-  actor: { userId: string; role: "admin" | "superadmin" };
+  /** Caller pre-validated by `checkAdminRequest()`. */
+  actor: { userId: string; role: "admin" };
   action: AuditAction;
   targetUserId?: string;
   metadata?: Record<string, unknown>;

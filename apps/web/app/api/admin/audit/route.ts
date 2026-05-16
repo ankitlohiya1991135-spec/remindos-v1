@@ -1,6 +1,6 @@
 import { clerkClient } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
-import { checkSuperadminRequest, getAdminConvexSecret } from "@repo/admin/server";
+import { checkAdminRequest, getAdminConvexSecret } from "@repo/admin/server";
 import type {
   AdminApiError,
   AuditLogEntry,
@@ -15,7 +15,7 @@ function jsonError(payload: AdminApiError, status: number) {
 interface RawAuditRow {
   id: string;
   actorUserId: string;
-  actorRole: "admin" | "superadmin";
+  actorRole: "admin";
   action: string;
   targetUserId?: string;
   metadataJson?: string;
@@ -27,10 +27,10 @@ interface RawAuditRow {
 /**
  * GET /api/admin/audit?limit=200&targetUserId=user_abc
  *
- * Superadmin-only. Returns the most recent audit events.
+ * Admin-only. Returns the most recent audit events.
  */
 export async function GET(request: Request) {
-  const guard = await checkSuperadminRequest();
+  const guard = await checkAdminRequest();
   if (!guard.ok) {
     return jsonError(
       { error: guard.reason, code: guard.status === 401 ? "UNAUTHORIZED" : "FORBIDDEN" },

@@ -1,8 +1,8 @@
 import { clerkClient } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import {
-  checkSuperadminRequest,
-  countActiveSuperadmins,
+  checkAdminRequest,
+  countActiveAdmins,
   recordAuditEvent,
 } from "@repo/admin/server";
 import { getRoleFromPublicMetadata } from "@repo/admin";
@@ -23,16 +23,16 @@ function jsonError(payload: AdminApiError, status: number) {
 /**
  * POST /api/admin/users/bulk-deactivate
  *
- * Superadmin-only. Bans (or unbans) up to 100 users in a single request.
+ * Admin-only. Bans (or unbans) up to 100 users in a single request.
  * Per-user safety:
  *   - Cannot include the caller's own userId
- *   - Cannot include the LAST active superadmin (counts before any
- *     mutation, so the count is consistent for the whole request)
+ *   - Cannot leave zero active admins (counts before any mutation,
+ *     so the count is consistent for the whole request)
  *
  * Returns per-user success/failure so the UI can show partial results.
  */
 export async function POST(request: Request) {
-  const guard = await checkSuperadminRequest();
+  const guard = await checkAdminRequest();
   if (!guard.ok) {
     return jsonError(
       { error: guard.reason, code: guard.status === 401 ? "UNAUTHORIZED" : "FORBIDDEN" },
@@ -82,17 +82,16 @@ export async function POST(request: Request) {
     targets.push(id);
   }
 
-  // Cache superadmin count once. If we're deactivating, every supermin in
-  // the batch counts toward the deficit — the simplest safe rule is "if
-  // the resulting count would be 0, refuse for ALL superadmins in the
-  // batch when deactivating." So we precompute and fail-closed below.
-  const activeSupers = body.deactivated ? await countActiveSuperadmins() : Infinity;
+  // Cache admin count once. If we're deactivating, every admin in
+  // the batch counts toward the deficit — refuse for ALL admins in the
+  // batch when deactivating would leave zero.
+  const activeAdmins = body.deactivated ? await countActiveAdmins() : Infinity;
 
   // Audit a single "request initiated" record so even partial failures
   // have a paper trail.
   const convex = getConvexClient();
   await recordAuditEvent({
-    actor: { userId: guard.userId, role: "superadmin" },
+    actor: { userId: guard.userId, role: "admin" },
     action: "BULK_DEACTIVATION_REQUESTED",
     metadata: {
       deactivated: body.deactivated,
@@ -104,36 +103,34 @@ export async function POST(request: Request) {
 
   const client = await clerkClient();
 
-  // Count how many superadmins are in the batch (only relevant when
-  // deactivating). If removing all of them would leave 0 active
-  // superadmins, we refuse to touch any of them.
-  let supersInBatch = 0;
+  // Count how many admins are in the batch (only relevant when deactivating).
+  let adminsInBatch = 0;
   if (body.deactivated) {
     for (const id of targets) {
       try {
         const u = await client.users.getUser(id);
-        if (getRoleFromPublicMetadata(u.publicMetadata) === "superadmin") {
-          supersInBatch++;
+        if (getRoleFromPublicMetadata(u.publicMetadata) === "admin") {
+          adminsInBatch++;
         }
       } catch {
         // Ignore — will be reported as a failure below.
       }
     }
   }
-  const wouldLeaveZeroSupers =
-    body.deactivated && activeSupers - supersInBatch <= 0;
+  const wouldLeaveZeroAdmins =
+    body.deactivated && activeAdmins - adminsInBatch <= 0;
 
   for (const userId of targets) {
     try {
       const target = await client.users.getUser(userId);
       const role = getRoleFromPublicMetadata(target.publicMetadata);
 
-      if (body.deactivated && role === "superadmin" && wouldLeaveZeroSupers) {
+      if (body.deactivated && role === "admin" && wouldLeaveZeroAdmins) {
         results.push({
           userId,
           success: false,
           error:
-            "Cannot deactivate — would leave zero active superadmins. Promote someone else first.",
+            "Cannot deactivate — would leave zero active admins. Promote someone else first.",
         });
         continue;
       }
@@ -151,7 +148,7 @@ export async function POST(request: Request) {
       await client.users.updateUserMetadata(userId, { publicMetadata: next });
 
       await recordAuditEvent({
-        actor: { userId: guard.userId, role: "superadmin" },
+        actor: { userId: guard.userId, role: "admin" },
         action: body.deactivated ? "USER_DEACTIVATED" : "USER_REACTIVATED",
         targetUserId: userId,
         metadata: { previousRole: role, viaBulk: true },
@@ -164,7 +161,7 @@ export async function POST(request: Request) {
       const msg = err instanceof Error ? err.message : String(err);
       results.push({ userId, success: false, error: msg });
       await recordAuditEvent({
-        actor: { userId: guard.userId, role: "superadmin" },
+        actor: { userId: guard.userId, role: "admin" },
         action: body.deactivated ? "USER_DEACTIVATED" : "USER_REACTIVATED",
         targetUserId: userId,
         metadata: { viaBulk: true },

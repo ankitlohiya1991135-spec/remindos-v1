@@ -1,8 +1,8 @@
 import { clerkClient } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import {
-  checkSuperadminRequest,
-  countActiveSuperadmins,
+  checkAdminRequest,
+  countActiveAdmins,
   recordAuditEvent,
 } from "@repo/admin/server";
 import { getRoleFromPublicMetadata } from "@repo/admin";
@@ -20,19 +20,19 @@ function jsonError(payload: AdminApiError, status: number) {
 /**
  * POST /api/admin/users/[userId]/deactivate
  *
- * Superadmin-only. Soft + hard deactivation:
+ * Admin-only. Soft + hard deactivation:
  *   - Sets `publicMetadata.deactivated = true` (audit signal)
  *   - Calls Clerk `banUser` (prevents future sign-in; existing sessions
  *     are invalidated by Clerk on next request)
  *
  * `deactivated: false` reverses both. Cannot deactivate self or the last
- * active superadmin.
+ * active admin.
  */
 export async function POST(
   request: Request,
   context: { params: Promise<{ userId: string }> },
 ) {
-  const guard = await checkSuperadminRequest();
+  const guard = await checkAdminRequest();
   if (!guard.ok) {
     return jsonError(
       { error: guard.reason, code: guard.status === 401 ? "UNAUTHORIZED" : "FORBIDDEN" },
@@ -77,14 +77,13 @@ export async function POST(
 
     const currentRole = getRoleFromPublicMetadata(target.publicMetadata);
 
-    // Last-superadmin protection (only when deactivating).
-    if (body.deactivated && currentRole === "superadmin") {
-      const activeSupers = await countActiveSuperadmins();
-      if (activeSupers <= 1) {
+    // Last-admin protection (only when deactivating).
+    if (body.deactivated && currentRole === "admin") {
+      const activeAdmins = await countActiveAdmins();
+      if (activeAdmins <= 1) {
         return jsonError(
           {
-            error:
-              "Cannot deactivate the last active superadmin. Promote another user first.",
+            error: "Cannot deactivate the last active admin. Promote another user first.",
             code: "BAD_REQUEST",
           },
           400,
@@ -92,17 +91,12 @@ export async function POST(
       }
     }
 
-    // Update Clerk-level ban status. We use ban (reversible) rather than
-    // delete (irreversible) so a superadmin can recover the account.
-    // Verified against @clerk/backend@3.2.8 UserApi (`banUser`/`unbanUser`).
     if (body.deactivated) {
       await client.users.banUser(targetUserId);
     } else {
       await client.users.unbanUser(targetUserId);
     }
 
-    // Mirror flag in publicMetadata so the admin UI can surface it without
-    // re-reading the Clerk row.
     const existing = target.publicMetadata ?? {};
     const next: Record<string, unknown> = { ...existing };
     if (body.deactivated) next.deactivated = true;
@@ -113,7 +107,7 @@ export async function POST(
     });
 
     await recordAuditEvent({
-      actor: { userId: guard.userId, role: "superadmin" },
+      actor: { userId: guard.userId, role: "admin" },
       action: body.deactivated ? "USER_DEACTIVATED" : "USER_REACTIVATED",
       targetUserId,
       metadata: { previousRole: currentRole },

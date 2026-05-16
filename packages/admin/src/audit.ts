@@ -1,5 +1,5 @@
 /**
- * Typed audit-action constants. Every admin/superadmin endpoint that
+ * Typed audit-action constants. Every admin endpoint that
  * mutates state should call `recordAuditEvent` with one of these strings.
  *
  * Adding a new admin action? Add a new constant here FIRST. The type
@@ -44,7 +44,7 @@ export interface AuditLogEntry {
   actorUserId: string;
   /** Display name resolved from Clerk at read-time (best effort). */
   actorDisplay: string;
-  actorRole: "admin" | "superadmin";
+  actorRole: "admin";
   action: AuditAction;
   targetUserId?: string;
   /** Display name of target, when resolvable. */
@@ -61,7 +61,7 @@ export interface BroadcastListItem {
   id: string;
   senderUserId: string;
   senderDisplay: string;
-  senderRole: "admin" | "superadmin";
+  senderRole: "admin";
   title: string;
   body: string;
   segment: "all" | "active_today" | "active_7d" | "admins_only";
@@ -85,9 +85,8 @@ export interface AdminNote {
   targetUserId: string;
   authorUserId: string;
   authorDisplay: string;
-  /** Author role from the API caller's perspective. Admins see all notes
-   * with authorRole "admin" so they can't infer the author's true tier. */
-  authorRole: "admin" | "superadmin";
+  /** Role of the admin who authored this note. */
+  authorRole: "admin";
   content: string;
   createdAt: number;
   updatedAt: number;

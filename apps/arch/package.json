@@ -1,0 +1,10 @@
+{
+  "name": "arch",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Interactive architecture explorer for Personal Life OS",
+  "scripts": {
+    "dev": "npx serve . -p 3333 --no-clipboard",
+    "open": "open index.html"
+  }
+}
