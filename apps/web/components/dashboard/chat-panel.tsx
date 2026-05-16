@@ -10,6 +10,7 @@
  */
 
 import { useRef, useMemo, type FormEvent, type Dispatch, type SetStateAction, type RefObject } from "react";
+import { useOnlineStatus } from "./use-online-status";
 import {
   replaceFollowUpSlot,
   type FollowUpQuestion,
@@ -108,6 +109,7 @@ export function ChatPanel({
   input,
 }: ChatPanelProps) {
   const chatFormRef = useRef<HTMLFormElement>(null);
+  const isOnline = useOnlineStatus();
 
   // Derived
   const briefingComposerLocked = briefingStreaming && !editingMessageId;
@@ -150,6 +152,20 @@ export function ChatPanel({
           </div>
         </div>
       ) : null}
+
+      {/* ── Offline banner — shown whenever browser loses connectivity ── */}
+      {!isOnline && (
+        <div
+          role="alert"
+          aria-live="assertive"
+          className="flex items-center gap-2 border-b border-amber-300 bg-amber-50 px-4 py-2 text-[12px] font-semibold text-amber-800"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="h-4 w-4 shrink-0 text-amber-500">
+            <path d="M1 1l22 22M16.72 11.06A10.94 10.94 0 0 1 19 12.55M5 12.55a10.94 10.94 0 0 1 5.17-2.39M10.71 5.05A16 16 0 0 1 22.54 9M1.42 9a15.91 15.91 0 0 1 4.7-2.88M8.53 16.11a6 6 0 0 1 6.95 0M12 20h.01" />
+          </svg>
+          You're offline — your last known reminders are shown. New actions will sync when reconnected.
+        </div>
+      )}
 
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden" style={{ background: "#1a1625" }}>
         {/* ── Chat panel header: mobile pills · tablet toolbar · desktop urgency strip ── */}

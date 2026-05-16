@@ -9,6 +9,7 @@
  * Extracted from dashboard-workspace.tsx.
  */
 
+import { memo } from "react";
 import type { ReminderItem } from "@repo/reminder";
 import { isAdhocReminder } from "@repo/reminder";
 import { reminderStateLabel } from "./dashboard-utils";
@@ -29,7 +30,7 @@ export interface ReminderCardProps {
   onSnooze: () => void;
 }
 
-export function ReminderCard({
+export const ReminderCard = memo(function ReminderCard({
   reminder,
   tab,
   selectionMode,
@@ -264,4 +265,4 @@ export function ReminderCard({
       </div>
     </article>
   );
-}
+});

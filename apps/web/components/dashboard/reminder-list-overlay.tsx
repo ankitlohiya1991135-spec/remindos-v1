@@ -10,7 +10,7 @@
  * Extracted from dashboard-workspace.tsx.
  */
 
-import { useMemo, useState, type MutableRefObject } from "react";
+import { useCallback, useMemo, useState, type MutableRefObject } from "react";
 import type { ReminderItem } from "@repo/reminder";
 import { isAdhocReminder } from "@repo/reminder";
 import type { TaskRow } from "./task-panels";
@@ -38,6 +38,8 @@ export interface SnapshotCounts {
 
 export interface ReminderListOverlayProps {
   initialTab?: ReminderListTab;
+  /** True while reminders are being fetched on initial load — shows skeleton cards */
+  isLoading?: boolean;
   reminders: ReminderItem[];
   grouped: GroupedReminders;
   snapshot: SnapshotCounts;
@@ -60,6 +62,7 @@ export interface ReminderListOverlayProps {
 
 export function ReminderListOverlay({
   initialTab = "all",
+  isLoading = false,
   reminders,
   grouped,
   snapshot,
@@ -88,13 +91,13 @@ export function ReminderListOverlay({
   const [reminderSelectionMode, setReminderSelectionMode] = useState(false);
   const [selectedReminderIds, setSelectedReminderIds] = useState<Set<string>>(() => new Set());
 
-  const toggleReminderSelect = (id: string) => {
+  const toggleReminderSelect = useCallback((id: string) => {
     setSelectedReminderIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
-  };
+  }, []);
 
   // ── Computed counts ───────────────────────────────────────────────────
   const sharedTabCount = useMemo(
@@ -145,10 +148,10 @@ export function ReminderListOverlay({
       if (typeof navigator !== "undefined" && navigator.vibrate) navigator.vibrate(35);
     }, 450);
   };
-  const handleLongPressEnd = () => {
+  const handleLongPressEnd = useCallback(() => {
     const t = reminderLongPressTimerRef.current;
     if (t != null) { window.clearTimeout(t); reminderLongPressTimerRef.current = null; }
-  };
+  }, [reminderLongPressTimerRef]);
 
   // ── JSX ───────────────────────────────────────────────────────────────
   return (
@@ -319,7 +322,32 @@ export function ReminderListOverlay({
 
         {/* ── Card list ── */}
         <div className="relative min-h-0 flex-1 overflow-y-auto">
-          {reminderListRows.length === 0 && !(reminderListTab === "shared" && shareInbox.length > 0) ? (
+          {/* Skeleton loader — shown while the initial fetch is in flight */}
+          {isLoading ? (
+            <div className="space-y-2 px-3 py-3" aria-busy="true" aria-label="Loading reminders">
+              {[...Array(5)].map((_, i) => (
+                <div
+                  // biome-ignore lint/suspicious/noArrayIndexKey: static skeleton — order never changes
+                  key={i}
+                  className="flex gap-3 rounded-2xl border border-slate-100 bg-white px-3.5 py-3 shadow-sm"
+                >
+                  {/* Left dot */}
+                  <div className="flex shrink-0 flex-col items-center pt-1">
+                    <span className="h-2.5 w-2.5 animate-pulse rounded-full bg-slate-200" />
+                  </div>
+                  {/* Content lines */}
+                  <div className="flex-1 space-y-2">
+                    <div className="h-3.5 w-2/3 animate-pulse rounded-full bg-slate-200" />
+                    <div className="h-2.5 w-1/3 animate-pulse rounded-full bg-slate-100" />
+                    <div className="mt-1 flex gap-1">
+                      <div className="h-4 w-10 animate-pulse rounded-full bg-slate-100" />
+                      <div className="h-4 w-14 animate-pulse rounded-full bg-slate-100" />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : reminderListRows.length === 0 && !(reminderListTab === "shared" && shareInbox.length > 0) ? (
             <div className="flex flex-col items-center justify-center py-16 text-center">
               <span className="mb-3 text-4xl">{reminderListTab === "done" ? "✅" : reminderListTab === "missed" ? "🎉" : "🔔"}</span>
               <p className="text-[14px] font-semibold text-slate-700">

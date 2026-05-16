@@ -1263,6 +1263,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       {isListOpen && (
         <ReminderListOverlay
           initialTab={reminderListInitialTab}
+          isLoading={!remindersLoaded}
           reminders={reminders}
           grouped={grouped}
           snapshot={snapshot}
