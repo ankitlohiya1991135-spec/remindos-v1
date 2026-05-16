@@ -1,0 +1,1685 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Personal Life OS · Architecture Explorer</title>
+<style>
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:      #050810;
+  --surface: rgba(12,17,32,0.96);
+  --border:  rgba(255,255,255,0.07);
+  --text:    #e2e8f0;
+  --muted:   #475569;
+  --accent:  #3b82f6;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  overflow: hidden;
+  height: 100vh; width: 100vw;
+  user-select: none; -webkit-user-select: none;
+}
+
+/* ── TOOLBAR ─────────────────────────────────────────────── */
+#toolbar {
+  position: fixed; top:0; left:0; right:0; height:50px;
+  z-index:200;
+  background: rgba(5,8,16,0.94);
+  border-bottom: 1px solid var(--border);
+  display:flex; align-items:center; gap:6px;
+  padding:0 14px;
+  backdrop-filter: blur(16px);
+}
+.t-logo { display:flex; align-items:center; gap:8px; font-size:12px; font-weight:700; letter-spacing:.06em; color:#64748b; flex-shrink:0; }
+.t-logo em { color:#3b82f6; font-style:normal; }
+.t-sep { width:1px; height:22px; background:var(--border); margin:0 2px; flex-shrink:0; }
+.t-spacer { flex:1; }
+.tb {
+  height:30px; padding:0 10px; border-radius:6px;
+  border:1px solid var(--border); background:rgba(255,255,255,0.04);
+  color:var(--text); font-size:11px; font-weight:500;
+  cursor:pointer; display:flex; align-items:center; gap:5px;
+  transition:background .12s, border-color .12s; flex-shrink:0;
+}
+.tb:hover { background:rgba(255,255,255,0.09); border-color:rgba(255,255,255,0.12); }
+.tb.active { background:rgba(59,130,246,0.15); border-color:rgba(59,130,246,0.35); color:#60a5fa; }
+.tb.danger { color:#f87171; }
+.tb.danger:hover { background:rgba(248,113,113,0.08); border-color:rgba(248,113,113,0.25); }
+.t-zoom { font-size:11px; color:var(--muted); min-width:42px; text-align:center; font-variant-numeric:tabular-nums; }
+.t-hint { font-size:10px; color:#334155; }
+
+/* ── SIDEBAR ─────────────────────────────────────────────── */
+#sidebar {
+  position:fixed; top:50px; right:0; bottom:0; width:240px;
+  z-index:100;
+  background:rgba(6,9,18,0.96);
+  border-left:1px solid var(--border);
+  display:flex; flex-direction:column;
+  overflow:hidden;
+  transition: transform .3s cubic-bezier(.4,0,.2,1);
+}
+#sidebar.hidden { transform: translateX(100%); }
+#sidebar-head { padding:12px 14px 8px; border-bottom:1px solid var(--border); flex-shrink:0; }
+#sidebar-head h2 { font-size:10px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:#475569; }
+#sidebar-head p  { font-size:10px; color:#334155; margin-top:2px; }
+#sidebar-scroll  { flex:1; overflow-y:auto; padding:10px 10px 20px; }
+#sidebar-scroll::-webkit-scrollbar { width:3px; }
+#sidebar-scroll::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.08); border-radius:2px; }
+.sb-section { font-size:9px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:#334155; margin:12px 4px 6px; }
+.svc-card {
+  display:flex; align-items:center; gap:9px;
+  padding:8px 10px; border-radius:8px;
+  border:1px solid transparent; cursor:grab;
+  transition:all .15s; position:relative; margin-bottom:2px;
+}
+.svc-card:hover { background:rgba(255,255,255,0.04); border-color:var(--border); transform:translateX(-2px); }
+.svc-card:active { cursor:grabbing; }
+.svc-ico { width:30px; height:30px; border-radius:7px; display:flex; align-items:center; justify-content:center; font-size:15px; flex-shrink:0; }
+.svc-info { flex:1; min-width:0; }
+.svc-name { font-size:11px; font-weight:600; }
+.svc-desc { font-size:9px; color:#475569; margin-top:1px; }
+.svc-grab { width:20px; height:20px; border-radius:4px; flex-shrink:0; background:rgba(59,130,246,0.1); border:1px solid rgba(59,130,246,0.2); color:#60a5fa; display:flex; align-items:center; justify-content:center; font-size:10px; opacity:.6; }
+
+/* ── ANALYSIS PANEL ──────────────────────────────────────── */
+#analysis-panel {
+  position:fixed; top:50px; right:0; bottom:0; width:280px;
+  z-index:150;
+  background:rgba(6,9,18,0.99);
+  border-left:1px solid rgba(255,255,255,0.1);
+  display:flex; flex-direction:column;
+  transform:translateX(100%);
+  transition:transform .3s cubic-bezier(.4,0,.2,1);
+  box-shadow:-8px 0 32px rgba(0,0,0,0.5);
+}
+#analysis-panel.open { transform:translateX(0); }
+#ap-header {
+  display:flex; align-items:center; gap:10px;
+  padding:14px 14px 12px;
+  border-bottom:1px solid var(--border);
+  flex-shrink:0;
+}
+#ap-ico { width:32px; height:32px; border-radius:8px; display:flex; align-items:center; justify-content:center; font-size:16px; flex-shrink:0; }
+#ap-name { flex:1; font-size:13px; font-weight:700; }
+#ap-close { width:24px; height:24px; border-radius:5px; border:1px solid var(--border); background:rgba(255,255,255,0.04); color:#64748b; cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:13px; flex-shrink:0; }
+#ap-close:hover { background:rgba(255,255,255,0.08); color:var(--text); }
+#ap-body { flex:1; overflow-y:auto; padding:14px; display:flex; flex-direction:column; gap:14px; }
+#ap-body::-webkit-scrollbar { width:3px; }
+#ap-body::-webkit-scrollbar-thumb { background:rgba(255,255,255,0.08); border-radius:2px; }
+
+/* Score bar */
+#ap-score { display:flex; flex-direction:column; gap:6px; }
+.ap-verdict-row { display:flex; align-items:center; gap:8px; }
+.ap-stars { display:flex; gap:2px; }
+.ap-star { font-size:13px; }
+.ap-verdict-label { font-size:13px; font-weight:700; }
+.ap-score-bar-wrap { height:4px; background:rgba(255,255,255,0.06); border-radius:2px; overflow:hidden; }
+.ap-score-bar { height:100%; border-radius:2px; transition:width .5s cubic-bezier(.4,0,.2,1); }
+
+/* Position suggestion */
+.ap-section-title { font-size:9px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:#475569; margin-bottom:6px; }
+.ap-position-row { display:flex; align-items:center; gap:6px; font-size:11px; color:#94a3b8; }
+.ap-position-arrow { color:#475569; }
+
+/* Suggested connections */
+.ap-conn-item { display:flex; align-items:center; gap:8px; padding:6px 8px; border-radius:6px; background:rgba(255,255,255,0.03); border:1px solid var(--border); margin-bottom:4px; }
+.ap-conn-dot { width:6px; height:6px; border-radius:50%; flex-shrink:0; }
+.ap-conn-text { font-size:10px; color:#94a3b8; flex:1; }
+.ap-conn-label { font-size:9px; color:#475569; }
+
+/* Pros / Cons */
+.ap-reason { display:flex; align-items:flex-start; gap:6px; padding:5px 0; font-size:10px; line-height:1.5; }
+.ap-reason-icon { flex-shrink:0; margin-top:1px; }
+
+/* Recommendation */
+.ap-rec-box { padding:10px 12px; border-radius:8px; border:1px solid; font-size:10px; line-height:1.6; color:#94a3b8; }
+
+/* Actions */
+#ap-footer { padding:12px 14px; border-top:1px solid var(--border); display:flex; flex-direction:column; gap:6px; flex-shrink:0; }
+.ap-btn {
+  width:100%; padding:9px 12px; border-radius:7px;
+  font-size:11px; font-weight:600; cursor:pointer;
+  display:flex; align-items:center; justify-content:center; gap:6px;
+  transition:all .15s; border:1px solid transparent;
+}
+.ap-btn-accept  { background:rgba(16,185,129,0.15); border-color:rgba(16,185,129,0.3); color:#34d399; }
+.ap-btn-accept:hover  { background:rgba(16,185,129,0.25); }
+.ap-btn-manual  { background:rgba(255,255,255,0.04); border-color:var(--border); color:#94a3b8; }
+.ap-btn-manual:hover  { background:rgba(255,255,255,0.08); }
+.ap-btn-remove  { background:rgba(248,113,113,0.08); border-color:rgba(248,113,113,0.2); color:#f87171; }
+.ap-btn-remove:hover  { background:rgba(248,113,113,0.14); }
+
+/* ── DRAG GHOST ──────────────────────────────────────────── */
+#drag-ghost {
+  position:fixed; z-index:999; pointer-events:none;
+  display:none; opacity:0.85;
+  border-radius:10px; border:1px solid rgba(255,255,255,0.15);
+  background:rgba(10,14,26,0.97);
+  padding:9px 13px;
+  box-shadow:0 8px 30px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.05);
+  transform:translate(-50%,-50%) scale(0.92);
+  min-width:150px;
+}
+#drag-ghost.active { display:flex; align-items:center; gap:8px; }
+#dg-ico { width:24px; height:24px; border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:12px; flex-shrink:0; }
+#dg-label { font-size:11px; font-weight:700; }
+
+/* Drop target highlight */
+#drop-highlight {
+  position:absolute; z-index:3; pointer-events:none;
+  border-radius:16px; display:none;
+  border:2px dashed rgba(16,185,129,0.5);
+  background:rgba(16,185,129,0.06);
+  transition:all .15s;
+}
+#drop-highlight.on { display:block; }
+
+/* ── CANVAS ──────────────────────────────────────────────── */
+#canvas {
+  position:fixed; top:50px; left:0; right:240px; bottom:28px;
+  overflow:hidden; cursor:grab;
+  background:var(--bg);
+  transition: right .3s cubic-bezier(.4,0,.2,1);
+}
+#canvas.analysis-open { right:280px; }
+#canvas.panning { cursor:grabbing; }
+#canvas.connect { cursor:crosshair; }
+#canvas::before {
+  content:''; position:absolute; inset:0;
+  background-image:radial-gradient(circle, rgba(255,255,255,.1) 1px, transparent 1px);
+  background-size:28px 28px;
+  pointer-events:none; z-index:0;
+}
+#canvas::after {
+  content:''; position:absolute; inset:0;
+  background:
+    radial-gradient(ellipse 60% 60% at 30% 30%, rgba(59,130,246,.04) 0%, transparent 70%),
+    radial-gradient(ellipse 50% 50% at 75% 70%, rgba(139,92,246,.04) 0%, transparent 70%);
+  pointer-events:none; z-index:0;
+}
+#world { position:absolute; top:0; left:0; transform-origin:0 0; will-change:transform; }
+#svg-layer { position:absolute; top:0; left:0; overflow:visible; pointer-events:none; z-index:1; }
+#nodes-layer { position:absolute; top:0; left:0; z-index:2; }
+
+/* ── NODES ───────────────────────────────────────────────── */
+.node {
+  position:absolute; transform:translate(-50%,-50%);
+  border-radius:12px; border:1px solid rgba(255,255,255,0.09);
+  background:rgba(10,14,26,0.97);
+  padding:11px 14px 10px; cursor:grab;
+  transition:box-shadow .18s, border-color .18s;
+  min-width:158px; will-change:left,top;
+}
+.node:active { cursor:grabbing; }
+.node.selected   { box-shadow:0 0 0 2px #3b82f6, 0 0 24px rgba(59,130,246,.18); border-color:rgba(59,130,246,.4); }
+.node.conn-from  { box-shadow:0 0 0 2px #10b981, 0 0 24px rgba(16,185,129,.2);  border-color:rgba(16,185,129,.4); }
+.node.conn-hover { box-shadow:0 0 0 2px #f59e0b, 0 0 20px rgba(245,158,11,.18); border-color:rgba(245,158,11,.4); }
+.node.proposed   { box-shadow:0 0 0 2px rgba(16,185,129,.6), 0 0 30px rgba(16,185,129,.15); border-color:rgba(16,185,129,.5); animation:proposedPulse 2s ease-in-out infinite; }
+@keyframes proposedPulse { 0%,100%{box-shadow:0 0 0 2px rgba(16,185,129,.6), 0 0 20px rgba(16,185,129,.1);} 50%{box-shadow:0 0 0 3px rgba(16,185,129,.8), 0 0 40px rgba(16,185,129,.25);} }
+.n-header { display:flex; align-items:center; gap:8px; }
+.n-ico { width:26px; height:26px; border-radius:6px; display:flex; align-items:center; justify-content:center; font-size:13px; flex-shrink:0; }
+.n-title { font-size:12px; font-weight:700; white-space:nowrap; }
+.n-sub { font-size:9px; color:#475569; margin-top:5px; padding-left:34px; line-height:1.5; }
+.n-badge { position:absolute; top:-7px; right:9px; font-size:8px; font-weight:700; padding:2px 5px; border-radius:3px; text-transform:uppercase; letter-spacing:.05em; }
+.n-pulse { position:absolute; inset:-5px; border-radius:16px; pointer-events:none; border:1px solid transparent; animation:nodePulse 3s ease-in-out infinite; }
+.n-proposed-badge { position:absolute; top:-8px; left:9px; font-size:8px; font-weight:700; padding:2px 7px; border-radius:3px; background:rgba(16,185,129,0.2); border:1px solid rgba(16,185,129,0.4); color:#34d399; letter-spacing:.05em; text-transform:uppercase; }
+@keyframes nodePulse { 0%,100%{opacity:.35;transform:scale(1);} 50%{opacity:0;transform:scale(1.05);} }
+.n-edit { background:transparent; border:none; outline:none; font-size:12px; font-weight:700; width:100%; font-family:inherit; padding:0; color:inherit; }
+
+/* ── SVG CONNECTIONS ─────────────────────────────────────── */
+@keyframes flow     { to { stroke-dashoffset:-28; } }
+@keyframes flowSlow { to { stroke-dashoffset:-28; } }
+@keyframes flowProp { to { stroke-dashoffset:-20; } }
+
+.c-bg   { fill:none; stroke-linecap:round; }
+.c-flow { fill:none; stroke-linecap:round; stroke-dasharray:8 5;  animation:flow     1.8s linear infinite; }
+.c-imp  { fill:none; stroke-linecap:round; stroke-dasharray:3 7;  animation:flowSlow 4s   linear infinite; opacity:.38; }
+.c-prop { fill:none; stroke-linecap:round; stroke-dasharray:6 4;  animation:flowProp 1.2s linear infinite; }
+.c-hit  { fill:none; stroke:transparent; stroke-width:14; cursor:pointer; }
+.c-group:hover .c-bg   { opacity:.55 !important; }
+.c-group.selected .c-bg { opacity:.7 !important; stroke-width:3 !important; }
+
+/* ── STATUS BAR ──────────────────────────────────────────── */
+#statusbar {
+  position:fixed; bottom:0; left:0; right:240px; height:28px;
+  background:rgba(5,8,16,.85); border-top:1px solid var(--border);
+  display:flex; align-items:center; padding:0 14px; gap:18px;
+  font-size:10px; color:var(--muted); z-index:100;
+  backdrop-filter:blur(8px);
+  transition: right .3s cubic-bezier(.4,0,.2,1);
+}
+#statusbar.analysis-open { right:280px; }
+.s-pill { display:flex; align-items:center; gap:5px; }
+.s-dot  { width:5px; height:5px; border-radius:50%; flex-shrink:0; }
+#s-mode { margin-left:auto; }
+
+/* ── CONNECT HINT ────────────────────────────────────────── */
+#hint {
+  position:fixed; top:58px; left:50%; transform:translateX(-50%);
+  z-index:300;
+  background:rgba(16,185,129,.12); border:1px solid rgba(16,185,129,.3);
+  border-radius:20px; padding:5px 16px; font-size:11px; color:#34d399;
+  pointer-events:none; opacity:0; transition:opacity .2s; white-space:nowrap;
+}
+#hint.on { opacity:1; }
+
+/* ── SERVICE TOOLTIP ─────────────────────────────────────── */
+#tooltip {
+  position:fixed; z-index:400;
+  background:rgba(8,12,22,.98); border:1px solid rgba(255,255,255,.1);
+  border-radius:10px; padding:12px 14px; max-width:250px;
+  pointer-events:none; display:none;
+  box-shadow:0 12px 40px rgba(0,0,0,.55);
+}
+#tooltip.on { display:block; }
+.tt-title { font-size:11px; font-weight:700; color:#f1f5f9; margin-bottom:5px; }
+.tt-body  { font-size:10px; color:#94a3b8; line-height:1.55; }
+
+/* ── CONTEXT MENU ────────────────────────────────────────── */
+#ctx {
+  position:fixed; z-index:500;
+  background:rgba(8,12,22,.98); border:1px solid var(--border);
+  border-radius:8px; padding:4px; display:none;
+  box-shadow:0 8px 28px rgba(0,0,0,.55); min-width:148px;
+}
+#ctx.on { display:block; }
+.cm { padding:7px 11px; border-radius:5px; font-size:11px; cursor:pointer; display:flex; align-items:center; gap:7px; }
+.cm:hover { background:rgba(255,255,255,.06); }
+.cm.red { color:#f87171; }
+.cm.red:hover { background:rgba(248,113,113,.09); }
+.cm-sep { height:1px; background:var(--border); margin:3px 0; }
+
+/* ── LEGEND ──────────────────────────────────────────────── */
+#legend {
+  position:fixed; bottom:40px; left:14px; z-index:100;
+  display:flex; flex-direction:column; gap:5px;
+  background:rgba(6,9,18,.88); border:1px solid var(--border);
+  border-radius:8px; padding:9px 12px;
+}
+.lg { display:flex; align-items:center; gap:8px; font-size:10px; color:#475569; }
+.lg-line { width:22px; height:2px; border-radius:1px; flex-shrink:0; }
+
+</style>
+</head>
+<body>
+
+<!-- ── TOOLBAR ──────────────────────────────────────────────────────── -->
+<header id="toolbar">
+  <div class="t-logo">
+    <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
+      <circle cx="7.5" cy="7.5" r="6.5" stroke="#3b82f6" stroke-width="1.4"/>
+      <path d="M4.5 7.5h6M7.5 4.5v6" stroke="#3b82f6" stroke-width="1.4" stroke-linecap="round"/>
+    </svg>
+    Personal Life OS &nbsp;<em>arch</em>
+  </div>
+  <div class="t-sep"></div>
+  <button class="tb" id="btn-connect" title="Draw connection (C)">
+    <svg width="11" height="11" viewBox="0 0 11 11" fill="none"><circle cx="2" cy="9" r="1.5" stroke="currentColor" stroke-width="1.2"/><circle cx="9" cy="2" r="1.5" stroke="currentColor" stroke-width="1.2"/><path d="M3.2 7.8L7.8 3.2" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+    Connect
+  </button>
+  <button class="tb" id="btn-reset" title="Reset layout (R)">
+    <svg width="11" height="11" viewBox="0 0 11 11" fill="none"><path d="M2 5.5a3.5 3.5 0 1 1 .9 2.4" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/><path d="M2 8.5V5.5h3" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    Reset
+  </button>
+  <div class="t-sep"></div>
+  <button class="tb" id="btn-zi">+</button>
+  <span class="t-zoom" id="zoom-lbl">100%</span>
+  <button class="tb" id="btn-zo">−</button>
+  <button class="tb" id="btn-fit" title="Fit all (F)">Fit</button>
+  <div class="t-sep"></div>
+  <button class="tb danger" id="btn-del">Delete</button>
+  <div class="t-spacer"></div>
+  <span class="t-hint">Drag service from sidebar to canvas · Double-click to rename · Right-click for options</span>
+</header>
+
+<!-- ── SIDEBAR ──────────────────────────────────────────────────────── -->
+<aside id="sidebar">
+  <div id="sidebar-head">
+    <h2>Add Service</h2>
+    <p>Drag onto canvas — auto-places &amp; analyses fit</p>
+  </div>
+  <div id="sidebar-scroll"></div>
+</aside>
+
+<!-- ── ANALYSIS PANEL ───────────────────────────────────────────────── -->
+<div id="analysis-panel">
+  <div id="ap-header">
+    <div id="ap-ico"></div>
+    <div id="ap-name"></div>
+    <button id="ap-close">✕</button>
+  </div>
+  <div id="ap-body">
+    <div id="ap-score">
+      <div class="ap-verdict-row">
+        <div class="ap-stars" id="ap-stars"></div>
+        <div class="ap-verdict-label" id="ap-verdict"></div>
+      </div>
+      <div class="ap-score-bar-wrap"><div class="ap-score-bar" id="ap-bar"></div></div>
+    </div>
+    <div id="ap-position-sec">
+      <div class="ap-section-title">📍 Optimal Position</div>
+      <div class="ap-position-row" id="ap-pos-row"></div>
+    </div>
+    <div id="ap-conns-sec">
+      <div class="ap-section-title">🔗 Suggested Connections</div>
+      <div id="ap-conns-list"></div>
+    </div>
+    <div id="ap-reasons-sec">
+      <div class="ap-section-title">✅ Pros &amp; ❌ Cons</div>
+      <div id="ap-reasons-list"></div>
+    </div>
+    <div id="ap-rec-sec">
+      <div class="ap-section-title">💡 Recommendation</div>
+      <div class="ap-rec-box" id="ap-rec-box"></div>
+    </div>
+  </div>
+  <div id="ap-footer">
+    <button class="ap-btn ap-btn-accept" id="ap-accept">✓ Accept &amp; Auto-connect</button>
+    <button class="ap-btn ap-btn-manual" id="ap-manual">Keep node, connect manually</button>
+    <button class="ap-btn ap-btn-remove" id="ap-remove">✕ Remove from canvas</button>
+  </div>
+</div>
+
+<!-- ── DRAG GHOST ────────────────────────────────────────────────────── -->
+<div id="drag-ghost">
+  <div id="dg-ico"></div>
+  <div id="dg-label"></div>
+</div>
+
+<!-- ── CANVAS ───────────────────────────────────────────────────────── -->
+<main id="canvas">
+  <div id="world">
+    <svg id="svg-layer" width="1" height="1"></svg>
+    <div id="nodes-layer"></div>
+    <div id="drop-highlight"></div>
+  </div>
+</main>
+
+<!-- ── STATUS / HINT / TOOLTIP / CTX / LEGEND ────────────────────────── -->
+<div id="statusbar">
+  <div class="s-pill"><div class="s-dot" style="background:#10b981"></div><span id="s-nodes">12 nodes</span></div>
+  <div class="s-pill"><div class="s-dot" style="background:#3b82f6"></div><span id="s-conns">12 connections</span></div>
+  <span id="s-mode">Drag canvas to pan · Scroll to zoom</span>
+</div>
+<div id="hint">Click source node → then click target node &nbsp;·&nbsp; Esc to cancel</div>
+<div id="tooltip"><div class="tt-title" id="tt-title"></div><div class="tt-body" id="tt-body"></div></div>
+<div id="ctx">
+  <div class="cm" id="cm-rename">✏️ Rename</div>
+  <div class="cm" id="cm-conn">→ Connect from here</div>
+  <div class="cm-sep"></div>
+  <div class="cm red" id="cm-del">🗑 Delete</div>
+</div>
+<div id="legend">
+  <div class="lg"><div class="lg-line" style="background:linear-gradient(90deg,#3b82f6,#8b5cf6)"></div>Data flow</div>
+  <div class="lg"><div class="lg-line" style="height:0;border-top:2px dashed #334155"></div>Import / Build</div>
+  <div class="lg"><div class="lg-line" style="background:linear-gradient(90deg,#10b981,#34d399)"></div>Proposed (preview)</div>
+</div>
+
+<script>
+'use strict';
+
+/* ═══════════════════════════════════════════════════════════════
+   CATALOGUE  –  every service with smart placement + fit analysis
+═══════════════════════════════════════════════════════════════ */
+
+const CATALOGUE = [
+  {
+    group: 'Caching & Queues',
+    items: [
+
+      { id:'redis', label:'Redis', desc:'Cache · Pub-Sub · Rate-limit', icon:'🔴', color:'#DC382D',
+        tip:'Great for rate-limiting LLM calls and caching hot reminder queries.',
+        placement:{ type:'between', nodes:['nextjs','convex'], perpOffset:120 },
+        suggestedConns:[
+          { toId:'nextjs', label:'Rate-limit / cache reads', dir:'both' },
+          { toId:'convex', label:'Cache invalidation hooks', dir:'from' },
+        ],
+        fit:{
+          score:4,
+          verdict:'Strong Fit',
+          color:'#10b981',
+          reasons:[
+            { pro:true,  text:'Rate-limit /api/chat to control NVIDIA NIM costs' },
+            { pro:true,  text:'Cache frequent Convex reminder reads (hot-path)' },
+            { pro:true,  text:'Pub/Sub for real-time events without polling' },
+            { pro:true,  text:'Session store if auth ever moves off Clerk' },
+            { pro:false, text:'Cache invalidation is tricky with Convex real-time sync' },
+            { pro:false, text:'Adds Redis cluster ops overhead' },
+          ],
+          implement:'Recommended',
+          implementColor:'#10b981',
+          note:'Start with rate-limiting on /api/chat only (single Redis node, Upstash works great on Vercel). Expand to reminder caching once query patterns are stable.',
+        }
+      },
+
+      { id:'kafka', label:'Apache Kafka', desc:'Event streaming · Reliable queue', icon:'🔀', color:'#3a3a3a',
+        tip:'Adds reliable event delivery between cron and notification push.',
+        placement:{ type:'between', nodes:['vercel','nextjs'], perpOffset:-100 },
+        suggestedConns:[
+          { toId:'vercel', label:'Cron publishes events', dir:'from' },
+          { toId:'nextjs', label:'Consumes notification jobs', dir:'to' },
+        ],
+        fit:{
+          score:2,
+          verdict:'Weak Fit',
+          color:'#f59e0b',
+          reasons:[
+            { pro:true,  text:'Reliable delivery with retry & dead-letter queues for notifications' },
+            { pro:true,  text:'Event replay useful for debugging failed push deliveries' },
+            { pro:false, text:'Vercel cron is simpler for daily briefing — Kafka is overkill' },
+            { pro:false, text:'Requires dedicated broker (Confluent Cloud adds cost)' },
+            { pro:false, text:'Increases operational complexity significantly' },
+          ],
+          implement:'Not Recommended',
+          implementColor:'#f87171',
+          note:'Vercel cron → /api/push/cron is sufficient for current scale. Revisit Kafka only if notification volume exceeds 10k/min or you need event sourcing.',
+        }
+      },
+    ]
+  },
+
+  {
+    group: 'Databases',
+    items: [
+      { id:'postgres', label:'PostgreSQL', desc:'Relational DB · OLAP · SQL', icon:'🐘', color:'#336791',
+        tip:'Useful for analytics/reporting on top of Convex operational data.',
+        placement:{ type:'beside', anchor:'convex', offsetX:200, offsetY:100 },
+        suggestedConns:[
+          { toId:'nextjs', label:'Analytics API routes', dir:'both' },
+          { toId:'convex', label:'Event sync for reporting', dir:'from' },
+        ],
+        fit:{
+          score:2,
+          verdict:'Weak Fit',
+          color:'#f59e0b',
+          reasons:[
+            { pro:true,  text:'Better for complex JOIN queries across users/reminders' },
+            { pro:true,  text:'Good for admin analytics dashboards & exports' },
+            { pro:false, text:'Convex already handles all CRUD well — adds a second DB to manage' },
+            { pro:false, text:'No native real-time sync with Convex (need manual ETL)' },
+            { pro:false, text:'Doubles data migration risk on schema changes' },
+          ],
+          implement:'Conditional',
+          implementColor:'#f59e0b',
+          note:'Add only if you need heavy analytics SQL that Convex cannot handle (e.g. cohort analysis, cross-user aggregations). Use Convex → Postgres ETL pipeline via Convex scheduled functions.',
+        }
+      },
+
+      { id:'elastic', label:'Elasticsearch', desc:'Full-text search · Fuzzy match', icon:'🔍', color:'#F04E98',
+        tip:'Enables semantic/fuzzy search across all reminders and tasks.',
+        placement:{ type:'between', nodes:['nextjs','convex'], perpOffset:-120 },
+        suggestedConns:[
+          { toId:'convex', label:'Document sync on mutation', dir:'from' },
+          { toId:'nextjs', label:'/api/search route', dir:'to' },
+        ],
+        fit:{
+          score:3,
+          verdict:'Conditional Fit',
+          color:'#f59e0b',
+          reasons:[
+            { pro:true,  text:'Fuzzy search: "bath dr fix" finds "Bathroom door fixup"' },
+            { pro:true,  text:'Fast full-text across all 16 Convex tables' },
+            { pro:true,  text:'Powers smarter disambiguation in the LLM chat agent' },
+            { pro:false, text:'Significant ops overhead for a personal app at current scale' },
+            { pro:false, text:'Needs sync pipeline from Convex mutations to ES index' },
+          ],
+          implement:'Conditional',
+          implementColor:'#f59e0b',
+          note:'Consider Typesense (simpler) or Convex\'s built-in search first. Add Elasticsearch only when you have 10k+ documents and need advanced relevance tuning.',
+        }
+      },
+    ]
+  },
+
+  {
+    group: 'Storage & Files',
+    items: [
+      { id:'s3', label:'AWS S3', desc:'Object storage · Presigned URLs', icon:'🪣', color:'#FF9900',
+        tip:'Enables file attachments on reminders — voice notes, receipts, images.',
+        placement:{ type:'beside', anchor:'nextjs', offsetX:300, offsetY:-120 },
+        suggestedConns:[
+          { toId:'nextjs', label:'Presigned PUT/GET URLs', dir:'both' },
+          { toId:'browser', label:'Direct upload from client', dir:'from' },
+        ],
+        fit:{
+          score:4,
+          verdict:'Strong Fit',
+          color:'#10b981',
+          reasons:[
+            { pro:true,  text:'Voice memo attachments on reminders (big UX win)' },
+            { pro:true,  text:'Receipt/image storage for finance-domain reminders' },
+            { pro:true,  text:'Presigned URLs keep API routes stateless' },
+            { pro:true,  text:'Cloudflare R2 is S3-compatible with zero egress fees' },
+            { pro:false, text:'Adds /api/upload route + CORS config' },
+          ],
+          implement:'Recommended',
+          implementColor:'#10b981',
+          note:'Use Cloudflare R2 (S3-compatible, free egress) or AWS S3. Add a single /api/upload/presign route that returns a signed PUT URL. Store the S3 key in the Convex reminders table.',
+        }
+      },
+    ]
+  },
+
+  {
+    group: 'Communication',
+    items: [
+      { id:'sendgrid', label:'SendGrid', desc:'Transactional email · Digests', icon:'📧', color:'#1A82E2',
+        tip:'Powers email digests, share invites, and admin broadcast emails.',
+        placement:{ type:'beside', anchor:'webpush', offsetX:240, offsetY:0 },
+        suggestedConns:[
+          { toId:'nextjs', label:'Email API calls', dir:'from' },
+          { toId:'browser', label:'Opens email links', dir:'to' },
+        ],
+        fit:{
+          score:4,
+          verdict:'Strong Fit',
+          color:'#10b981',
+          reasons:[
+            { pro:true,  text:'Reminder share invites via email (users not on the app yet)' },
+            { pro:true,  text:'Morning digest email as fallback when push is disabled' },
+            { pro:true,  text:'Admin broadcast emails for announcements' },
+            { pro:false, text:'Need to manage unsubscribe / bounce handling' },
+            { pro:false, text:'Email templates add maintenance burden' },
+          ],
+          implement:'Recommended',
+          implementColor:'#10b981',
+          note:'Start with share-invite emails only (high ROI). Add digest emails as an opt-in user preference. Store email preferences in the userProfiles Convex table.',
+        }
+      },
+
+      { id:'twilio', label:'Twilio SMS', desc:'SMS · WhatsApp alerts', icon:'💬', color:'#E53935',
+        tip:'SMS/WhatsApp as a backup notification channel for missed reminders.',
+        placement:{ type:'beside', anchor:'webpush', offsetX:240, offsetY:120 },
+        suggestedConns:[
+          { toId:'nextjs', label:'SMS/WhatsApp send API', dir:'from' },
+        ],
+        fit:{
+          score:3,
+          verdict:'Conditional Fit',
+          color:'#f59e0b',
+          reasons:[
+            { pro:true,  text:'Reaches users when browser push notifications are blocked/missed' },
+            { pro:true,  text:'WhatsApp has higher open rates than email' },
+            { pro:false, text:'Per-message cost adds up quickly for high-frequency reminders' },
+            { pro:false, text:'Web Push + email already covers most notification scenarios' },
+          ],
+          implement:'Conditional',
+          implementColor:'#f59e0b',
+          note:'Add only if user research shows missed push notifications are a pain point. Consider as an opt-in "VIP alert" channel for high-priority reminders only.',
+        }
+      },
+    ]
+  },
+
+  {
+    group: 'Payments',
+    items: [
+      { id:'stripe', label:'Stripe', desc:'Billing · Subscriptions · Webhooks', icon:'💳', color:'#635BFF',
+        tip:'Required before adding any paid tier or one-time purchases.',
+        placement:{ type:'beside', anchor:'clerk', offsetX:200, offsetY:-80 },
+        suggestedConns:[
+          { toId:'nextjs', label:'Checkout & webhook routes', dir:'both' },
+          { toId:'clerk',  label:'Subscription status in metadata', dir:'to' },
+        ],
+        fit:{
+          score:5,
+          verdict:'Essential',
+          color:'#10b981',
+          reasons:[
+            { pro:true,  text:'Required for any paid plan, trial, or premium feature gate' },
+            { pro:true,  text:'Webhook syncs subscription status → Clerk metadata → feature flags' },
+            { pro:true,  text:'One-time reminder packs or AI credit top-ups' },
+            { pro:true,  text:'Stripe handles PCI compliance automatically' },
+            { pro:false, text:'Adds /api/webhooks/stripe route that must be kept secret' },
+          ],
+          implement:'Essential for monetization',
+          implementColor:'#10b981',
+          note:'Add /api/checkout, /api/webhooks/stripe, and /api/billing routes. Store subscription status in Clerk publicMetadata → check in Next.js middleware for feature gates.',
+        }
+      },
+    ]
+  },
+
+  {
+    group: 'Observability',
+    items: [
+      { id:'sentry', label:'Sentry', desc:'Error tracking · Alerts', icon:'🐛', color:'#FB4226',
+        tip:'Captures runtime errors across client and server with full context.',
+        placement:{ type:'beside', anchor:'nextjs', offsetX:-300, offsetY:-100 },
+        suggestedConns:[
+          { toId:'nextjs',  label:'Server-side error capture', dir:'from' },
+          { toId:'browser', label:'Client-side SDK', dir:'from' },
+        ],
+        fit:{
+          score:5,
+          verdict:'Highly Recommended',
+          color:'#10b981',
+          reasons:[
+            { pro:true,  text:'Catches LLM agent errors with full request context (userId, message)' },
+            { pro:true,  text:'Alerts on Convex mutation failures before users report them' },
+            { pro:true,  text:'Performance tracing on /api/chat (p95 latency of NVIDIA NIM calls)' },
+            { pro:true,  text:'Source maps for production JS debugging' },
+            { pro:false, text:'Small bundle overhead on client (~50KB gzipped)' },
+          ],
+          implement:'Highly Recommended',
+          implementColor:'#10b981',
+          note:'Add @sentry/nextjs package. Configure in next.config.js. Add userId and reminderCount as Sentry context tags — makes debugging 10x faster.',
+        }
+      },
+
+      { id:'posthog', label:'PostHog', desc:'Analytics · Feature flags · Replays', icon:'📊', color:'#E44C28',
+        tip:'Privacy-first analytics for understanding how users interact with reminders.',
+        placement:{ type:'between', nodes:['browser','nextjs'], perpOffset:120 },
+        suggestedConns:[
+          { toId:'browser', label:'Client-side event capture', dir:'from' },
+          { toId:'nextjs',  label:'Server-side events via API', dir:'from' },
+        ],
+        fit:{
+          score:4,
+          verdict:'Strong Fit',
+          color:'#10b981',
+          reasons:[
+            { pro:true,  text:'Track which life domains (health/finance/career) are most used' },
+            { pro:true,  text:'Feature flags for A/B testing new AI chat behaviors' },
+            { pro:true,  text:'Session recordings to see how users interact with the dashboard' },
+            { pro:true,  text:'Self-hostable for full data ownership' },
+            { pro:false, text:'GDPR cookie consent banner needed for EU users' },
+          ],
+          implement:'Recommended',
+          implementColor:'#10b981',
+          note:'Use PostHog Cloud (free up to 1M events/month). Track key events: reminder_created, reminder_marked_done, chat_message_sent, briefing_viewed. Add feature flags for gradual AI feature rollouts.',
+        }
+      },
+    ]
+  },
+
+  {
+    group: 'AI & LLM',
+    items: [
+      { id:'openai', label:'OpenAI', desc:'GPT-4o fallback · Cost routing', icon:'🧠', color:'#10a37f',
+        tip:'Alternative LLM provider for fallback or cost-optimized routing.',
+        placement:{ type:'beside', anchor:'nvidia', offsetX:0, offsetY:160 },
+        suggestedConns:[
+          { toId:'nextjs', label:'Fallback chat inference', dir:'to' },
+          { toId:'nvidia', label:'Model routing decision', dir:'from' },
+        ],
+        fit:{
+          score:3,
+          verdict:'Conditional Fit',
+          color:'#f59e0b',
+          reasons:[
+            { pro:true,  text:'GPT-4o as failover if NVIDIA NIM is down or rate-limited' },
+            { pro:true,  text:'Route simple intents (mark-done) to cheaper models' },
+            { pro:true,  text:'OpenAI embeddings for semantic reminder search' },
+            { pro:false, text:'NVIDIA NIM with Mistral 128B already serves the agent well' },
+            { pro:false, text:'Adds API key management and cost tracking for 2nd provider' },
+          ],
+          implement:'Conditional',
+          implementColor:'#f59e0b',
+          note:'Consider only for failover or if NVIDIA NIM costs become significant. A simple router in /api/chat can select the provider based on complexity score of the user message.',
+        }
+      },
+
+      { id:'embeddings', label:'Vector DB', desc:'Semantic search · RAG · Memory', icon:'🧲', color:'#7C3AED',
+        tip:'Dramatically improves AI chat quality via semantic reminder context.',
+        placement:{ type:'between', nodes:['convex','nvidia'], perpOffset:120 },
+        suggestedConns:[
+          { toId:'convex', label:'Sync reminders for indexing', dir:'from' },
+          { toId:'nvidia', label:'Inject semantic context into prompt', dir:'to' },
+          { toId:'nextjs', label:'Embedding pipeline', dir:'from' },
+        ],
+        fit:{
+          score:4,
+          verdict:'Strong Fit',
+          color:'#10b981',
+          reasons:[
+            { pro:true,  text:'Find semantically similar past reminders for better AI context' },
+            { pro:true,  text:'Enables "remind me of things like X" queries' },
+            { pro:true,  text:'User wiki becomes searchable by meaning, not just keywords' },
+            { pro:true,  text:'Reduces hallucination in the LLM agent significantly' },
+            { pro:false, text:'Requires embedding pipeline (cost per document ingested)' },
+            { pro:false, text:'Adds vector DB infra (Pinecone, Weaviate, or pgvector)' },
+          ],
+          implement:'Recommended',
+          implementColor:'#10b981',
+          note:'Use Convex mutations to trigger embedding on reminder create/edit. Store vectors in Pinecone (free tier) or use pgvector in Postgres. Inject top-5 similar reminders into the NVIDIA NIM system prompt.',
+        }
+      },
+    ]
+  },
+
+  {
+    group: 'Edge & CDN',
+    items: [
+      { id:'cloudflare', label:'Cloudflare', desc:'CDN · WAF · DNS · R2 storage', icon:'🌤', color:'#F38020',
+        tip:'Place in front of Vercel for global CDN, DDoS protection, and R2 storage.',
+        placement:{ type:'before', anchor:'nextjs', offsetY:-200 },
+        suggestedConns:[
+          { toId:'browser', label:'DNS resolution', dir:'to' },
+          { toId:'nextjs',  label:'Proxied requests + WAF', dir:'to' },
+        ],
+        fit:{
+          score:5,
+          verdict:'Highly Recommended',
+          color:'#10b981',
+          reasons:[
+            { pro:true,  text:'Global CDN caches static assets — dashboard loads in <100ms worldwide' },
+            { pro:true,  text:'WAF blocks bots, scrapers, and brute-force on /api/chat' },
+            { pro:true,  text:'R2 object storage replaces S3 with zero egress fees' },
+            { pro:true,  text:'Free plan covers most personal app traffic' },
+            { pro:false, text:'DNS management moves to Cloudflare (minor migration effort)' },
+          ],
+          implement:'Highly Recommended',
+          implementColor:'#10b981',
+          note:'Point your domain DNS to Cloudflare. Enable "Proxied" for all A/CNAME records pointing to Vercel. Enable WAF with OWASP ruleset. Use R2 for file attachments (better than S3 on Vercel due to egress).',
+        }
+      },
+
+      { id:'websocket', label:'WS Server', desc:'Real-time collab · Live cursors', icon:'⚡', color:'#F59E0B',
+        tip:'Custom WebSocket server for low-latency real-time features.',
+        placement:{ type:'beside', anchor:'convex', offsetX:0, offsetY:180 },
+        suggestedConns:[
+          { toId:'browser', label:'WebSocket connection', dir:'both' },
+          { toId:'nextjs',  label:'Auth + room management', dir:'from' },
+        ],
+        fit:{
+          score:1,
+          verdict:'Not Recommended',
+          color:'#f87171',
+          reasons:[
+            { pro:true,  text:'Enables live collaboration (multi-user shared reminder boards)' },
+            { pro:false, text:'Convex already provides real-time subscriptions — this duplicates it' },
+            { pro:false, text:'Requires persistent server (not serverless) — breaks Vercel deploy' },
+            { pro:false, text:'Significant infra cost and complexity for a personal productivity app' },
+            { pro:false, text:'Convex\'s optimistic updates already feel real-time on the client' },
+          ],
+          implement:'Not Recommended',
+          implementColor:'#f87171',
+          note:'Convex subscriptions handle all current real-time needs. If you add collaborative features in the future, consider Convex\'s own real-time primitives or Liveblocks (purpose-built for collab without a custom WS server).',
+        }
+      },
+    ]
+  },
+];
+
+/* ═══════════════════════════════════════════════════════════════
+   INITIAL NODES + CONNECTIONS
+═══════════════════════════════════════════════════════════════ */
+
+const NODES_DEFAULT = [
+  { id:'browser',      type:'external', label:'Browser',        sub:'Client · React 19 SPA · Service Worker',    icon:'🌐', color:'#94a3b8', x:680,  y:90  },
+  { id:'nextjs',       type:'app',      label:'Next.js 16',     sub:'apps/web · 36 API routes · React 19',        icon:'▲',  color:'#f1f5f9', x:680,  y:370 },
+  { id:'clerk',        type:'service',  label:'Clerk',          sub:'Auth · JWT · Roles (user/admin/superadmin)',  icon:'🔐', color:'#6C47FF', x:1140, y:195 },
+  { id:'convex',       type:'service',  label:'Convex DB',      sub:'16 tables · Real-time sync · Serverless',    icon:'🔶', color:'#F55F24', x:1140, y:390 },
+  { id:'nvidia',       type:'service',  label:'NVIDIA NIM',     sub:'Mistral 128B · LLM chat agent',              icon:'🤖', color:'#76B900', x:1140, y:595 },
+  { id:'webpush',      type:'service',  label:'Web Push API',   sub:'VAPID · Browser push notifications',         icon:'🔔', color:'#4ECDC4', x:680,  y:660 },
+  { id:'vercel',       type:'infra',    label:'Vercel',         sub:'PaaS · Cron /api/push/cron @ 2 AM UTC',     icon:'▲',  color:'#e2e8f0', x:200,  y:520 },
+  { id:'turborepo',    type:'infra',    label:'Turborepo',      sub:'Build pipeline · pnpm 9 · Task cache',        icon:'⚡', color:'#E93548', x:200,  y:210 },
+  { id:'pkg-db',       type:'package',  label:'@repo/db',       sub:'Convex schema · Generated API types',         icon:'📦', color:'#38BDF8', x:410,  y:240 },
+  { id:'pkg-reminder', type:'package',  label:'@repo/reminder', sub:'Business logic · Intent classifiers',         icon:'📦', color:'#A78BFA', x:410,  y:365 },
+  { id:'pkg-admin',    type:'package',  label:'@repo/admin',    sub:'Roles · Audit log · Clerk server SDK',        icon:'📦', color:'#F472B6', x:410,  y:490 },
+  { id:'pkg-ui',       type:'package',  label:'@repo/ui',       sub:'Button · Card · Code components',             icon:'📦', color:'#34D399', x:410,  y:615 },
+];
+
+const CONNS_DEFAULT = [
+  { id:'c1',  from:'browser',      to:'nextjs',        label:'HTTPS / WS',           color:'#60a5fa', type:'flow'   },
+  { id:'c2',  from:'nextjs',       to:'clerk',         label:'Auth verify (JWT)',     color:'#6C47FF', type:'flow'   },
+  { id:'c3',  from:'nextjs',       to:'convex',        label:'Queries + Mutations',   color:'#F55F24', type:'flow'   },
+  { id:'c4',  from:'nextjs',       to:'nvidia',        label:'Chat inference',        color:'#76B900', type:'flow'   },
+  { id:'c5',  from:'nextjs',       to:'webpush',       label:'Push subscribe/send',   color:'#4ECDC4', type:'flow'   },
+  { id:'c6',  from:'vercel',       to:'nextjs',        label:'Cron trigger daily',    color:'#94a3b8', type:'flow'   },
+  { id:'c7',  from:'turborepo',    to:'nextjs',        label:'Builds workspace',      color:'#E93548', type:'import' },
+  { id:'c8',  from:'pkg-db',       to:'nextjs',        label:'Schema & types',        color:'#38BDF8', type:'import' },
+  { id:'c9',  from:'pkg-reminder', to:'nextjs',        label:'Logic & classifiers',   color:'#A78BFA', type:'import' },
+  { id:'c10', from:'pkg-admin',    to:'nextjs',        label:'Admin helpers',         color:'#F472B6', type:'import' },
+  { id:'c11', from:'pkg-ui',       to:'nextjs',        label:'UI components',         color:'#34D399', type:'import' },
+  { id:'c12', from:'pkg-db',       to:'convex',        label:'Defines schema',        color:'#F55F24', type:'import' },
+];
+
+/* ═══════════════════════════════════════════════════════════════
+   STATE
+═══════════════════════════════════════════════════════════════ */
+
+let nodes    = NODES_DEFAULT.map(n => ({ ...n }));
+let conns    = CONNS_DEFAULT.map(c => ({ ...c }));
+let proposed = null;  // { nodeId, conns:[], service }
+let view     = { x:0, y:0, s:1 };
+let drag     = null;  // { id, ox, oy }
+let pan      = null;  // { sx, sy, vx, vy }
+let sbDrag   = null;  // sidebar drag: { service, active }
+let connMode = false;
+let connFrom = null;
+let selNode  = null;
+let selConn  = null;
+let ctxId    = null;
+let ctxType  = null;
+let _hoverNode = null;
+let _tempConn  = null;
+
+/* ═══════════════════════════════════════════════════════════════
+   GEOMETRY
+═══════════════════════════════════════════════════════════════ */
+
+const NW = { external:168, app:190, service:176, package:172, infra:165 };
+const NH = { external:70,  app:82,  service:76,  package:66,  infra:64  };
+function nw(n) { return NW[n.type] || 168; }
+function nh(n) { return NH[n.type] || 68; }
+
+function edgePt(node, tx, ty) {
+  const hw = nw(node)/2, hh = nh(node)/2;
+  const dx = tx - node.x, dy = ty - node.y;
+  if (!dx && !dy) return { x:node.x, y:node.y };
+  const sx = dx ? hw/Math.abs(dx) : Infinity;
+  const sy = dy ? hh/Math.abs(dy) : Infinity;
+  const s  = Math.min(sx, sy);
+  return { x:node.x + dx*s, y:node.y + dy*s };
+}
+
+function bezier(x1,y1,x2,y2) {
+  const dx = Math.abs(x2-x1), dy = Math.abs(y2-y1);
+  if (dx >= dy) {
+    const mx = (x1+x2)/2;
+    return `M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}`;
+  } else {
+    const my = (y1+y2)/2;
+    return `M${x1},${y1} C${x1},${my} ${x2},${my} ${x2},${y2}`;
+  }
+}
+function midPt(x1,y1,x2,y2) { return { x:(x1+x2)/2, y:(y1+y2)/2 }; }
+
+/* ═══════════════════════════════════════════════════════════════
+   VIEW
+═══════════════════════════════════════════════════════════════ */
+
+const $canvas = document.getElementById('canvas');
+const $world  = document.getElementById('world');
+const $svg    = document.getElementById('svg-layer');
+const $nodes  = document.getElementById('nodes-layer');
+const $sb     = document.getElementById('statusbar');
+
+function applyView() {
+  $world.style.transform = `translate(${view.x}px,${view.y}px) scale(${view.s})`;
+  document.getElementById('zoom-lbl').textContent = Math.round(view.s*100) + '%';
+}
+
+function screenToWorld(sx, sy) {
+  const r = $canvas.getBoundingClientRect();
+  return { x:(sx - r.left - view.x)/view.s, y:(sy - r.top - view.y)/view.s };
+}
+
+function fitAll() {
+  if (!nodes.length) return;
+  const r = $canvas.getBoundingClientRect();
+  const pad = 80;
+  const xs = nodes.flatMap(n => [n.x - nw(n)/2, n.x + nw(n)/2]);
+  const ys = nodes.flatMap(n => [n.y - nh(n)/2, n.y + nh(n)/2]);
+  const minX = Math.min(...xs)-pad, maxX = Math.max(...xs)+pad;
+  const minY = Math.min(...ys)-pad, maxY = Math.max(...ys)+pad;
+  const bw = maxX-minX, bh = maxY-minY;
+  const s = Math.min(r.width/bw, r.height/bh, 1.8);
+  view.s = s;
+  view.x = (r.width  - bw*s)/2 - minX*s;
+  view.y = (r.height - bh*s)/2 - minY*s;
+  applyView();
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   SMART PLACEMENT ENGINE
+═══════════════════════════════════════════════════════════════ */
+
+function calcOptimalPos(svc) {
+  const p = svc.placement;
+
+  if (p.type === 'between') {
+    const n1 = nodes.find(n => n.id === p.nodes[0]);
+    const n2 = nodes.find(n => n.id === p.nodes[1]);
+    if (n1 && n2) {
+      const mx = (n1.x + n2.x) / 2;
+      const my = (n1.y + n2.y) / 2;
+      // Perpendicular offset to avoid sitting on the connection line
+      const dx = n2.x - n1.x, dy = n2.y - n1.y;
+      const len = Math.sqrt(dx*dx + dy*dy) || 1;
+      const perp = p.perpOffset || 100;
+      return { x: mx + (-dy/len)*perp, y: my + (dx/len)*perp };
+    }
+  }
+
+  if (p.type === 'beside') {
+    const anchor = nodes.find(n => n.id === p.anchor);
+    if (anchor) return { x: anchor.x + (p.offsetX||200), y: anchor.y + (p.offsetY||0) };
+  }
+
+  if (p.type === 'before') {
+    const anchor = nodes.find(n => n.id === p.anchor);
+    if (anchor) return { x: anchor.x + (p.offsetX||0), y: anchor.y + (p.offsetY||-200) };
+  }
+
+  // Fallback: visible canvas center + slight offset
+  const r = $canvas.getBoundingClientRect();
+  const off = nodes.filter(n => n.id.startsWith(svc.id+'-')).length * 40;
+  return { x: (r.width/2 - view.x)/view.s + 80 + off, y: (r.height/2 - view.y)/view.s + off };
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   PROPOSE SERVICE  (place + show analysis)
+═══════════════════════════════════════════════════════════════ */
+
+function proposeService(svc) {
+  // Clear any existing proposal
+  if (proposed) rejectProposed(true);
+
+  const pos = calcOptimalPos(svc);
+
+  const node = {
+    id:    svc.id + '-' + Date.now(),
+    type:  'service',
+    label: svc.label,
+    sub:   svc.desc,
+    icon:  svc.icon,
+    color: svc.color,
+    x:     pos.x,
+    y:     pos.y,
+    _proposed: true,
+  };
+  nodes.push(node);
+
+  // Build proposed connections
+  const propConns = (svc.suggestedConns || []).map((sc, i) => {
+    const targetNode = nodes.find(n => n.id === sc.toId);
+    if (!targetNode) return null;
+    return {
+      id:    'prop-' + i + '-' + Date.now(),
+      from:  sc.dir === 'to' ? node.id : (sc.dir === 'both' ? node.id : targetNode.id),
+      to:    sc.dir === 'to' ? targetNode.id : (sc.dir === 'both' ? targetNode.id : node.id),
+      label: sc.label,
+      color: svc.color,
+      type:  'proposed',
+    };
+  }).filter(Boolean);
+
+  proposed = { nodeId: node.id, conns: propConns, service: svc };
+
+  // Scroll to node
+  const r = $canvas.getBoundingClientRect();
+  view.x = r.width/2  - pos.x * view.s;
+  view.y = r.height/2 - pos.y * view.s;
+  applyView();
+
+  render();
+  showAnalysisPanel(svc);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   ANALYSIS PANEL
+═══════════════════════════════════════════════════════════════ */
+
+function showAnalysisPanel(svc) {
+  const fit = svc.fit;
+  const p   = svc.placement;
+
+  // Header
+  document.getElementById('ap-ico').textContent  = svc.icon;
+  document.getElementById('ap-ico').style.background = svc.color + '18';
+  document.getElementById('ap-name').textContent = svc.label;
+  document.getElementById('ap-name').style.color = svc.color;
+
+  // Score
+  const stars = '⭐'.repeat(fit.score) + '☆'.repeat(5 - fit.score);
+  document.getElementById('ap-stars').textContent   = stars;
+  document.getElementById('ap-verdict').textContent = fit.verdict;
+  document.getElementById('ap-verdict').style.color = fit.color;
+  const bar = document.getElementById('ap-bar');
+  bar.style.background = fit.color;
+  bar.style.width = '0%';
+  setTimeout(() => { bar.style.width = (fit.score/5*100) + '%'; }, 80);
+
+  // Position
+  const posRow = document.getElementById('ap-pos-row');
+  posRow.innerHTML = '';
+  if (p.type === 'between' && p.nodes) {
+    const n1 = nodes.find(n => n.id === p.nodes[0]);
+    const n2 = nodes.find(n => n.id === p.nodes[1]);
+    posRow.innerHTML = `
+      <span style="color:#60a5fa">${n1 ? n1.label : p.nodes[0]}</span>
+      <span class="ap-position-arrow"> ↔ </span>
+      <span style="color:#60a5fa">${n2 ? n2.label : p.nodes[1]}</span>
+    `;
+  } else if (p.type === 'beside' && p.anchor) {
+    const anchor = nodes.find(n => n.id === p.anchor);
+    posRow.innerHTML = `<span>Alongside </span><span style="color:#60a5fa">${anchor ? anchor.label : p.anchor}</span>`;
+  } else if (p.type === 'before' && p.anchor) {
+    const anchor = nodes.find(n => n.id === p.anchor);
+    posRow.innerHTML = `<span>In front of </span><span style="color:#60a5fa">${anchor ? anchor.label : p.anchor}</span>`;
+  }
+
+  // Suggested connections
+  const connsList = document.getElementById('ap-conns-list');
+  connsList.innerHTML = '';
+  (svc.suggestedConns || []).forEach(sc => {
+    const target = nodes.find(n => n.id === sc.toId);
+    const fromLabel = sc.dir === 'to' ? svc.label : (target ? target.label : sc.toId);
+    const toLabel   = sc.dir === 'to' ? (target ? target.label : sc.toId) : svc.label;
+    const el = document.createElement('div');
+    el.className = 'ap-conn-item';
+    el.innerHTML = `
+      <div class="ap-conn-dot" style="background:${svc.color}"></div>
+      <div class="ap-conn-text"><strong style="color:${svc.color}">${fromLabel}</strong> → <strong style="color:#94a3b8">${toLabel}</strong></div>
+      <div class="ap-conn-label">${sc.label}</div>
+    `;
+    connsList.appendChild(el);
+  });
+
+  // Pros / Cons
+  const reasonsList = document.getElementById('ap-reasons-list');
+  reasonsList.innerHTML = '';
+  fit.reasons.forEach(r => {
+    const el = document.createElement('div');
+    el.className = 'ap-reason';
+    el.innerHTML = `
+      <span class="ap-reason-icon">${r.pro ? '✅' : '❌'}</span>
+      <span style="color:${r.pro ? '#94a3b8' : '#64748b'}">${r.text}</span>
+    `;
+    reasonsList.appendChild(el);
+  });
+
+  // Recommendation box
+  const recBox = document.getElementById('ap-rec-box');
+  recBox.textContent  = fit.note;
+  recBox.style.borderColor   = fit.implementColor + '40';
+  recBox.style.background    = fit.implementColor + '08';
+
+  // Open panel
+  document.getElementById('analysis-panel').classList.add('open');
+  $canvas.classList.add('analysis-open');
+  $sb.classList.add('analysis-open');
+  document.getElementById('sidebar').classList.add('hidden');
+}
+
+function hideAnalysisPanel() {
+  document.getElementById('analysis-panel').classList.remove('open');
+  $canvas.classList.remove('analysis-open');
+  $sb.classList.remove('analysis-open');
+  document.getElementById('sidebar').classList.remove('hidden');
+}
+
+function acceptProposed() {
+  if (!proposed) return;
+  // Convert proposed conns to real conns
+  proposed.conns.forEach(c => {
+    conns.push({ ...c, type:'flow' });
+  });
+  // Remove _proposed flag from node
+  const n = nodes.find(n => n.id === proposed.nodeId);
+  if (n) delete n._proposed;
+  proposed = null;
+  hideAnalysisPanel();
+  render();
+}
+
+function rejectProposed(silent) {
+  if (!proposed) return;
+  nodes = nodes.filter(n => n.id !== proposed.nodeId);
+  document.getElementById('n-'+proposed.nodeId)?.remove();
+  proposed = null;
+  if (!silent) hideAnalysisPanel();
+  render();
+}
+
+function keepManual() {
+  if (!proposed) return;
+  const n = nodes.find(n => n.id === proposed.nodeId);
+  if (n) delete n._proposed;
+  proposed = null;
+  hideAnalysisPanel();
+  render();
+}
+
+// Analysis panel button listeners
+document.getElementById('ap-close').addEventListener('click', () => { rejectProposed(); });
+document.getElementById('ap-accept').addEventListener('click', acceptProposed);
+document.getElementById('ap-manual').addEventListener('click', keepManual);
+document.getElementById('ap-remove').addEventListener('click', () => { rejectProposed(); });
+
+/* ═══════════════════════════════════════════════════════════════
+   RENDER CONNECTIONS  (real + proposed)
+═══════════════════════════════════════════════════════════════ */
+
+function renderConns() {
+  $svg.innerHTML = '';
+
+  // Real connections
+  const allConns = [...conns];
+
+  allConns.forEach(c => {
+    const fn = nodes.find(n => n.id === c.from);
+    const tn = nodes.find(n => n.id === c.to);
+    if (!fn || !tn) return;
+
+    const ep1 = edgePt(fn, tn.x, tn.y);
+    const ep2 = edgePt(tn, fn.x, fn.y);
+    const d   = bezier(ep1.x, ep1.y, ep2.x, ep2.y);
+    const mid = midPt(ep1.x, ep1.y, ep2.x, ep2.y);
+    const isSel = selConn === c.id;
+    const isProp = c.type === 'proposed';
+
+    const g = svgEl('g');
+    g.className.baseVal = 'c-group' + (isSel ? ' selected' : '');
+    g.dataset.id = c.id;
+
+    // BG glow
+    const bg = svgEl('path');
+    bg.className.baseVal = 'c-bg';
+    bg.setAttribute('d', d);
+    bg.setAttribute('stroke', c.color);
+    bg.setAttribute('stroke-width', isProp ? '2.5' : (c.type==='flow' ? '3' : '2'));
+    bg.setAttribute('opacity', isProp ? '0.3' : (isSel ? '0.55' : '0.18'));
+    g.appendChild(bg);
+
+    // Animated line
+    const fl = svgEl('path');
+    fl.className.baseVal = isProp ? 'c-prop' : (c.type==='flow' ? 'c-flow' : 'c-imp');
+    fl.setAttribute('d', d);
+    fl.setAttribute('stroke', isProp ? '#10b981' : c.color);
+    fl.setAttribute('stroke-width', isProp ? '2' : (c.type==='flow' ? '2' : '1.5'));
+    fl.setAttribute('opacity', isProp ? '0.8' : (c.type==='flow' ? (isSel?'1':'0.65') : (isSel?'0.7':'0.38')));
+    g.appendChild(fl);
+
+    // Label
+    if (c.label) {
+      const lw = c.label.length * 5.2 + 10;
+      const br = svgEl('rect');
+      br.setAttribute('x', mid.x-lw/2); br.setAttribute('y', mid.y-17);
+      br.setAttribute('width', lw); br.setAttribute('height', 13);
+      br.setAttribute('rx', '3'); br.setAttribute('fill', '#050810'); br.setAttribute('opacity','0.85');
+      g.appendChild(br);
+
+      const lt = svgEl('text');
+      lt.setAttribute('x', mid.x); lt.setAttribute('y', mid.y-7);
+      lt.setAttribute('text-anchor','middle');
+      lt.setAttribute('fill', isProp ? '#10b981' : c.color);
+      lt.setAttribute('font-size','9');
+      lt.setAttribute('font-family','Inter,system-ui,sans-serif');
+      lt.setAttribute('font-weight','500');
+      lt.setAttribute('opacity', isProp ? '0.9' : (isSel?'0.9':'0.55'));
+      lt.textContent = isProp ? '→ ' + c.label : c.label;
+      g.appendChild(lt);
+    }
+
+    // Arrowhead
+    const angle = Math.atan2(ep2.y-ep1.y, ep2.x-ep1.x);
+    const arr = svgEl('polygon');
+    arr.setAttribute('points', arrowPts(ep2.x, ep2.y, angle, 7, 5));
+    arr.setAttribute('fill', isProp ? '#10b981' : c.color);
+    arr.setAttribute('opacity', isProp ? '0.7' : (c.type==='flow' ? '0.65' : '0.3'));
+    g.appendChild(arr);
+
+    if (!isProp) {
+      const hit = svgEl('path');
+      hit.className.baseVal = 'c-hit';
+      hit.setAttribute('d', d);
+      hit.addEventListener('click', e => {
+        e.stopPropagation();
+        selConn = selConn===c.id ? null : c.id;
+        selNode = null;
+        render();
+      });
+      hit.addEventListener('contextmenu', e => {
+        e.preventDefault(); e.stopPropagation();
+        ctxId = c.id; ctxType = 'conn';
+        showCtx(e.clientX, e.clientY);
+      });
+      g.appendChild(hit);
+    }
+
+    $svg.appendChild(g);
+  });
+
+  // Proposed connections (from proposed state)
+  if (proposed) {
+    proposed.conns.forEach(c => {
+      const fn = nodes.find(n => n.id === c.from);
+      const tn = nodes.find(n => n.id === c.to);
+      if (!fn || !tn) return;
+      const ep1 = edgePt(fn, tn.x, tn.y);
+      const ep2 = edgePt(tn, fn.x, fn.y);
+      const d = bezier(ep1.x, ep1.y, ep2.x, ep2.y);
+      const mid = midPt(ep1.x, ep1.y, ep2.x, ep2.y);
+
+      const g = svgEl('g');
+
+      const bg = svgEl('path');
+      bg.setAttribute('d', d); bg.setAttribute('stroke', '#10b981');
+      bg.setAttribute('stroke-width', '2.5'); bg.setAttribute('fill', 'none');
+      bg.setAttribute('opacity', '0.25'); bg.setAttribute('stroke-linecap', 'round');
+      g.appendChild(bg);
+
+      const fl = svgEl('path');
+      fl.className.baseVal = 'c-prop';
+      fl.setAttribute('d', d); fl.setAttribute('stroke', '#10b981');
+      fl.setAttribute('stroke-width', '1.8'); fl.setAttribute('fill', 'none');
+      fl.setAttribute('opacity', '0.75');
+      g.appendChild(fl);
+
+      const lw = (c.label||'').length * 5.2 + 10;
+      const br = svgEl('rect');
+      br.setAttribute('x', mid.x-lw/2); br.setAttribute('y', mid.y-17);
+      br.setAttribute('width', lw); br.setAttribute('height', 13);
+      br.setAttribute('rx', '3'); br.setAttribute('fill', '#050810'); br.setAttribute('opacity','0.9');
+      g.appendChild(br);
+
+      const lt = svgEl('text');
+      lt.setAttribute('x', mid.x); lt.setAttribute('y', mid.y-7);
+      lt.setAttribute('text-anchor', 'middle');
+      lt.setAttribute('fill', '#34d399'); lt.setAttribute('font-size', '9');
+      lt.setAttribute('font-family', 'Inter,system-ui,sans-serif'); lt.setAttribute('font-weight', '600');
+      lt.textContent = '→ ' + (c.label || '');
+      g.appendChild(lt);
+
+      const angle = Math.atan2(ep2.y-ep1.y, ep2.x-ep1.x);
+      const arr = svgEl('polygon');
+      arr.setAttribute('points', arrowPts(ep2.x, ep2.y, angle, 7, 5));
+      arr.setAttribute('fill', '#10b981'); arr.setAttribute('opacity', '0.7');
+      g.appendChild(arr);
+
+      $svg.appendChild(g);
+    });
+  }
+
+  // Temp connect line (draw-mode)
+  if (connMode && connFrom && _tempConn) {
+    const p = svgEl('path');
+    p.setAttribute('d', _tempConn); p.setAttribute('stroke', '#10b981');
+    p.setAttribute('stroke-width', '2'); p.setAttribute('fill', 'none');
+    p.setAttribute('stroke-dasharray', '6 4'); p.setAttribute('opacity', '0.6');
+    p.style.animation = 'flow 1.5s linear infinite'; p.style.pointerEvents = 'none';
+    $svg.appendChild(p);
+  }
+}
+
+function arrowPts(x, y, angle, len, hw) {
+  const a1 = angle + Math.PI*0.8, a2 = angle - Math.PI*0.8;
+  return [`${x},${y}`, `${x+Math.cos(a1)*len},${y+Math.sin(a1)*len}`, `${x+Math.cos(a2)*len},${y+Math.sin(a2)*len}`].join(' ');
+}
+
+function svgEl(tag) { return document.createElementNS('http://www.w3.org/2000/svg', tag); }
+
+/* ═══════════════════════════════════════════════════════════════
+   RENDER NODES
+═══════════════════════════════════════════════════════════════ */
+
+function renderNodes() {
+  const seen = new Set();
+  nodes.forEach(n => {
+    seen.add(n.id);
+    let el = document.getElementById('n-'+n.id);
+    if (!el) { el = mkNodeEl(n); $nodes.appendChild(el); }
+    el.style.left = n.x+'px'; el.style.top = n.y+'px'; el.style.width = nw(n)+'px';
+    el.classList.toggle('selected',   selNode===n.id && !connFrom && !n._proposed);
+    el.classList.toggle('conn-from',  connFrom===n.id);
+    el.classList.toggle('conn-hover', connMode && connFrom && connFrom!==n.id && _hoverNode===n.id);
+    el.classList.toggle('proposed',   !!n._proposed);
+    // Proposed badge
+    let pb = el.querySelector('.n-proposed-badge');
+    if (n._proposed && !pb) {
+      pb = document.createElement('div'); pb.className = 'n-proposed-badge'; pb.textContent = 'Preview';
+      el.appendChild(pb);
+    } else if (!n._proposed && pb) { pb.remove(); }
+  });
+  [...$nodes.children].forEach(el => {
+    if (el.id && el.id.startsWith('n-') && !seen.has(el.dataset.nid)) el.remove();
+  });
+}
+
+function mkNodeEl(n) {
+  const el = document.createElement('div');
+  el.id = 'n-'+n.id; el.className = 'node'; el.dataset.nid = n.id;
+  el.style.cssText = `left:${n.x}px;top:${n.y}px;width:${nw(n)}px;min-height:${nh(n)}px;border-color:${n.color}22;box-shadow:0 4px 24px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.04);`;
+
+  if (['nextjs','convex','nvidia'].includes(n.id)) {
+    const ring = document.createElement('div'); ring.className='n-pulse';
+    ring.style.borderColor = n.color+'28'; el.appendChild(ring);
+  }
+
+  const hdr = document.createElement('div'); hdr.className='n-header';
+  const ico = document.createElement('div'); ico.className='n-ico';
+  ico.style.background = n.color+'18'; ico.textContent = n.icon;
+  const title = document.createElement('div'); title.className='n-title';
+  title.textContent = n.label;
+  title.style.color = (n.color==='#f1f5f9'||n.color==='#e2e8f0') ? '#f1f5f9' : n.color;
+  hdr.appendChild(ico); hdr.appendChild(title); el.appendChild(hdr);
+
+  const sub = document.createElement('div'); sub.className='n-sub';
+  sub.textContent = n.sub; el.appendChild(sub);
+
+  const badge = document.createElement('div'); badge.className='n-badge';
+  badge.style.cssText = `background:${n.color}15;color:${n.color};border:1px solid ${n.color}28;`;
+  badge.textContent = {external:'client',app:'app',service:'service',package:'package',infra:'infra'}[n.type]||n.type;
+  el.appendChild(badge);
+
+  el.addEventListener('mousedown',    e => onNodeMD(e, n.id));
+  el.addEventListener('click',        e => onNodeClick(e, n.id));
+  el.addEventListener('dblclick',     e => onNodeDbl(e, n.id));
+  el.addEventListener('contextmenu',  e => onNodeCtx(e, n.id));
+  el.addEventListener('mouseenter',   () => { _hoverNode=n.id; if(connMode&&connFrom) renderNodes(); });
+  el.addEventListener('mouseleave',   () => { _hoverNode=null;  if(connMode&&connFrom) renderNodes(); });
+  return el;
+}
+
+function render() {
+  renderNodes(); renderConns(); updateStatus();
+}
+
+function updateStatus() {
+  document.getElementById('s-nodes').textContent = nodes.length + ' nodes';
+  document.getElementById('s-conns').textContent = (conns.length + (proposed?.conns.length||0)) + ' connections';
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   NODE EVENTS
+═══════════════════════════════════════════════════════════════ */
+
+function onNodeMD(e, id) {
+  if (connMode || e.button!==0) return;
+  e.stopPropagation(); closeCtx();
+  const w = screenToWorld(e.clientX, e.clientY);
+  const n = nodes.find(n => n.id===id);
+  drag = { id, ox: w.x-n.x, oy: w.y-n.y };
+  selNode=id; selConn=null; renderNodes();
+}
+
+function onNodeClick(e, id) {
+  if (!connMode) return;
+  e.stopPropagation();
+  if (!connFrom) {
+    connFrom=id; renderNodes(); document.getElementById('hint').classList.add('on');
+  } else if (connFrom!==id) {
+    conns.push({ id:'u'+Date.now(), from:connFrom, to:id, label:'Custom', color:'#60a5fa', type:'flow' });
+    stopConnMode(); render();
+  }
+}
+
+function onNodeDbl(e, id) {
+  e.stopPropagation();
+  const n = nodes.find(n=>n.id===id); if (!n) return;
+  const el = document.getElementById('n-'+id);
+  const titleEl = el?.querySelector('.n-title'); if (!titleEl) return;
+  const inp = document.createElement('input');
+  inp.className='n-edit'; inp.value=n.label;
+  inp.style.color = titleEl.style.color;
+  titleEl.replaceWith(inp); inp.focus(); inp.select();
+  const done = () => {
+    n.label = inp.value.trim()||n.label;
+    const t = document.createElement('div'); t.className='n-title';
+    t.textContent=n.label; t.style.color=inp.style.color;
+    inp.replaceWith(t);
+  };
+  inp.addEventListener('blur', done);
+  inp.addEventListener('keydown', e => { if(e.key==='Enter'||e.key==='Escape') inp.blur(); });
+}
+
+function onNodeCtx(e, id) {
+  e.preventDefault(); e.stopPropagation();
+  ctxId=id; ctxType='node'; selNode=id; selConn=null;
+  renderNodes(); showCtx(e.clientX, e.clientY);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   CANVAS EVENTS
+═══════════════════════════════════════════════════════════════ */
+
+$canvas.addEventListener('mousedown', e => {
+  if (e.button!==0||connMode) return;
+  closeCtx(); selNode=null; selConn=null;
+  pan = { sx:e.clientX, sy:e.clientY, vx:view.x, vy:view.y };
+  $canvas.classList.add('panning'); renderNodes();
+});
+
+window.addEventListener('mousemove', e => {
+  if (drag) {
+    const w = screenToWorld(e.clientX, e.clientY);
+    const n = nodes.find(n=>n.id===drag.id);
+    if (n) {
+      n.x=w.x-drag.ox; n.y=w.y-drag.oy;
+      const el = document.getElementById('n-'+n.id);
+      if (el) { el.style.left=n.x+'px'; el.style.top=n.y+'px'; }
+      renderConns();
+    }
+  } else if (pan) {
+    view.x=pan.vx+(e.clientX-pan.sx); view.y=pan.vy+(e.clientY-pan.sy);
+    applyView();
+  }
+
+  // Sidebar drag ghost + drop highlight
+  if (sbDrag?.active) {
+    const ghost = document.getElementById('drag-ghost');
+    ghost.style.left = e.clientX+'px'; ghost.style.top = e.clientY+'px';
+
+    // Check if over canvas
+    const r = $canvas.getBoundingClientRect();
+    const overCanvas = e.clientX>r.left && e.clientX<r.right && e.clientY>r.top && e.clientY<r.bottom;
+    if (overCanvas) {
+      // Show optimal drop position highlight
+      const pos = calcOptimalPos(sbDrag.service);
+      const hl = document.getElementById('drop-highlight');
+      const hw = 180, hh = 80;
+      hl.style.left   = (pos.x - hw/2) + 'px';
+      hl.style.top    = (pos.y - hh/2) + 'px';
+      hl.style.width  = hw + 'px';
+      hl.style.height = hh + 'px';
+      hl.classList.add('on');
+    } else {
+      document.getElementById('drop-highlight').classList.remove('on');
+    }
+  }
+
+  // Connect mode temp line
+  if (connMode && connFrom) {
+    const w = screenToWorld(e.clientX, e.clientY);
+    const fn = nodes.find(n=>n.id===connFrom);
+    if (fn) { const ep=edgePt(fn,w.x,w.y); _tempConn=bezier(ep.x,ep.y,w.x,w.y); renderConns(); }
+  }
+});
+
+window.addEventListener('mouseup', e => {
+  if (sbDrag?.active) {
+    const ghost = document.getElementById('drag-ghost');
+    ghost.classList.remove('active');
+    document.getElementById('drop-highlight').classList.remove('on');
+
+    // Check if dropped on canvas
+    const r = $canvas.getBoundingClientRect();
+    const overCanvas = e.clientX>r.left && e.clientX<r.right && e.clientY>r.top && e.clientY<r.bottom;
+    if (overCanvas) proposeService(sbDrag.service);
+    sbDrag = null;
+  }
+  drag=null; pan=null;
+  $canvas.classList.remove('panning');
+});
+
+$canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  const factor = e.deltaY<0 ? 1.12 : 1/1.12;
+  const r=$canvas.getBoundingClientRect();
+  const mx=e.clientX-r.left, my=e.clientY-r.top;
+  const cx=(mx-view.x)/view.s, cy=(my-view.y)/view.s;
+  view.s=Math.max(0.12, Math.min(5, view.s*factor));
+  view.x=mx-cx*view.s; view.y=my-cy*view.s;
+  applyView();
+}, { passive:false });
+
+$canvas.addEventListener('click', () => { closeCtx(); });
+
+window.addEventListener('keydown', e => {
+  if (isTyping()) return;
+  if (e.key==='Escape') { stopConnMode(); closeCtx(); if(proposed) rejectProposed(); }
+  if (e.key==='Delete'||e.key==='Backspace') {
+    if (selNode) { deleteNode(selNode); } else if (selConn) { deleteConn(selConn); }
+  }
+  if (e.key==='f'||e.key==='F') fitAll();
+  if (e.key==='c'||e.key==='C') toggleConnMode();
+  if (e.key==='r'||e.key==='R') confirmReset();
+});
+
+function isTyping() { const t=document.activeElement?.tagName; return t==='INPUT'||t==='TEXTAREA'; }
+
+/* ═══════════════════════════════════════════════════════════════
+   TOOLBAR
+═══════════════════════════════════════════════════════════════ */
+
+document.getElementById('btn-connect').addEventListener('click', toggleConnMode);
+document.getElementById('btn-reset').addEventListener('click', confirmReset);
+document.getElementById('btn-zi').addEventListener('click', () => { view.s=Math.min(5,view.s*1.2); applyView(); });
+document.getElementById('btn-zo').addEventListener('click', () => { view.s=Math.max(0.12,view.s/1.2); applyView(); });
+document.getElementById('btn-fit').addEventListener('click', fitAll);
+document.getElementById('btn-del').addEventListener('click', () => { if(selNode) deleteNode(selNode); else if(selConn) deleteConn(selConn); });
+
+function toggleConnMode() {
+  connMode=!connMode;
+  document.getElementById('btn-connect').classList.toggle('active', connMode);
+  $canvas.classList.toggle('connect', connMode);
+  if (!connMode) stopConnMode();
+  else document.getElementById('hint').classList.add('on');
+}
+
+function stopConnMode() {
+  connMode=false; connFrom=null; _tempConn=null;
+  document.getElementById('btn-connect').classList.remove('active');
+  $canvas.classList.remove('connect');
+  document.getElementById('hint').classList.remove('on');
+  renderConns(); renderNodes();
+}
+
+function confirmReset() {
+  if (!confirm('Reset all nodes and connections to default?')) return;
+  if (proposed) rejectProposed(true);
+  proposed=null;
+  nodes=NODES_DEFAULT.map(n=>({...n}));
+  conns=CONNS_DEFAULT.map(c=>({...c}));
+  selNode=null; selConn=null;
+  $nodes.innerHTML='';
+  hideAnalysisPanel();
+  render();
+  setTimeout(fitAll, 60);
+}
+
+function deleteNode(id) {
+  if (proposed?.nodeId===id) { rejectProposed(); return; }
+  nodes=nodes.filter(n=>n.id!==id);
+  conns=conns.filter(c=>c.from!==id&&c.to!==id);
+  document.getElementById('n-'+id)?.remove();
+  if (selNode===id) selNode=null;
+  renderConns(); updateStatus();
+}
+
+function deleteConn(id) {
+  conns=conns.filter(c=>c.id!==id);
+  if (selConn===id) selConn=null;
+  renderConns(); updateStatus();
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   CONTEXT MENU
+═══════════════════════════════════════════════════════════════ */
+
+const $ctx = document.getElementById('ctx');
+function showCtx(x, y) {
+  const isNode = ctxType==='node';
+  document.getElementById('cm-rename').style.display = isNode ? '' : 'none';
+  document.getElementById('cm-conn').style.display   = isNode ? '' : 'none';
+  $ctx.style.left=x+'px'; $ctx.style.top=y+'px';
+  $ctx.classList.add('on');
+}
+function closeCtx() { $ctx.classList.remove('on'); }
+
+document.getElementById('cm-rename').addEventListener('click', () => { if(ctxType==='node') onNodeDbl({stopPropagation:()=>{}}, ctxId); closeCtx(); });
+document.getElementById('cm-conn').addEventListener('click', () => {
+  if (ctxType==='node') { connMode=true; connFrom=ctxId; document.getElementById('btn-connect').classList.add('active'); $canvas.classList.add('connect'); document.getElementById('hint').classList.add('on'); renderNodes(); }
+  closeCtx();
+});
+document.getElementById('cm-del').addEventListener('click', () => {
+  if (ctxType==='node') deleteNode(ctxId); else deleteConn(ctxId);
+  closeCtx();
+});
+document.addEventListener('click', e => { if(!$ctx.contains(e.target)) closeCtx(); });
+
+/* ═══════════════════════════════════════════════════════════════
+   SIDEBAR DRAG + TOOLTIP
+═══════════════════════════════════════════════════════════════ */
+
+function buildSidebar() {
+  const scroll = document.getElementById('sidebar-scroll');
+  scroll.innerHTML = '';
+  CATALOGUE.forEach(group => {
+    const sec = document.createElement('div');
+    sec.className = 'sb-section'; sec.textContent = group.group;
+    scroll.appendChild(sec);
+
+    group.items.forEach(svc => {
+      const card = document.createElement('div');
+      card.className = 'svc-card';
+      card.innerHTML = `
+        <div class="svc-ico" style="background:${svc.color}18">${svc.icon}</div>
+        <div class="svc-info">
+          <div class="svc-name" style="color:${svc.color}">${svc.label}</div>
+          <div class="svc-desc">${svc.desc}</div>
+        </div>
+        <div class="svc-grab">⠿</div>
+      `;
+
+      // Tooltip on hover
+      card.addEventListener('mouseenter', e => showTooltip(svc, e.clientX, e.clientY));
+      card.addEventListener('mousemove',  e => moveTooltip(e.clientX, e.clientY));
+      card.addEventListener('mouseleave', hideTooltip);
+
+      // Drag from sidebar
+      card.addEventListener('mousedown', e => {
+        if (e.button!==0) return;
+        const ghost = document.getElementById('drag-ghost');
+        document.getElementById('dg-ico').textContent = svc.icon;
+        document.getElementById('dg-ico').style.background = svc.color+'18';
+        document.getElementById('dg-label').textContent = svc.label;
+        document.getElementById('dg-label').style.color = svc.color;
+        ghost.style.left = e.clientX+'px'; ghost.style.top = e.clientY+'px';
+        ghost.classList.add('active');
+        sbDrag = { service:svc, active:true };
+        hideTooltip();
+        e.preventDefault();
+      });
+
+      // Click also proposes
+      card.addEventListener('click', () => { proposeService(svc); });
+
+      scroll.appendChild(card);
+    });
+  });
+}
+
+const $tip = document.getElementById('tooltip');
+function showTooltip(svc, mx, my) {
+  document.getElementById('tt-title').textContent = `💡 ${svc.label} · Fit: ${svc.fit.verdict}`;
+  document.getElementById('tt-body').textContent  = svc.tip + ` Score: ${svc.fit.score}/5.`;
+  moveTooltip(mx, my); $tip.classList.add('on');
+}
+function moveTooltip(mx, my) {
+  $tip.style.left = Math.min(mx-260, window.innerWidth-265)+'px';
+  $tip.style.top  = Math.max(60, Math.min(my-10, window.innerHeight-120))+'px';
+}
+function hideTooltip() { $tip.classList.remove('on'); }
+
+/* ═══════════════════════════════════════════════════════════════
+   INIT
+═══════════════════════════════════════════════════════════════ */
+
+buildSidebar();
+render();
+applyView();
+setTimeout(fitAll, 80);
+
+</script>
+</body>
+</html>

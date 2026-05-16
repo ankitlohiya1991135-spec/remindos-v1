@@ -16,13 +16,11 @@ export default async function AdminBroadcastsPage() {
           Broadcasts
         </h1>
         <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
-          Send a notification to a user segment. You can recall any broadcast
-          you sent. Superadmins can recall anyone&apos;s broadcast.
+          Send a notification to a user segment. Any admin can recall any broadcast.
         </p>
       </header>
       <BroadcastsClient
         viewerUserId={guard.userId}
-        viewerRole={guard.role}
       />
     </div>
   );

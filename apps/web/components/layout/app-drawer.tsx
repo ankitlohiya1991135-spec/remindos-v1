@@ -51,9 +51,9 @@ export function AppDrawer() {
   // Reactively re-pull this user's Clerk metadata whenever:
   //   1. an admin endpoint anywhere in the app reports the metadata moved,
   //      AND the change is about THIS signed-in user (covers self-flip
-  //      paths and superadmin-issued role changes for the current user);
+  //      paths and admin-issued role changes for the current user);
   //   2. the tab regains visibility (covers the cross-tab case where a
-  //      different superadmin demoted/promoted you while you were away).
+  //      different admin demoted/promoted you while you were away).
   // Calling user.reload() refreshes publicMetadata in-place; the next
   // render of `isAdmin` below picks up the new value, so the
   // "User Management" link appears or disappears without a page refresh.
@@ -93,9 +93,9 @@ export function AppDrawer() {
 
   // Type-safe admin check via @repo/admin (no `as` casts thanks to the
   // global UserPublicMetadata augmentation in that package). True for
-  // BOTH `admin` and `superadmin`. NOTE: This is UI-gating only — every
-  // admin API route also re-verifies server-side, so a user can't see
-  // admin data even if they spoof this.
+  // the `admin` role. NOTE: This is UI-gating only — every admin API
+  // route also re-verifies server-side, so a user can't see admin data
+  // even if they spoof this.
   const isAdmin = canAccessAdmin(getRoleFromPublicMetadata(user?.publicMetadata));
 
   const dispatch = (eventName: string) => {

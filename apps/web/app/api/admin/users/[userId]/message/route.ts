@@ -22,8 +22,8 @@ function jsonError(payload: AdminApiError, status: number) {
 /**
  * POST /api/admin/users/[userId]/message
  *
- * Send a direct message to a single user. Available to admin AND
- * superadmin. Inserts a notification into the user's notification feed.
+ * Send a direct message to a single user. Available to all admins.
+ * Inserts a notification into the user's notification feed.
  */
 export async function POST(
   request: Request,

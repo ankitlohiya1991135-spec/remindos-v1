@@ -93,8 +93,13 @@ export default async function RootLayout({
                     </Link>
                   </Show>
                   <Show when="signed-in">
-                    <OpenRemindersButton />
-                    <DrawerTrigger />
+                    {/* Bell: only show on mobile — sm+ breakpoints have their own NotificationBell inside the workspace toolbar / sidebar */}
+                    <span className="inline-flex sm:hidden">
+                      <OpenRemindersButton />
+                    </span>
+                    <span className="hidden lg:inline-flex">
+                      <DrawerTrigger />
+                    </span>
                   </Show>
                 </div>
               </div>

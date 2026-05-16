@@ -11,15 +11,9 @@
  * Canonical role values stored on Clerk `publicMetadata.userType`.
  *
  * Hierarchy (highest → lowest privilege):
- *   superadmin → admin → user
- *
- * `superadmin` is intentionally HIDDEN: when an admin views the user list,
- * a superadmin appears with whatever `displayRole` the superadmin chose
- * (typically "user" or "admin"). Only superadmins ever see real roles in
- * the UI. See `getDisplayRole()` and the `actualRole` field in
- * `AdminListedUser`.
+ *   admin → user
  */
-export const USER_ROLES = ["superadmin", "admin", "user"] as const;
+export const USER_ROLES = ["admin", "user"] as const;
 export type UserRole = (typeof USER_ROLES)[number];
 
 /** Default role assumed when `publicMetadata.userType` is missing. */
@@ -34,14 +28,7 @@ declare global {
     /** Real, access-controlling role. Defaults to "user" if absent. */
     userType?: UserRole;
     /**
-     * Optional UI-only override. When set, non-superadmin viewers see this
-     * value instead of `userType`. Lets a superadmin masquerade as "user"
-     * or "admin" so admins cannot identify them. NEVER read this in any
-     * authorization check — it has no security meaning.
-     */
-    displayRole?: UserRole;
-    /**
-     * Soft-deactivation marker set by a superadmin. We ALSO ban the user
+     * Soft-deactivation marker set by an admin. We ALSO ban the user
      * via Clerk for hard enforcement; this flag is for UI/audit clarity
      * and survives even if a Clerk-level un-ban is performed.
      */
@@ -57,18 +44,8 @@ export interface AdminListedUser {
   lastName: string;
   username: string;
   imageUrl: string;
-  /**
-   * What the viewer should display. For non-superadmin viewers this is the
-   * potentially-masked `displayRole`; for superadmins it is also the
-   * displayRole (so they see exactly what admins see).
-   */
+  /** The user's role. */
   role: UserRole;
-  /**
-   * The real `userType`. Only present when the request was made by a
-   * superadmin — admins receive `undefined` so they cannot identify hidden
-   * superadmins from the API response.
-   */
-  actualRole?: UserRole;
   /** Banned in Clerk OR `deactivated: true` in publicMetadata. */
   deactivated: boolean;
   createdAt: number;
@@ -107,8 +84,7 @@ export interface AdminUserActivity {
   /**
    * Rough token-count estimate from chat content alone. Does NOT include
    * the wiki + digest + JSON context the chat route appends per turn, so
-   * real upstream usage is higher. Real instrumentation is a follow-up
-   * (capture `usage` from the NIM API response and store on each row).
+   * real upstream usage is higher.
    */
   tokenEstimate: {
     inputTokens: number;       // sum across user/system messages
@@ -118,8 +94,7 @@ export interface AdminUserActivity {
   };
   /**
    * Privacy-safe usage timing — derived from anonymous heartbeat pings sent
-   * while the user has the app open. Stores no content. Visible to admins
-   * (not just superadmins) so they can see *how much* a user uses the app.
+   * while the user has the app open. Stores no content.
    */
   sessionStats: {
     totalActiveMs: number;
@@ -128,7 +103,7 @@ export interface AdminUserActivity {
     sessionCount: number;
     lastSeenAt: number | null;
   };
-  /** Recent notifications (superadmin-only). */
+  /** Recent notifications for this user. */
   recentNotifications?: Array<{
     id: string;
     type: string;
@@ -137,7 +112,7 @@ export interface AdminUserActivity {
     read: boolean;
     createdAt: number;
   }>;
-  /** Recent reminders summary (superadmin-only). */
+  /** Recent reminders summary. */
   recentReminders?: Array<{
     id: string;
     title: string;
@@ -147,12 +122,10 @@ export interface AdminUserActivity {
   }>;
 }
 
-/** Body shape for `POST /api/admin/users/[userId]/role` (superadmin-only). */
+/** Body shape for `POST /api/admin/users/[userId]/role`. */
 export interface UpdateUserRoleRequest {
-  /** Set the access-controlling role. Optional. */
-  userType?: UserRole;
-  /** Set the UI-only display override. Optional. Pass `null` to clear. */
-  displayRole?: UserRole | null;
+  /** Set the access-controlling role. */
+  userType: UserRole;
 }
 
 /** Body shape for `POST /api/admin/users/[userId]/deactivate`. */

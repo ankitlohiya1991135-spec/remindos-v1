@@ -115,6 +115,12 @@ export function OpenRemindersButton() {
       ? `${missedCount} overdue reminder${missedCount === 1 ? "" : "s"}`
       : "Open reminders";
 
+  // On the dashboard the bottom-nav Reminders tab already provides bell / reminder
+  // access at mobile and tablet viewports — rendering this header bell there too
+  // would show a visible duplicate. All hooks are already called above so this
+  // conditional return is safe per the Rules of Hooks.
+  if (pathname === "/dashboard") return null;
+
   return (
     <button
       type="button"

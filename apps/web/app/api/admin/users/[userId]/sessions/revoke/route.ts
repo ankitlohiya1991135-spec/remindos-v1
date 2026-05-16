@@ -1,7 +1,7 @@
 import { clerkClient } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import {
-  checkSuperadminRequest,
+  checkAdminRequest,
   recordAuditEvent,
 } from "@repo/admin/server";
 import type { AdminApiError } from "@repo/admin/types";
@@ -15,7 +15,7 @@ function jsonError(payload: AdminApiError, status: number) {
 /**
  * POST /api/admin/users/[userId]/sessions/revoke
  *
- * Superadmin-only. Force-signs-out a user from every device by revoking
+ * Admin-only. Force-signs-out a user from every device by revoking
  * all their active Clerk sessions. They'll have to sign in again to use
  * the app. Does not affect their account beyond that.
  *
@@ -25,7 +25,7 @@ export async function POST(
   _request: Request,
   context: { params: Promise<{ userId: string }> },
 ) {
-  const guard = await checkSuperadminRequest();
+  const guard = await checkAdminRequest();
   if (!guard.ok) {
     return jsonError(
       { error: guard.reason, code: guard.status === 401 ? "UNAUTHORIZED" : "FORBIDDEN" },
@@ -62,7 +62,7 @@ export async function POST(
     }
 
     await recordAuditEvent({
-      actor: { userId: guard.userId, role: "superadmin" },
+      actor: { userId: guard.userId, role: "admin" },
       action: "USER_SESSIONS_REVOKED",
       targetUserId,
       metadata: { revoked, totalActive: sessions.data.length },

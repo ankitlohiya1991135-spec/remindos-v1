@@ -15,8 +15,6 @@ interface DetailUser {
   username: string;
   imageUrl: string;
   role: UserRole;
-  /** Only present in API response when caller is superadmin. */
-  actualRole?: UserRole;
   deactivated: boolean;
   createdAt: number;
   lastSignInAt: number | null;
@@ -134,13 +132,6 @@ export function AdminUserDetailClient({ userId }: { userId: string }) {
     estimatedCostUsd: 0,
   };
 
-  // Caller is a superadmin iff the API exposed `actualRole`. The API only
-  // sets that field for verified-superadmin requests, so the presence of
-  // the field is itself a signal. We do NOT trust this for any access
-  // decision — the server enforces all destructive endpoints anyway.
-  const callerIsSuperadmin = user.actualRole !== undefined;
-  const realRole = user.actualRole ?? user.role;
-
   return (
     <div className="space-y-5">
       {/* User header */}
@@ -189,22 +180,15 @@ export function AdminUserDetailClient({ userId }: { userId: string }) {
         </div>
       </header>
 
-      {/* Superadmin actions panel — only rendered when the API marked the
-          caller as superadmin (presence of actualRole). Server re-verifies
-          on every action regardless. */}
-      {callerIsSuperadmin && (
-        <SuperadminActionsPanel
-          userId={user.id}
-          realRole={realRole}
-          displayRole={user.role}
-          deactivated={user.deactivated}
-          onChanged={() => void refetch()}
-        />
-      )}
+      {/* Admin actions panel — always visible to admins. Server re-verifies on every action. */}
+      <AdminActionsPanel
+        userId={user.id}
+        role={user.role}
+        deactivated={user.deactivated}
+        onChanged={() => void refetch()}
+      />
 
-      {/* Stat cards — counts only, no content. Visible to all admins.
-          Recent message text / reminder titles / notifications stay
-          superadmin-only further down the page. */}
+      {/* Stat cards */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <StatCard label="Total prompts" value={activity.totalPrompts} />
         <StatCard label="Prompts (24h)" value={activity.promptsLast24h} />
@@ -234,37 +218,29 @@ export function AdminUserDetailClient({ userId }: { userId: string }) {
           value={formatDuration(sessionStats.totalActiveMs)}
           hint="aggregate across all sessions"
         />
-        {callerIsSuperadmin && (
-          <StatCard
-            label="Tokens (msgs only)"
-            value={tokenEstimate.totalTokens.toLocaleString()}
-            hint={`${tokenEstimate.inputTokens.toLocaleString()} in · ${tokenEstimate.outputTokens.toLocaleString()} out`}
-          />
-        )}
-        {callerIsSuperadmin && (
-          <StatCard
-            label="Est. cost (USD)"
-            value={`$${tokenEstimate.estimatedCostUsd.toFixed(4)}`}
-            hint="lower bound — see details"
-          />
-        )}
+        <StatCard
+          label="Tokens (msgs only)"
+          value={tokenEstimate.totalTokens.toLocaleString()}
+          hint={`${tokenEstimate.inputTokens.toLocaleString()} in · ${tokenEstimate.outputTokens.toLocaleString()} out`}
+        />
+        <StatCard
+          label="Est. cost (USD)"
+          value={`$${tokenEstimate.estimatedCostUsd.toFixed(4)}`}
+          hint="lower bound — see details"
+        />
       </div>
 
       <p className="text-[11px] text-slate-400">
-        {callerIsSuperadmin
-          ? "Token estimates count chat message text only. Real upstream usage is higher because each turn also includes wiki + digest context."
-          : "Activity counts only. Message content, reminder titles, and notifications are hidden from admins."}
+        Token estimates count chat message text only. Real upstream usage is higher because each turn also includes wiki + digest context.
       </p>
 
-      {/* Direct message + internal notes — both visible to all admin
-          viewers. The admin notes panel shows author display names but
-          masks author tier so admins cannot infer hidden roles. */}
+      {/* Direct message + internal notes */}
       <div className="grid gap-4 lg:grid-cols-2">
         <AdminDmPanel userId={user.id} />
         <AdminNotesPanel userId={user.id} />
       </div>
 
-      {/* Daily activity histogram — counts only, safe for all admins. */}
+      {/* Daily activity histogram */}
       <section className="rounded-2xl border border-slate-200 bg-white p-5 dark:border-slate-800 dark:bg-slate-900">
         <h3 className="mb-3 text-sm font-bold text-slate-900 dark:text-slate-100">
           Daily prompt activity (last 14 days)
@@ -287,55 +263,51 @@ export function AdminUserDetailClient({ userId }: { userId: string }) {
         </div>
       </section>
 
-      {callerIsSuperadmin && (
-        <>
-          {/* Recent prompts */}
-          <section className="rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
-            <header className="flex items-center justify-between border-b border-slate-100 px-5 py-3 dark:border-slate-800">
-              <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                Recent messages
-              </h3>
+      {/* Recent prompts */}
+      <section className="rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+        <header className="flex items-center justify-between border-b border-slate-100 px-5 py-3 dark:border-slate-800">
+          <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+            Recent messages
+          </h3>
+          <span className="text-xs text-slate-400">
+            {recentPrompts.length} shown · previews truncated
+          </span>
+        </header>
+        <ul className="divide-y divide-slate-100 dark:divide-slate-800">
+          {recentPrompts.length === 0 && (
+            <li className="px-5 py-6 text-center text-sm text-slate-400">
+              No chat messages.
+            </li>
+          )}
+          {recentPrompts.map((row) => (
+            <li
+              key={row.clientId}
+              className="grid gap-1 px-5 py-3 sm:grid-cols-[7rem_5rem_1fr] sm:gap-3"
+            >
               <span className="text-xs text-slate-400">
-                {recentPrompts.length} shown · previews truncated
+                {formatDateTime(row.createdAt)}
               </span>
-            </header>
-            <ul className="divide-y divide-slate-100 dark:divide-slate-800">
-              {recentPrompts.length === 0 && (
-                <li className="px-5 py-6 text-center text-sm text-slate-400">
-                  No chat messages.
-                </li>
-              )}
-              {recentPrompts.map((row) => (
-                <li
-                  key={row.clientId}
-                  className="grid gap-1 px-5 py-3 sm:grid-cols-[7rem_5rem_1fr] sm:gap-3"
-                >
-                  <span className="text-xs text-slate-400">
-                    {formatDateTime(row.createdAt)}
-                  </span>
-                  <span
-                    className={`w-fit rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
-                      row.role === "user"
-                        ? "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-300"
-                        : row.role === "assistant"
-                        ? "bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300"
-                        : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"
-                    }`}
-                  >
-                    {row.role}
-                  </span>
-                  <p className="whitespace-pre-wrap break-words text-sm text-slate-700 dark:text-slate-200">
-                    {row.contentPreview}
-                  </p>
-                </li>
-              ))}
-            </ul>
-          </section>
-        </>
-      )}
+              <span
+                className={`w-fit rounded-full px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                  row.role === "user"
+                    ? "bg-cyan-100 text-cyan-700 dark:bg-cyan-900/40 dark:text-cyan-300"
+                    : row.role === "assistant"
+                    ? "bg-violet-100 text-violet-700 dark:bg-violet-900/40 dark:text-violet-300"
+                    : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+                }`}
+              >
+                {row.role}
+              </span>
+              <p className="whitespace-pre-wrap break-words text-sm text-slate-700 dark:text-slate-200">
+                {row.contentPreview}
+              </p>
+            </li>
+          ))}
+        </ul>
+      </section>
 
-      {/* Superadmin-only: recent reminders */}
-      {callerIsSuperadmin && activity.recentReminders && (
+      {/* Recent reminders */}
+      {activity.recentReminders && (
         <section className="rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
           <header className="flex items-center justify-between border-b border-slate-100 px-5 py-3 dark:border-slate-800">
             <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
@@ -382,8 +354,8 @@ export function AdminUserDetailClient({ userId }: { userId: string }) {
         </section>
       )}
 
-      {/* Superadmin-only: recent notifications */}
-      {callerIsSuperadmin && activity.recentNotifications && (
+      {/* Recent notifications */}
+      {activity.recentNotifications && (
         <section className="rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
           <header className="flex items-center justify-between border-b border-slate-100 px-5 py-3 dark:border-slate-800">
             <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
@@ -430,36 +402,25 @@ export function AdminUserDetailClient({ userId }: { userId: string }) {
   );
 }
 
-function SuperadminActionsPanel({
+function AdminActionsPanel({
   userId,
-  realRole,
-  displayRole,
+  role,
   deactivated,
   onChanged,
 }: {
   userId: string;
-  realRole: UserRole;
-  displayRole: UserRole;
+  role: UserRole;
   deactivated: boolean;
   onChanged: () => void;
 }) {
   const [working, setWorking] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [pendingUserType, setPendingUserType] = useState<UserRole>(realRole);
-  const [pendingDisplayRole, setPendingDisplayRole] = useState<UserRole | "">(
-    displayRole === realRole ? "" : displayRole,
-  );
+  const [pendingUserType, setPendingUserType] = useState<UserRole>(role);
 
   // Re-sync local form state whenever the parent feeds in fresh server data.
-  // Without this, the role <select> sticks on the *previous* value after a
-  // successful save → the user thinks the change didn't apply and reaches
-  // for refresh.
   useEffect(() => {
-    setPendingUserType(realRole);
-  }, [realRole]);
-  useEffect(() => {
-    setPendingDisplayRole(displayRole === realRole ? "" : displayRole);
-  }, [displayRole, realRole]);
+    setPendingUserType(role);
+  }, [role]);
 
   const callApi = useCallback(
     async (path: string, body: unknown) => {
@@ -477,9 +438,6 @@ function SuperadminActionsPanel({
           };
           throw new Error(payload.error ?? `Request failed (${res.status})`);
         }
-        // Tell the rest of the app this user's metadata just moved so they
-        // can re-pull (drawer admin link, user list row, etc.) without
-        // requiring a page refresh.
         broadcastUserMetadataChanged(userId);
         onChanged();
       } catch (err) {
@@ -492,16 +450,10 @@ function SuperadminActionsPanel({
   );
 
   const handleSaveRole = () => {
-    const userTypeChanged = pendingUserType !== realRole;
-    const wantedDisplayRole = pendingDisplayRole === "" ? null : pendingDisplayRole;
-    const currentDisplayOverride = displayRole === realRole ? null : displayRole;
-    const displayChanged = wantedDisplayRole !== currentDisplayOverride;
-    if (!userTypeChanged && !displayChanged) return;
-
-    const body: Record<string, unknown> = {};
-    if (userTypeChanged) body.userType = pendingUserType;
-    if (displayChanged) body.displayRole = wantedDisplayRole;
-    void callApi(`/api/admin/users/${encodeURIComponent(userId)}/role`, body);
+    if (pendingUserType === role) return;
+    void callApi(`/api/admin/users/${encodeURIComponent(userId)}/role`, {
+      userType: pendingUserType,
+    });
   };
 
   const handleToggleDeactivate = () => {
@@ -523,7 +475,7 @@ function SuperadminActionsPanel({
     <section className="rounded-2xl border border-rose-200 bg-rose-50/40 p-5 dark:border-rose-900/60 dark:bg-rose-950/20">
       <header className="mb-3 flex items-center gap-2">
         <span className="rounded-full bg-rose-600 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-white">
-          Superadmin
+          Admin
         </span>
         <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
           Manage this user
@@ -533,7 +485,7 @@ function SuperadminActionsPanel({
       <div className="grid gap-4 sm:grid-cols-2">
         <div>
           <label className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
-            Real role (controls access)
+            Role (controls access)
           </label>
           <select
             value={pendingUserType}
@@ -547,30 +499,6 @@ function SuperadminActionsPanel({
               </option>
             ))}
           </select>
-        </div>
-
-        <div>
-          <label className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
-            Display override (UI only)
-          </label>
-          <select
-            value={pendingDisplayRole}
-            onChange={(e) =>
-              setPendingDisplayRole(e.target.value as UserRole | "")
-            }
-            disabled={working}
-            className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
-          >
-            <option value="">— none (show real role) —</option>
-            {USER_ROLES.map((r) => (
-              <option key={r} value={r}>
-                show as: {r}
-              </option>
-            ))}
-          </select>
-          <p className="mt-1 text-[10px] text-slate-400">
-            Cosmetic only. Other admins will see this label instead of the real role.
-          </p>
         </div>
       </div>
 
@@ -597,7 +525,7 @@ function SuperadminActionsPanel({
         </button>
       </div>
 
-      {/* Destructive actions — superadmin only, fenced off for clarity. */}
+      {/* Destructive actions */}
       <div className="mt-5 border-t border-rose-300/50 pt-4 dark:border-rose-900/40">
         <p className="mb-2 text-[11px] font-bold uppercase tracking-wider text-rose-700 dark:text-rose-300">
           Destructive actions
@@ -692,7 +620,6 @@ function HardDeleteButton({
       setConfirmPhrase("");
       broadcastUserMetadataChanged(userId);
       onChanged();
-      // Most callers will navigate away; we still call onChanged for safety.
       window.location.href = "/admin";
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e));

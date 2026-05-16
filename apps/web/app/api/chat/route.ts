@@ -76,6 +76,18 @@ interface ReminderAgentAction {
   listedIds?: string[];
   /** Only on clarify (no-time create): suggested dueAt ISO from profile/domain analysis */
   suggestedDueAt?: string;
+  /** Only on clarify (disambiguation): pending operation type so the client doesn't start the create wizard */
+  pendingOp?: "mark_done" | "delete" | "reschedule" | "edit" | "snooze";
+  /** Only on clarify (disambiguation): IDs of ambiguous reminder candidates */
+  candidateIds?: string[];
+  /** Only on clarify (reschedule disambiguation): the already-parsed new due date ISO string */
+  pendingDueAt?: string;
+  /** Only on clarify (edit disambiguation): which field is being edited */
+  pendingField?: "title" | "notes";
+  /** Only on clarify (edit disambiguation): the new value for the field */
+  pendingValue?: string;
+  /** Only on clarify (snooze disambiguation): snooze delay in minutes */
+  pendingDelayMinutes?: number;
 }
 
 interface ReminderAgentResponse {
@@ -88,7 +100,7 @@ interface ReminderAgentResponse {
 const NIM_BASE_URL = "https://integrate.api.nvidia.com/v1";
 const DEFAULT_MODEL = "mistralai/mistral-medium-3.5-128b";
 const DEFAULT_CHAT_REMINDER_TITLE = "Reminder";
-const MAX_HISTORY_TURNS = 20; // last 10 user/assistant pairs — Issue 5 fix
+const MAX_HISTORY_TURNS = 10; // last 5 user/assistant pairs — reduced to prevent context bloat
 
 // ─── FLAW-3: simple per-user rate limiter (20 req/min) ───────────────────────
 const rateLimitStore = new Map<string, { count: number; resetAt: number }>();
@@ -148,7 +160,43 @@ IMPORTANT RULES FOR ACTIONS:
 - Never set action.type to "mark_done" or "delete_reminder" for bulk requests; use "bulk_action" instead.
 - Only emit one action per response. If the request is ambiguous, emit clarify.
 
-Keep "reply" helpful and concise but include enough detail (titles, times, notes) when relevant.
+REPLY FORMATTING — the UI renders markdown; use it whenever the reply has structure.
+
+RULE 1 — Simple action confirmations (created / done / deleted / rescheduled / snoozed):
+  One short sentence. No lists, no headers, no bold labels.
+  ✓ Reminder "Gym" created for tomorrow at 7:00 AM.
+  ✗ Here is the confirmation: the reminder titled Gym has been successfully created...
+
+RULE 2 — Clarify / single question: one sentence only.
+
+RULE 3 — Any list of 3 or more reminders or tasks: numbered list, one item per line.
+  Use format:  N. Title — Day Mon D at H:MM AM/PM
+  Example:
+  1. Pay rent — overdue 3d
+  2. Doctor call — Tue May 20 at 10:00 AM
+  3. Team standup — Today at 2:00 PM
+
+RULE 4 — Multi-period lists (Missed / Today / Tomorrow / Later): bold section headers + numbered sub-list.
+  Example:
+  **Missed (2):**
+  1. Pay rent — overdue 3d
+  2. Gym session — overdue 1d
+
+  **Today (3):**
+  1. Team standup — 2:00 PM
+  2. Call dentist — 4:00 PM
+  3. Evening walk — 6:00 PM
+
+RULE 5 — Insights, analysis, patterns, stats: one short intro sentence then bullet points, max 5 bullets.
+  Example:
+  Here are your patterns this week:
+  - Health reminders have a 40% completion rate.
+  - You consistently skip evening tasks after 8 PM.
+  - Finance tasks are your strongest domain (100% done).
+
+RULE 6 — NEVER write 3+ items as a comma-separated sentence. Always use a list.
+RULE 7 — NEVER exceed 2 prose sentences for any list-type answer.
+RULE 8 — Length limits: confirmations ≤ 100 chars · lists ≤ 400 chars · analysis ≤ 550 chars.
 
 SPELLING / TYPOS: Users often misspell reminder titles. If a message contains a word that closely resembles a reminder title in the digest (same first letter, similar length, off by 1-2 characters), treat it as that reminder. Match aggressively — better to answer about a probable reminder than to say you don't see it.
 
@@ -703,7 +751,7 @@ function safeAgentResponse(
     if (looksUnhelpful && reminders && reminders.length > 0) {
       return { reply: buildHelpfulFallback(reminders, timeZone), action: { type: "unknown" } };
     }
-    return parsed;
+    return { ...parsed, reply: polishReply(parsed.reply) };
   } catch {
     // Strip any code fences or JSON blobs (privacy: never leak full LLM JSON).
     const safe = text
@@ -712,7 +760,7 @@ function safeAgentResponse(
       .trim();
     // If the LLM produced any reasonable plain text, use it
     if (safe.length > 5 && safe.length < 600) {
-      return { reply: safe, action: { type: "unknown" } };
+      return { reply: polishReply(safe), action: { type: "unknown" } };
     }
     // Otherwise produce a helpful context-aware summary — NEVER a generic error
     const reply = reminders
@@ -720,6 +768,66 @@ function safeAgentResponse(
       : "I'm here to help with your reminders and tasks. Tell me what you'd like — list, create, complete, or update any reminder.";
     return { reply, action: { type: "unknown" } };
   }
+}
+
+// ─── Reply polish ─────────────────────────────────────────────────────────────
+// Lightweight post-processor that fixes the most common LLM formatting failures
+// without touching well-structured replies. Applied after safeAgentResponse so
+// even when the LLM ignores the system-prompt formatting rules, the UI still
+// receives clean, readable markdown.
+
+function polishReply(reply: string): string {
+  let r = reply.trim();
+
+  // 1. Collapse 3+ consecutive blank lines to a single blank line.
+  r = r.replace(/\n{3,}/g, "\n\n");
+
+  // 2. Convert inline numbered runs  "1) X  2) Y  3) Z"  to a newline list.
+  //    Matches when the same line contains at least three consecutive N) or N. tokens.
+  r = r.replace(
+    /^(.*?)(\d+[.)]\s+[^\n]+?)(?:\s{2,}|\s*[,;]\s*)(\d+[.)]\s+[^\n]+?)(?:\s{2,}|\s*[,;]\s*)(\d+[.)].+)$/gm,
+    (_, pre, a, b, c) => {
+      const prefix = pre.trim() ? `${pre.trim()}\n` : "";
+      return `${prefix}${a.trim()}\n${b.trim()}\n${c.trim()}`;
+    },
+  );
+
+  // 3. Convert "Section: item1, item2, item3" into a bold header + list when
+  //    there are 3+ comma-separated items after the colon.
+  r = r.replace(
+    /^([A-Z][^:\n]{1,30}):\s+([^\n]+,(?:[^\n]+,)+[^\n]+)$/gm,
+    (_, label, body) => {
+      const items = body.split(/,\s*/).map((s: string) => s.trim()).filter(Boolean);
+      if (items.length < 3) return `**${label}:**\n${body}`;
+      const list = items.map((item: string, i: number) => `${i + 1}. ${item}`).join("\n");
+      return `**${label} (${items.length}):**\n${list}`;
+    },
+  );
+
+  // 4. Convert "Section (N):\n" or "Section:\n" followed by plain sentences
+  //    (no existing bullet/number markers) to bolded headers so they stand out.
+  r = r.replace(/^([A-Z][^:\n]{1,30}(?:\s*\(\d+\))?):\s*$/gm, "**$1:**");
+
+  // 5. Trim trailing whitespace from each line.
+  r = r.split("\n").map((line) => line.trimEnd()).join("\n");
+
+  return r.trim();
+}
+
+// ─── Normalised title matching ──────────────────────────────────────────────
+// Collapse whitespace, hyphens and underscores so "fix up" ≡ "fixup".
+// Used in every fast-path `includes()` check so user phrasing differences
+// (e.g. "bathroom door fix up" vs "Bathroom door fixup") don't cause misses.
+function normalizeForMatch(s: string): string {
+  return s.toLowerCase().replace(/[\s\-_]+/g, "");
+}
+
+/** True if `rawTarget` appears in `title` under normalised comparison. */
+function titleIncludesTarget(title: string, rawTarget: string): boolean {
+  return (
+    title.toLowerCase().includes(rawTarget.toLowerCase()) ||
+    normalizeForMatch(title).includes(normalizeForMatch(rawTarget))
+  );
 }
 
 // ─── Gap 2: deterministic target extraction for mark-done / delete ────────────
@@ -1481,7 +1589,7 @@ export async function POST(request: Request) {
     const rawTarget = extractTargetFromMarkDone(message);
     if (rawTarget.length >= 2) {
       const matches = reminders.filter(
-        (r) => r.status === "pending" && r.title.toLowerCase().includes(rawTarget.toLowerCase()),
+        (r) => r.status === "pending" && titleIncludesTarget(r.title, rawTarget),
       );
       if (matches.length === 1) {
         const target = matches[0]!;
@@ -1497,7 +1605,7 @@ export async function POST(request: Request) {
         const sample = matches.slice(0, 2).map((r) => `"${r.title}" at ${formatDueInUserZone(r.dueAt, timeZone)}`);
         const r: ReminderAgentResponse = {
           reply: `Which one do you mean — ${sample.join(" or ")}?`,
-          action: { type: "clarify" },
+          action: { type: "clarify", pendingOp: "mark_done", candidateIds: matches.map((m) => m.id) },
         };
         void saveMessageServerSide(userId, "user", effectiveMessage);
         void saveMessageServerSide(userId, "assistant", r.reply);
@@ -1522,7 +1630,7 @@ export async function POST(request: Request) {
     const rawTarget = extractTargetFromDelete(message);
     if (rawTarget.length >= 2) {
       const matches = reminders.filter(
-        (r) => r.status === "pending" && r.title.toLowerCase().includes(rawTarget.toLowerCase()),
+        (r) => r.status === "pending" && titleIncludesTarget(r.title, rawTarget),
       );
       if (matches.length === 1) {
         const target = matches[0]!;
@@ -1538,7 +1646,7 @@ export async function POST(request: Request) {
         const sample = matches.slice(0, 2).map((r) => `"${r.title}" at ${formatDueInUserZone(r.dueAt, timeZone)}`);
         const r: ReminderAgentResponse = {
           reply: `Which one do you mean — ${sample.join(" or ")}?`,
-          action: { type: "clarify" },
+          action: { type: "clarify", pendingOp: "delete", candidateIds: matches.map((m) => m.id) },
         };
         void saveMessageServerSide(userId, "user", effectiveMessage);
         void saveMessageServerSide(userId, "assistant", r.reply);
@@ -1569,14 +1677,14 @@ export async function POST(request: Request) {
 
     if (!target && !isPronoun) {
       const matches = reminders.filter(
-        (r) => r.status === "pending" && r.title.toLowerCase().includes(rawTarget.toLowerCase()),
+        (r) => r.status === "pending" && titleIncludesTarget(r.title, rawTarget),
       );
       if (matches.length === 1) target = matches[0];
       if (matches.length > 1) {
         const sample = matches.slice(0, 2).map((r) => `"${r.title}" at ${formatDueInUserZone(r.dueAt, timeZone)}`);
         const r: ReminderAgentResponse = {
           reply: `Which one do you mean — ${sample.join(" or ")}?`,
-          action: { type: "clarify" },
+          action: { type: "clarify", pendingOp: "reschedule", candidateIds: matches.map((m) => m.id), pendingDueAt: newDueAt },
         };
         void saveMessageServerSide(userId, "user", effectiveMessage);
         void saveMessageServerSide(userId, "assistant", r.reply);
@@ -1644,7 +1752,7 @@ export async function POST(request: Request) {
 
     if (!isPronoun) {
       const matches = reminders.filter(
-        (r) => r.status === "pending" && r.title.toLowerCase().includes(rawTarget.toLowerCase()),
+        (r) => r.status === "pending" && titleIncludesTarget(r.title, rawTarget),
       );
       if (matches.length === 1) {
         const target = matches[0]!;
@@ -1667,7 +1775,13 @@ export async function POST(request: Request) {
         const sample = matches.slice(0, 2).map((r) => `"${r.title}"`);
         const r: ReminderAgentResponse = {
           reply: `Which one do you mean — ${sample.join(" or ")}?`,
-          action: { type: "clarify" },
+          action: {
+            type: "clarify",
+            pendingOp: "edit",
+            candidateIds: matches.map((m) => m.id),
+            pendingField: field as "title" | "notes",
+            pendingValue: newValue,
+          },
         };
         void saveMessageServerSide(userId, "user", effectiveMessage);
         void saveMessageServerSide(userId, "assistant", r.reply);
@@ -1693,7 +1807,7 @@ export async function POST(request: Request) {
       if (recoveredDelay) {
         const rawTarget = message.trim();
         const matches = reminders.filter(
-          (r) => r.status === "pending" && r.title.toLowerCase().includes(rawTarget.toLowerCase()),
+          (r) => r.status === "pending" && titleIncludesTarget(r.title, rawTarget),
         );
         const target = matches.length === 1 ? matches[0] : (matches[0] ?? undefined);
         if (target) {
@@ -1737,7 +1851,7 @@ export async function POST(request: Request) {
 
     if (!target && !isPronoun) {
       const matches = reminders.filter(
-        (r) => r.status === "pending" && r.title.toLowerCase().includes(rawTarget.toLowerCase()),
+        (r) => r.status === "pending" && titleIncludesTarget(r.title, rawTarget),
       );
       if (matches.length === 1) {
         target = matches[0];
@@ -1745,7 +1859,7 @@ export async function POST(request: Request) {
         const sample = matches.slice(0, 2).map((r) => `"${r.title}"`);
         const r: ReminderAgentResponse = {
           reply: `Which one do you mean — ${sample.join(" or ")}?`,
-          action: { type: "clarify" },
+          action: { type: "clarify", pendingOp: "snooze", candidateIds: matches.map((m) => m.id), pendingDelayMinutes: delayMinutes },
         };
         void saveMessageServerSide(userId, "user", effectiveMessage);
         void saveMessageServerSide(userId, "assistant", r.reply);
@@ -1848,9 +1962,24 @@ export async function POST(request: Request) {
     const llmReminders = filterRemindersForLLM(reminders);
     const digest = buildLifeOsContextBlock(llmReminders, tasks, new Date(), displayOptions);
 
-    // Issue 6 fix: wiki is the single source of behavioral context — no need for
-    // the redundant buildBehaviorContext which queries the same Convex tables again.
-    const wikiCtx = await loadUserWiki(userId);
+    // Intent-based context selection — prevents context-window bloat and hallucination in
+    // long sessions.  The wiki and the machine-readable JSON are each expensive in tokens;
+    // only include them when the current message actually benefits from them.
+    //
+    // Wiki (~9 pages × 1 000 tokens) is behavioural knowledge — only useful for insight /
+    // planning queries.  CRUD and list queries already have everything they need from the
+    // live digest.
+    //
+    // JSON (3 000–5 000 tokens) duplicates the digest but adds raw Convex IDs.  It is only
+    // needed when the LLM must output a precise entity-ID in its action payload (i.e. when
+    // the intent is update_reminder and the fast path fell through to the LLM).  For all
+    // other intents the digest is authoritative and the JSON adds no value.
+    const needsWiki =
+      intent === "decision_query" || intent === "planning_query" || intent === "ambiguous";
+    const needsJson = intent === "update_reminder";
+
+    // Only fetch wiki from Convex when we actually need it — avoids the I/O cost for CRUD calls.
+    const wikiCtx = needsWiki ? await loadUserWiki(userId) : null;
 
     // BUG-1 / MISSING-1 fix: inject recent conversation history (already loaded above)
     const recentHistory = history
@@ -1859,20 +1988,70 @@ export async function POST(request: Request) {
 
     // Build the user turn content — wiki comes first (rich synthesised knowledge),
     // then the live digest (current reminders),
-    // then the machine-readable JSON for precise CRUD actions.
+    // then the machine-readable JSON for precise CRUD actions (only when needed).
     // NOTE: Always use `message` (the raw user text) here — never effectiveMessage which
     // contains a [The user is replying to...] wrapper that causes the LLM to echo it back.
     // Reply context is provided as a clean bracketed note instead.
     const replyContextNote = replyContext?.content?.trim()
       ? `\n\n[Reply context: responding to — "${replyContext.content.trim().slice(0, 200)}"]`
       : "";
-    const contextParts = [
-      message,
-      replyContextNote,
-      wikiCtx ? `\n\n${wikiCtx}` : "",
-      `\n\n--- LIFE OS DIGEST (authoritative) ---\n${digest}`,
-      `\n\n--- LIFE OS JSON (same data, machine-readable) ---\n${JSON.stringify({ reminders: llmReminders, tasks })}`,
-    ].join("");
+    // Prepend a hard-coded temporal anchor so the LLM knows the exact local date/time
+    // BEFORE it reads the user message. This prevents it from anchoring on training-data
+    // timestamps or drifting into UTC.
+    const nowForAnchor = new Date();
+    const dateAnchor = nowForAnchor.toLocaleString("en-US", {
+      timeZone: timeZone ?? "UTC",
+      weekday: "long",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: true,
+    });
+    const anchorLine = `[Current date/time: ${dateAnchor}${timeZone ? ` (${timeZone})` : ""}]\n\n`;
+
+    // ── New-user onboarding scaffold ────────────────────────────────────────────
+    // When needsWiki is true but the wiki is empty (first session, no history yet),
+    // inject a short scaffold so the LLM doesn't hallucinate a persona or give a
+    // confusing "I don't see any patterns" reply to a first-time user.
+    const newUserScaffold =
+      needsWiki && (wikiCtx === "" || wikiCtx === null)
+        ? "\n\n[USER KNOWLEDGE WIKI: This is a new user with no prior history. Suggest creating a first reminder if the conversation is open-ended.]"
+        : "";
+
+    // ── Token budget guard ──────────────────────────────────────────────────────
+    // Estimate tokens as chars ÷ 4.  Drop lower-priority sections progressively if
+    // the assembled context exceeds the soft cap (200 k chars ≈ 50 k tokens).
+    // This prevents silent context overflow on large accounts and ensures the LLM
+    // always has room to produce a full response.
+    const TOKEN_CHAR_BUDGET = 200_000; // ~50 k tokens, well inside 128 k model limit
+
+    const jsonSection = needsJson
+      ? `\n\n--- LIFE OS JSON (machine-readable IDs) ---\n${JSON.stringify({ reminders: llmReminders, tasks })}`
+      : "";
+
+    const wikiSection = needsWiki && wikiCtx ? `\n\n${wikiCtx}` : newUserScaffold;
+
+    const digestSection = `\n\n--- LIFE OS DIGEST (authoritative) ---\n${digest}`;
+
+    let contextParts =
+      anchorLine + message + replyContextNote + wikiSection + digestSection + jsonSection;
+
+    // Drop JSON first if over budget
+    if (contextParts.length > TOKEN_CHAR_BUDGET) {
+      contextParts = anchorLine + message + replyContextNote + wikiSection + digestSection;
+    }
+    // Drop wiki next if still over budget
+    if (contextParts.length > TOKEN_CHAR_BUDGET) {
+      contextParts = anchorLine + message + replyContextNote + digestSection;
+    }
+
+    // ── Intent-based max_tokens ─────────────────────────────────────────────────
+    // Planning and decision queries need more room to enumerate items, explain
+    // patterns, and provide actionable breakdowns.  Everything else stays at 900.
+    const maxTokens =
+      intent === "planning_query" || intent === "decision_query" ? 1200 : 900;
 
     const nimMessages = [
       { role: "system" as const, content: systemPrompt },
@@ -1880,11 +2059,20 @@ export async function POST(request: Request) {
       { role: "user" as const, content: contextParts },
     ];
 
+    // ── AbortController with 12-second timeout ──────────────────────────────────
+    // Prevents hung requests from leaving the user waiting indefinitely.
+    // On timeout the catch block returns a deterministic fallback reply.
+    const nimAbortController = new AbortController();
+    const nimTimeoutId = setTimeout(() => nimAbortController.abort(), 12_000);
+
     const nimResponse = await fetch(`${NIM_BASE_URL}/chat/completions`, {
       method: "POST",
       headers: { Authorization: `Bearer ${nimApiKey}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ model, messages: nimMessages, temperature: 0.2, max_tokens: 900 }),
+      body: JSON.stringify({ model, messages: nimMessages, temperature: 0.2, max_tokens: maxTokens }),
+      signal: nimAbortController.signal,
     });
+
+    clearTimeout(nimTimeoutId);
 
     if (nimResponse.status === 429 || !nimResponse.ok) {
       const reply = fallbackDeterministicReply(message, reminders, timeZone);
@@ -1913,6 +2101,13 @@ export async function POST(request: Request) {
         parsed.action.listedIds = listed.map((r) => r.id);
         parsed.reply = buildListRemindersReply(reminders, scope, new Date(), 5, displayOptions);
       }
+    }
+
+    // Override LLM-generated dueAt for reschedule with the same deterministic parser used for
+    // create_reminder. Without this, the LLM's potentially UTC-anchored timestamp is used as-is.
+    if (parsed.action.type === "reschedule_reminder") {
+      const deterministicDueAt = parseDateTimeFromInput(message, timeZone);
+      if (deterministicDueAt) parsed.action.dueAt = deterministicDueAt;
     }
 
     if (parsed.action.type === "create_reminder") {
@@ -2047,7 +2242,15 @@ export async function POST(request: Request) {
     void saveMessageServerSide(userId, "assistant", parsed.reply);
     return NextResponse.json(parsed);
 
-  } catch {
+  } catch (err: unknown) {
+    // AbortController timeout fires — the NIM call took > 12 s.
+    // Return a deterministic fallback so the user still gets a useful response.
+    if (err instanceof Error && err.name === "AbortError") {
+      const reply = fallbackDeterministicReply(message, reminders, timeZone);
+      void saveMessageServerSide(userId, "user", message);
+      void saveMessageServerSide(userId, "assistant", reply);
+      return NextResponse.json({ reply, action: { type: "unknown" } });
+    }
     const reply = fallbackDeterministicReply(message, reminders, timeZone);
     void saveMessageServerSide(userId, "user", message);
     void saveMessageServerSide(userId, "assistant", reply);

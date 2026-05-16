@@ -25,7 +25,7 @@ function jsonError(payload: AdminApiError, status: number) {
 interface RawBroadcastRow {
   id: string;
   senderUserId: string;
-  senderRole: "admin" | "superadmin";
+  senderRole: "admin";
   title: string;
   body: string;
   segment: BroadcastListItem["segment"];
@@ -38,8 +38,8 @@ interface RawBroadcastRow {
 /**
  * GET /api/admin/broadcasts
  *
- * Lists past broadcasts. Both admins and superadmins can read. Display
- * names for sender / recaller are resolved via Clerk for nicer UI.
+ * Lists past broadcasts. Display names for sender / recaller are resolved
+ * via Clerk for nicer UI.
  */
 export async function GET() {
   const guard = await checkAdminRequest();
@@ -78,16 +78,11 @@ export async function GET() {
       }
     }
 
-    // PRIVACY: admin viewers must NOT learn the sender's tier. We always
-    // report sender role as "admin" to admin viewers — even when the row
-    // was sent by a superadmin. Superadmin viewers see the truth.
-    const callerIsSuperadmin = guard.role === "superadmin";
-
     const enriched: BroadcastListItem[] = rows.map((r) => ({
       id: r.id,
       senderUserId: r.senderUserId,
       senderDisplay: displayMap.get(r.senderUserId) ?? r.senderUserId,
-      senderRole: callerIsSuperadmin ? r.senderRole : "admin",
+      senderRole: r.senderRole,
       title: r.title,
       body: r.body,
       segment: r.segment,
@@ -112,7 +107,7 @@ export async function GET() {
 /**
  * POST /api/admin/broadcasts
  *
- * Send a broadcast. Available to admin AND superadmin. Body:
+ * Send a broadcast. Available to all admins. Body:
  *   { title, body, segment: "all" | "active_today" | "active_7d" | "admins_only" }
  */
 export async function POST(request: Request) {

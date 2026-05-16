@@ -2,7 +2,6 @@ import { clerkClient } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { checkAdminRequest, getAdminConvexSecret } from "@repo/admin/server";
 import {
-  getDisplayRole,
   getRoleFromPublicMetadata,
   isDeactivatedFromMetadata,
 } from "@repo/admin";
@@ -24,8 +23,7 @@ function jsonError(payload: AdminApiError, status: number) {
 /**
  * GET /api/admin/users
  *
- * Returns up to `MAX_USERS` Clerk users. Superadmins also receive chat-activity
- * stats; admins receive empty activity so chat data stays hidden.
+ * Returns up to `MAX_USERS` Clerk users with activity stats.
  */
 export async function GET(request: Request) {
   const guard = await checkAdminRequest();
@@ -42,18 +40,12 @@ export async function GET(request: Request) {
     ? Math.min(limitParam, MAX_USERS)
     : MAX_USERS;
 
-  // Did the caller pass the superadmin guard? If yes, expose actualRole.
-  // Admins receive only `role` (= display role) so they cannot identify
-  // hidden superadmins from the API response.
-  const callerIsSuperadmin = guard.role === "superadmin";
-
   try {
     const client = await clerkClient();
     const res = await client.users.getUserList({ limit, orderBy: "-created_at" });
 
     const baseUsers = res.data.map((u) => {
-      const realRole = getRoleFromPublicMetadata(u.publicMetadata);
-      const displayRole = getDisplayRole(u.publicMetadata);
+      const role = getRoleFromPublicMetadata(u.publicMetadata);
       const banned = Boolean((u as { banned?: boolean }).banned);
       const deactivated = banned || isDeactivatedFromMetadata(u.publicMetadata);
       return {
@@ -63,20 +55,16 @@ export async function GET(request: Request) {
         lastName: u.lastName ?? "",
         username: u.username ?? "",
         imageUrl: u.imageUrl,
-        role: displayRole,
-        ...(callerIsSuperadmin ? { actualRole: realRole } : {}),
+        role,
         deactivated,
         createdAt: u.createdAt ?? 0,
         lastSignInAt: u.lastSignInAt ?? null,
       };
     });
 
-    // Bulk-fetch chat activity only for superadmins. Admins can manage users
-    // but must not see another user's chat metadata.
-    // The shared secret prevents anyone with the public Convex URL from
-    // calling this query directly.
+    // Bulk-fetch chat activity for all users.
     let activityMap: Record<string, AdminListedUser["activity"]> = {};
-    if (callerIsSuperadmin && baseUsers.length > 0) {
+    if (baseUsers.length > 0) {
       const convex = getConvexClient();
       activityMap = await convex.query(api.admin.activityForUsers, {
         userIds: baseUsers.map((u) => u.id),

@@ -647,7 +647,7 @@ export function buildRemindersContextBlock(
 
   const byBucket = (label: string, bucket: ReminderBucket) => {
     const items = pending
-      .filter((r) => getReminderBucket(r, now) === bucket)
+      .filter((r) => getReminderBucket(r, now, options?.timeZone) === bucket)
       .sort((a, b) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime());
     if (items.length === 0) {
       lines.push(`${label}: none`);

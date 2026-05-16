@@ -337,14 +337,14 @@ export const userActivityDetail = query({
 // ──────────────────────────────────────────────────────────────────────
 // AUDIT LOG — append-only.
 // CRITICAL: there is intentionally NO delete/update mutation. The log
-// must be tamper-evident. Even superadmins cannot mutate past entries.
+// must be tamper-evident.
 // ──────────────────────────────────────────────────────────────────────
 
 export const appendAuditEvent = mutation({
   args: {
     adminSecret: v.string(),
     actorUserId: v.string(),
-    actorRole: v.union(v.literal("admin"), v.literal("superadmin")),
+    actorRole: v.literal("admin"),
     action: v.string(),
     targetUserId: v.optional(v.string()),
     metadataJson: v.optional(v.string()),
@@ -403,7 +403,7 @@ export const listAuditEvents = query({
 });
 
 // ──────────────────────────────────────────────────────────────────────
-// BROADCASTS — admins send, superadmins can override (recall any).
+// BROADCASTS — admins can send and recall any broadcast.
 // ──────────────────────────────────────────────────────────────────────
 
 const broadcastSegment = v.union(
@@ -422,7 +422,7 @@ export const sendBroadcast = mutation({
   args: {
     adminSecret: v.string(),
     senderUserId: v.string(),
-    senderRole: v.union(v.literal("admin"), v.literal("superadmin")),
+    senderRole: v.literal("admin"),
     title: v.string(),
     body: v.string(),
     segment: broadcastSegment,
@@ -532,13 +532,11 @@ export const recallBroadcast = mutation({
 });
 
 // ──────────────────────────────────────────────────────────────────────
-// PER-USER ACTIONS callable from admin / superadmin endpoints.
+// PER-USER ACTIONS callable from admin endpoints.
 // ──────────────────────────────────────────────────────────────────────
 
 // ──────────────────────────────────────────────────────────────────────
-// ADMIN NOTES on a user. Admin can edit/delete OWN; superadmin can
-// edit/delete ANY (override). API layer enforces — these mutations just
-// take a `requireAuthorMatch` flag from the route.
+// ADMIN NOTES on a user. Any admin can create, edit, or delete any note.
 // ──────────────────────────────────────────────────────────────────────
 
 export const listUserAdminNotes = query({
@@ -573,7 +571,7 @@ export const createUserAdminNote = mutation({
     adminSecret: v.string(),
     targetUserId: v.string(),
     authorUserId: v.string(),
-    authorRole: v.union(v.literal("admin"), v.literal("superadmin")),
+    authorRole: v.literal("admin"),
     content: v.string(),
   },
   handler: async (ctx, args) => {
@@ -592,31 +590,24 @@ export const createUserAdminNote = mutation({
 });
 
 /**
- * Update or delete a note. The API layer pre-resolves whether the caller
- * is allowed to do so (own note OR superadmin override). This mutation
- * just executes — pass `requireAuthorMatch` to ALSO defensively check at
- * the data layer (belt-and-suspenders for admin edits).
+ * Update a note. Any admin can edit any note.
  */
 export const updateUserAdminNote = mutation({
   args: {
     adminSecret: v.string(),
     noteId: v.id("userAdminNotes"),
     callerUserId: v.string(),
-    callerIsSuperadmin: v.boolean(),
     content: v.string(),
   },
   handler: async (ctx, args) => {
     assertAdminSecret(args.adminSecret);
     const row = await ctx.db.get(args.noteId);
     if (!row) throw new ConvexError("Note not found");
-    if (!args.callerIsSuperadmin && row.authorUserId !== args.callerUserId) {
-      throw new ConvexError("Forbidden");
-    }
     await ctx.db.patch(args.noteId, {
       content: args.content,
       updatedAt: Date.now(),
     });
-    return { ok: true, wasOverride: args.callerIsSuperadmin && row.authorUserId !== args.callerUserId, originalAuthor: row.authorUserId };
+    return { ok: true, originalAuthor: row.authorUserId };
   },
 });
 
@@ -625,23 +616,18 @@ export const deleteUserAdminNote = mutation({
     adminSecret: v.string(),
     noteId: v.id("userAdminNotes"),
     callerUserId: v.string(),
-    callerIsSuperadmin: v.boolean(),
   },
   handler: async (ctx, args) => {
     assertAdminSecret(args.adminSecret);
     const row = await ctx.db.get(args.noteId);
     if (!row) throw new ConvexError("Note not found");
-    if (!args.callerIsSuperadmin && row.authorUserId !== args.callerUserId) {
-      throw new ConvexError("Forbidden");
-    }
     await ctx.db.delete(args.noteId);
-    return { ok: true, wasOverride: args.callerIsSuperadmin && row.authorUserId !== args.callerUserId, originalAuthor: row.authorUserId };
+    return { ok: true, originalAuthor: row.authorUserId };
   },
 });
 
 // ──────────────────────────────────────────────────────────────────────
-// ORG COST OVERVIEW — aggregate token estimate across the whole user
-// base. Used by the superadmin-only block on the admin landing page.
+// ORG COST OVERVIEW — aggregate token estimate across the whole user base.
 // ──────────────────────────────────────────────────────────────────────
 
 export const orgCostOverview = query({
@@ -733,7 +719,7 @@ export const resetUserChatHistory = mutation({
 
 /**
  * Delete EVERYTHING associated with a userId in Convex. Used by the
- * superadmin hard-delete flow AFTER the audit row is written and BEFORE
+ * hard-delete flow AFTER the audit row is written and BEFORE
  * the Clerk delete call. We do NOT delete the audit log entries
  * referencing this user — the log stays intact.
  */
