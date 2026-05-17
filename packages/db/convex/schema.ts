@@ -197,7 +197,7 @@ const adminAuditLog = defineTable({
   /** Clerk userId of the admin who took the action. */
   actorUserId: v.string(),
   /** Role at the time of the action — captured for forensic clarity. */
-  actorRole: v.literal("admin"),
+  actorRole: v.union(v.literal("admin"), v.literal("superadmin")),
   /** Constant from `@repo/admin/audit` (typed enum). */
   action: v.string(),
   /** Target user, when applicable. Null/absent for org-wide actions. */

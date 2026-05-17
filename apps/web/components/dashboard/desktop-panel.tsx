@@ -265,10 +265,15 @@ export function DesktopPanel({
                 : activeTab === "today" ? grouped.today
                 : activeTab === "tomorrow" ? grouped.tomorrow
                 : reminders;
+              const sq = searchQuery.trim().toLowerCase();
               const rows =
                 activeTab === "shared"
                   ? rawRows
-                  : rawRows.filter((r) => matchesReminder(r, searchQuery));
+                  : rawRows.filter((r) =>
+                      !sq ||
+                      r.title.toLowerCase().includes(sq) ||
+                      (r.notes?.toLowerCase().includes(sq) ?? false),
+                    );
 
               if (activeTab === "shared") {
                 return shareInbox.length === 0 ? (

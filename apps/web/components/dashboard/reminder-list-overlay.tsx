@@ -15,7 +15,7 @@ import type { ReminderItem } from "@repo/reminder";
 import { isAdhocReminder } from "@repo/reminder";
 import type { TaskRow } from "./task-panels";
 import type { ReminderListTab, ShareInboxRow } from "./dashboard-types";
-import { groupShareInboxRows, matchesReminder } from "./dashboard-utils";
+import { groupShareInboxRows } from "./dashboard-utils";
 import { ReminderCard } from "./reminder-card";
 
 // ── Grouped reminders shape ───────────────────────────────────────────────
@@ -111,7 +111,14 @@ export function ReminderListOverlay({
 
   // ── Filtered rows ─────────────────────────────────────────────────────
   const reminderListRows = useMemo(() => {
-    const search = (r: ReminderItem) => matchesReminder(r, reminderSearchQuery);
+    // matchesReminder(reminder, targetId?, targetTitle?) is for finding a specific
+    // reminder by ID or exact title — it returns false when both args are absent,
+    // so it cannot double as a "show all when empty" search predicate.
+    const q = reminderSearchQuery.trim().toLowerCase();
+    const search = (r: ReminderItem) =>
+      !q ||
+      r.title.toLowerCase().includes(q) ||
+      (r.notes?.toLowerCase().includes(q) ?? false);
     const filterTask = (rows: ReminderItem[]) => {
       if (reminderTaskFilter === "adhoc") return rows.filter((r) => isAdhocReminder(r));
       if (reminderTaskFilter !== "all") return rows.filter((r) => r.linkedTaskId === reminderTaskFilter);
