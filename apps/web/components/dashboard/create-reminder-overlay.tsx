@@ -88,11 +88,11 @@ export function CreateReminderOverlay({
   const [reminderDomain, setReminderDomain] = useState<"" | LifeDomain>(
     (editingReminder?.domain as LifeDomain | undefined) ?? "",
   );
-  // In edit mode: auto-expand "More options" when the reminder already has notes or a linked task
+  // In edit mode: auto-expand the notes/task section when data is already there
   const [showReminderInlineTask, setShowReminderInlineTask] = useState(
     !!(editingReminder?.notes || editingReminder?.linkedTaskId),
   );
-  // Status is only editable in edit mode — lets user reactivate missed/done reminders
+  // Status — editable in edit mode so users can reactivate missed/done reminders
   const [reminderStatus, setReminderStatus] = useState<"pending" | "done" | "archived">(
     editingReminder?.status ?? "pending",
   );
@@ -101,15 +101,14 @@ export function CreateReminderOverlay({
   const [reminderInlineTaskSaving, setReminderInlineTaskSaving] = useState(false);
   const [createFormError, setCreateFormError] = useState<string | null>(null);
 
-  // Capture the original date/time so we can tell whether the user actually
-  // changed them in edit mode. We only enforce "must be future" when the
-  // date/time is newly chosen (not when it was already in the past on open).
+  // Capture the original date/time so we know whether the user actually changed
+  // them. We only enforce "must be future" when the date/time is newly chosen.
   const [originalDate] = useState(newDate);
   const [originalTime] = useState(newTime);
 
   const getMinDate = () => {
-    // In edit mode, don't restrict the date picker — the existing due date
-    // may already be in the past and must remain selectable.
+    // In edit mode don't restrict the date picker — the existing due date may
+    // already be in the past and must remain selectable without being blocked.
     if (editingReminder) return undefined;
     const d = new Date();
     const pad = (n: number) => String(n).padStart(2, "0");
@@ -202,9 +201,9 @@ export function CreateReminderOverlay({
           linkPayload.linkedTaskId = reminderLinkedTaskId.trim() || null;
           linkPayload.domain = reminderDomain || null;
         }
-        // Only include dueAt in the PATCH when the user actually changed the date
-        // or time — otherwise the API's future-date guard would reject editing
-        // a missed/overdue reminder's other fields.
+        // Only include dueAt when the user actually changed the date/time —
+        // otherwise the API's future-date guard would reject edits to missed
+        // reminders whose original timestamp is already in the past.
         const patchBody: Record<string, unknown> = {
           title: newTitle.trim(), recurrence: newRecurrence,
           notes: newNotes.trim() ? newNotes.trim() : undefined,

@@ -1514,12 +1514,24 @@ export async function POST(request: Request) {
     if (hasDayAfterTomorrowHint(message)) {
       suggestDay = addDaysToCalendarDate(todayCal, 2);
     } else if (hasTodayHint(message)) {
-      const todayTs = calendarDateTimeToIso(todayCal, suggested, timeZone);
-      suggestDay = new Date(todayTs).getTime() > now.getTime()
-        ? todayCal
-        : addDaysToCalendarDate(todayCal, 1);
+      // User explicitly said "today" — ALWAYS stay on today.
+      // (Old code bumped to tomorrow when the profile-default time had already
+      // passed, which was wrong — the user said TODAY.)
+      suggestDay = todayCal;
     }
-    const suggestedDueAt = calendarDateTimeToIso(suggestDay, suggested, timeZone);
+    const rawSuggestedDueAt = calendarDateTimeToIso(suggestDay, suggested, timeZone);
+
+    // Safety: if the computed suggestion is still in the past (e.g., "today" + a
+    // profile default of 9 AM but it's already 11 AM), nudge forward to 1 h from
+    // now rounded up to the nearest 15-minute mark so the reminder is always future.
+    const suggestedDueAt = new Date(rawSuggestedDueAt).getTime() > now.getTime()
+      ? rawSuggestedDueAt
+      : (() => {
+          const bumped = new Date(now.getTime() + 60 * 60 * 1000);
+          bumped.setMinutes(Math.ceil(bumped.getMinutes() / 15) * 15, 0, 0);
+          bumped.setSeconds(0, 0);
+          return bumped.toISOString();
+        })();
     const timeLabel = formatDueInUserZone(suggestedDueAt, timeZone);
 
     const response: ReminderAgentResponse = {
