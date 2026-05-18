@@ -372,6 +372,8 @@ export function looksLikeRescheduleIntent(message: string): boolean {
   if (/\b(change|update|set)\s+the\s+(time|date|due\s+date|due\s+time|schedule)\b/.test(n)) return true;
   // "change/update time of X to Y"
   if (/\b(change|update)\b.{0,40}\btime\b.{0,30}\b(to|of|for)\b/.test(n)) return true;
+  // "change/update X date to Y" — "change Hupendra work date to 18 May 1PM"
+  if (/\b(change|update)\b.{0,50}\bdate\b.{0,30}\bto\b/.test(n)) return true;
   // "move X to [date/time]" — "move meeting to tomorrow 3pm"
   if (
     /\bmove\b.{0,60}\b(to|from)\b/.test(n) &&

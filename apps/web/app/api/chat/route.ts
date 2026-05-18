@@ -1900,6 +1900,41 @@ export async function POST(request: Request) {
     return NextResponse.json(r);
   }
 
+  // ─── Fast path: reminders linked to a specific task ─────────────────────────
+  // Triggers on "linked to X", "link to X", "for task X" — these are
+  // task-scoped list queries; the generic listScopeFromMessage path would
+  // otherwise return "all_pending" and lose the task filter entirely.
+  if (
+    /\b(link(ed)?\s+to|for\s+(?:the\s+)?task|in\s+(?:the\s+)?task)\b/i.test(message) &&
+    tasks.length > 0
+  ) {
+    const msgL = message.toLowerCase();
+    const scored = tasks
+      .map((t) => {
+        // Score by how many 4+ char words from the task title appear in the message
+        const words = t.title.toLowerCase().split(/\s+/).filter((w) => w.length >= 4);
+        const hits = words.filter((w) => msgL.includes(w)).length;
+        return { task: t, hits };
+      })
+      .filter(({ hits }) => hits > 0)
+      .sort((a, b) => b.hits - a.hits);
+    const matchedTask = scored[0]?.task;
+    if (matchedTask) {
+      const linked = reminders.filter((r) => r.linkedTaskId === matchedTask.id);
+      const listedIds = linked.map((r) => r.id);
+      let reply: string;
+      if (linked.length === 0) {
+        reply = `No reminders are linked to "${matchedTask.title}" yet. Link one by saying "create a reminder for task ${matchedTask.title}".`;
+      } else {
+        const lines = linked.map((r, i) => `${i + 1}. ${describeReminderForChat(r, new Date(), displayOptions)}`);
+        reply = `**Reminders linked to "${matchedTask.title}" (${linked.length}):**\n${lines.join("\n")}`;
+      }
+      void saveMessageServerSide(userId, "user", effectiveMessage);
+      void saveMessageServerSide(userId, "assistant", reply);
+      return NextResponse.json({ reply, action: { type: "list_reminders", listedIds } } satisfies ReminderAgentResponse);
+    }
+  }
+
   const listScopeFromMessage = inferListScopeFromMessage(message);
   if (listScopeFromMessage && !isCompoundReminderQuestion(message)) {
     let reply: string;
