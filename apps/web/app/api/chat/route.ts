@@ -857,16 +857,26 @@ function extractTargetFromDelete(message: string): string {
 function extractTargetFromReschedule(message: string): string {
   return message
     .replace(/^(please\s+)?/i, "")
-    // Strip the action phrase "change the time/date of"
+    // Strip "change/update the time/date/schedule of X" — full command phrase
     .replace(/\b(change|update)\s+the\s+(time|date|due\s+date|due\s+time|schedule)\s*(of|for|on)?\s*/gi, " ")
-    // Strip "reschedule/move/shift"
+    // Strip leading action verb when NOT followed by "the" (e.g. "change coding lab date to …",
+    // "move meeting to tomorrow", "reschedule gym to …").
+    // Using negative lookahead so "change the …" falls through to the previous rule.
+    .replace(/^(change|update|reschedule|move|shift)\s+(?!the\s)/i, " ")
+    // Strip "date/time to/for/at/of …" — handles "coding lab date to today at 1pm"
+    // where the target title comes BEFORE the word "date/time".
+    .replace(/\b(date|time)\s+(to|for|at|of)\b.*/gi, " ")
+    // Strip "reschedule/move/shift" wherever they still appear
     .replace(/\b(reschedule|move|shift)\s*/gi, " ")
     // Strip everything from the new time onwards: "to today at 5pm", "to 5pm", "for tomorrow"
     .replace(/\b(to|for)\s+(today|tomorrow|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b.*/gi, " ")
     .replace(/\bto\s+\d{1,2}(:\d{2})?\s*(am|pm)\b.*/gi, " ")
     // Strip loose date/time words left behind
     .replace(/\b(today|tomorrow|tonight|at|on|by|next|this|coming|morning|evening|afternoon|night|noon|midnight)\b/gi, " ")
-    .replace(/\b\d{1,2}(?:[:.]\d{2})?\s?([ap]\.?m\.?)\b/gi, " ")
+    .replace(/\b(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)\b/gi, " ")
+    .replace(/\b\d{4}\b/g, " ")                                    // year numbers
+    .replace(/\b\d{1,2}(?:st|nd|rd|th)?\b/g, " ")                  // day numbers (1st, 2nd, 18, …)
+    .replace(/\b\d{1,2}(?:[:.]\d{2})?\s?([ap]\.?m\.?)\b/gi, " ")   // times (1pm, 3:30am)
     .replace(/\b\d{1,2}[:.]\d{2}\b/g, " ")
     // Strip articles and reminder-type words
     .replace(/\b(my|the|a|an|reminder|reminders|for|about|it|that|this)\b/gi, " ")
@@ -1248,24 +1258,26 @@ async function loadUserWiki(userId: string): Promise<string> {
   }
 }
 
-// FLAW-5: limit reminders sent to LLM — pending only, most relevant first, max 50
+// FLAW-5: limit reminders sent to LLM — pending only, most relevant first.
+// Cap overdue at 30 and future at 30 so a large backlog never drowns out
+// upcoming reminders that the user just created or wants to reschedule.
 function filterRemindersForLLM(reminders: ReminderItem[]): ReminderItem[] {
   const now = Date.now();
-  const pending = reminders
-    .filter((r) => r.status === "pending")
-    .sort((a, b) => {
-      const aOver = new Date(a.dueAt).getTime() < now ? 0 : 1;
-      const bOver = new Date(b.dueAt).getTime() < now ? 0 : 1;
-      if (aOver !== bOver) return aOver - bOver;
-      return new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime();
-    })
-    .slice(0, 50);
+  const pending = reminders.filter((r) => r.status === "pending");
+  const overdue = pending
+    .filter((r) => new Date(r.dueAt).getTime() < now)
+    .sort((a, b) => new Date(b.dueAt).getTime() - new Date(a.dueAt).getTime()) // most-recent overdue first
+    .slice(0, 30);
+  const future = pending
+    .filter((r) => new Date(r.dueAt).getTime() >= now)
+    .sort((a, b) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime()) // soonest first
+    .slice(0, 30);
   // Include recently completed for context (last 7 days)
   const weekAgo = now - 7 * 24 * 60 * 60 * 1000;
   const recentDone = reminders
     .filter((r) => r.status === "done" && new Date(r.updatedAt).getTime() > weekAgo)
     .slice(0, 5);
-  return [...pending, ...recentDone];
+  return [...overdue, ...future, ...recentDone];
 }
 
 // MISSING-2/3: load behavioral profile + events for the digest
@@ -1705,6 +1717,23 @@ export async function POST(request: Request) {
     }
 
     if (target) {
+      // Execute the reschedule server-side immediately — this is the authoritative
+      // write. The action returned to the client carries the same dueAt so the UI
+      // refreshes, but the DB update no longer depends on the client finding the
+      // reminder in its (potentially stale) local state.
+      try {
+        const convex = getConvexClient();
+        await convex.mutation(api.reminders.update, {
+          userId,
+          reminderId: target.id as any, // eslint-disable-line @typescript-eslint/no-explicit-any
+          dueAt: new Date(newDueAt).getTime(),
+          // Preserve the existing status so a missed reminder stays pending
+          // (don't accidentally archive it by omitting status).
+        });
+      } catch {
+        // Non-fatal: reply still shows success; the client action will retry via PATCH.
+      }
+
       const r: ReminderAgentResponse = {
         reply: `Rescheduled "${target.title}" to ${formatDueInUserZone(newDueAt, timeZone)}.`,
         action: { type: "reschedule_reminder", targetId: target.id, targetTitle: target.title, dueAt: newDueAt },
