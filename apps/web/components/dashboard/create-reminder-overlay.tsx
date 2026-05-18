@@ -88,13 +88,29 @@ export function CreateReminderOverlay({
   const [reminderDomain, setReminderDomain] = useState<"" | LifeDomain>(
     (editingReminder?.domain as LifeDomain | undefined) ?? "",
   );
-  const [showReminderInlineTask, setShowReminderInlineTask] = useState(false);
+  // In edit mode: auto-expand "More options" when the reminder already has notes or a linked task
+  const [showReminderInlineTask, setShowReminderInlineTask] = useState(
+    !!(editingReminder?.notes || editingReminder?.linkedTaskId),
+  );
+  // Status is only editable in edit mode — lets user reactivate missed/done reminders
+  const [reminderStatus, setReminderStatus] = useState<"pending" | "done" | "archived">(
+    editingReminder?.status ?? "pending",
+  );
   const [reminderInlineTaskTitle, setReminderInlineTaskTitle] = useState("");
   const [reminderInlineTaskDue, setReminderInlineTaskDue] = useState(currentDateTimeLocalValue());
   const [reminderInlineTaskSaving, setReminderInlineTaskSaving] = useState(false);
   const [createFormError, setCreateFormError] = useState<string | null>(null);
 
+  // Capture the original date/time so we can tell whether the user actually
+  // changed them in edit mode. We only enforce "must be future" when the
+  // date/time is newly chosen (not when it was already in the past on open).
+  const [originalDate] = useState(newDate);
+  const [originalTime] = useState(newTime);
+
   const getMinDate = () => {
+    // In edit mode, don't restrict the date picker — the existing due date
+    // may already be in the past and must remain selectable.
+    if (editingReminder) return undefined;
     const d = new Date();
     const pad = (n: number) => String(n).padStart(2, "0");
     return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
@@ -163,7 +179,19 @@ export function CreateReminderOverlay({
     const dueAt = new Date(`${newDate}T${newTime}`).toISOString();
     const dueAtMs = new Date(dueAt).getTime();
     if (!Number.isFinite(dueAtMs)) { setCreateFormError("Invalid date or time."); return; }
-    if (dueAtMs <= Date.now()) { setCreateFormError("Date and time must be in the future."); return; }
+
+    // Future-date guard:
+    //   • Create mode  → always required.
+    //   • Edit mode    → only when the user actually changed the date or time
+    //                    (the original due date might already be in the past for
+    //                    missed/overdue reminders, and that's fine to keep).
+    const dateOrTimeChanged = newDate !== originalDate || newTime !== originalTime;
+    if (!editingReminder && dueAtMs <= Date.now()) {
+      setCreateFormError("Date and time must be in the future."); return;
+    }
+    if (editingReminder && dateOrTimeChanged && dueAtMs <= Date.now()) {
+      setCreateFormError("New date and time must be in the future."); return;
+    }
 
     if (editingReminder) {
       // ── Edit mode ─────────────────────────────────────────────────────────
@@ -174,14 +202,20 @@ export function CreateReminderOverlay({
           linkPayload.linkedTaskId = reminderLinkedTaskId.trim() || null;
           linkPayload.domain = reminderDomain || null;
         }
+        // Only include dueAt in the PATCH when the user actually changed the date
+        // or time — otherwise the API's future-date guard would reject editing
+        // a missed/overdue reminder's other fields.
+        const patchBody: Record<string, unknown> = {
+          title: newTitle.trim(), recurrence: newRecurrence,
+          notes: newNotes.trim() ? newNotes.trim() : undefined,
+          priority: reminderStars, status: reminderStatus, ...linkPayload,
+        };
+        if (dateOrTimeChanged) patchBody.dueAt = dueAtMs;
+
         const res = await fetch(`/api/reminders/${editingReminder.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            title: newTitle.trim(), dueAt: dueAtMs, recurrence: newRecurrence,
-            notes: newNotes.trim() ? newNotes.trim() : undefined,
-            priority: reminderStars, ...linkPayload,
-          }),
+          body: JSON.stringify(patchBody),
         });
         const data = (await res.json().catch(() => ({}))) as { error?: string };
         if (!res.ok) { setCreateFormError(data.error ?? "Could not update reminder."); return; }
@@ -320,7 +354,7 @@ export function CreateReminderOverlay({
                   </div>
                   <input
                     type="date"
-                    min={getMinDate()}
+                    {...(getMinDate() ? { min: getMinDate() } : {})}
                     value={newDate}
                     onChange={(e) => setNewDate(e.target.value)}
                     data-testid="reminder-date-input"
@@ -419,6 +453,40 @@ export function CreateReminderOverlay({
               </div>
             </div>
 
+            {/* Status — edit mode only, lets user reactivate missed or done reminders */}
+            {editingReminder && (
+              <div>
+                <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">STATUS</p>
+                <div className="flex flex-wrap gap-2">
+                  {(
+                    [
+                      { value: "pending",  label: "Pending",  emoji: "🔔" },
+                      { value: "done",     label: "Done",     emoji: "✅" },
+                      { value: "archived", label: "Archived", emoji: "📦" },
+                    ] as const
+                  ).map(({ value, label, emoji }) => (
+                    <button
+                      key={value}
+                      type="button"
+                      onClick={() => setReminderStatus(value)}
+                      className={`flex items-center gap-1.5 rounded-full px-4 py-1.5 text-[12px] font-bold transition ${
+                        reminderStatus === value
+                          ? value === "done"
+                            ? "bg-emerald-600 text-white"
+                            : value === "archived"
+                              ? "bg-slate-600 text-white"
+                              : "bg-violet-600 text-white"
+                          : "border border-slate-200 bg-white text-slate-600"
+                      }`}
+                    >
+                      <span>{emoji}</span>
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* More options expandable */}
             <div>
               <button
@@ -428,7 +496,7 @@ export function CreateReminderOverlay({
                 className="flex items-center gap-1.5 text-[12px] font-medium text-slate-400"
               >
                 <span className={`text-base transition-transform ${showReminderInlineTask ? "rotate-90" : ""}`}>›</span>
-                More options (link task, notes…)
+                {editingReminder ? "Notes & task link" : "More options (link task, notes…)"}
               </button>
 
               {showReminderInlineTask && (
@@ -471,8 +539,8 @@ export function CreateReminderOverlay({
                     />
                   </div>
 
-                  {/* Inline task creator */}
-                  {!editingReminder && !editingReminderIsShared && (
+                  {/* Inline task creator — available in both create and edit mode */}
+                  {!editingReminderIsShared && (
                     <div className="rounded-2xl border border-dashed border-slate-300 bg-slate-50/90 px-3 py-3">
                       <p className="mb-2 text-[11px] font-bold text-violet-700">+ Create new task &amp; link it</p>
                       <div className="grid gap-2">
