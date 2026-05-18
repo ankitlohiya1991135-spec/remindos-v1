@@ -67,6 +67,11 @@ export interface AgentAction {
   delayMinutes?: number;
   newTitle?: string;
   newNotes?: string;
+  /** Only on edit_reminder: new field values beyond title/notes */
+  newPriority?: number;
+  newDomain?: string | null;
+  newRecurrence?: "none" | "daily" | "weekly" | "monthly";
+  newLinkedTaskId?: string | null;
   bulkOperation?: "mark_done" | "delete";
   bulkTargetIds?: string[];
   listedIds?: string[];
@@ -81,7 +86,7 @@ export interface AgentAction {
   /** Only on clarify (reschedule disambiguation): already-parsed new due date ISO */
   pendingDueAt?: string;
   /** Only on clarify (edit disambiguation): which field is being edited */
-  pendingField?: "title" | "notes";
+  pendingField?: "title" | "notes" | "priority" | "domain" | "recurrence" | "linkedTaskId";
   /** Only on clarify (edit disambiguation): the new field value */
   pendingValue?: string;
   /** Only on clarify (snooze disambiguation): snooze delay in minutes */
@@ -169,13 +174,17 @@ export interface PendingConfirmAction {
   targetIds?: string[];
   newTitle?: string;
   newNotes?: string;
+  newPriority?: number;
+  newDomain?: string | null;
+  newRecurrence?: "none" | "daily" | "weekly" | "monthly";
+  newLinkedTaskId?: string | null;
 }
 
 export type PendingDisambig =
   | { op: "mark_done"; candidateIds: string[] }
   | { op: "delete"; candidateIds: string[] }
   | { op: "reschedule"; candidateIds: string[]; pendingDueAt: string }
-  | { op: "edit"; candidateIds: string[]; pendingField: "title" | "notes"; pendingValue: string }
+  | { op: "edit"; candidateIds: string[]; pendingField: "title" | "notes" | "priority" | "domain" | "recurrence" | "linkedTaskId"; pendingValue: string }
   | { op: "snooze"; candidateIds: string[]; pendingDelayMinutes: number };
 
 export interface PendingTimeSuggestion {

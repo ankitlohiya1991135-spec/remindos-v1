@@ -273,7 +273,15 @@ export function useChatEngine(params: UseChatEngineParams) {
       return;
     }
 
-    if (action.type === "edit_reminder" && (action.newTitle || action.newNotes !== undefined)) {
+    if (action.type === "edit_reminder") {
+      const hasPayload =
+        action.newTitle || action.newNotes !== undefined ||
+        action.newPriority !== undefined || action.newDomain !== undefined ||
+        action.newRecurrence !== undefined || action.newLinkedTaskId !== undefined;
+      if (!hasPayload) {
+        void refreshReminders();
+        return;
+      }
       const target = reminders.find((r) =>
         matchesReminder(r, action.targetId, action.targetTitle),
       );
@@ -282,22 +290,32 @@ export function useChatEngine(params: UseChatEngineParams) {
         void refreshReminders();
         return;
       }
-      const patch: Record<string, unknown> = {
-        priority: typeof target.priority === "number" ? target.priority : 3,
-      };
+      // Build patch — title/notes/recurrence require priority in body
+      const patch: Record<string, unknown> = {};
       if (action.newTitle) patch.title = action.newTitle;
       if (typeof action.newNotes === "string") patch.notes = action.newNotes;
-      // Optimistic: apply the edit locally before the server confirms
+      if (action.newRecurrence !== undefined) patch.recurrence = action.newRecurrence;
+      if (action.newPriority !== undefined) patch.priority = action.newPriority;
+      if (action.newDomain !== undefined) patch.domain = action.newDomain; // null clears it
+      if (action.newLinkedTaskId !== undefined) patch.linkedTaskId = action.newLinkedTaskId; // null delinks
+      // priority is REQUIRED when updating title, notes, or recurrence
+      if ((patch.title !== undefined || patch.notes !== undefined || patch.recurrence !== undefined) && patch.priority === undefined) {
+        patch.priority = typeof target.priority === "number" ? target.priority : 3;
+      }
+      // Optimistic: apply changes locally immediately
       optimisticUpdateReminder((prev) =>
-        prev.map((r) =>
-          r.id === target.id
-            ? {
-                ...r,
-                ...(action.newTitle ? { title: action.newTitle } : {}),
-                ...(typeof action.newNotes === "string" ? { notes: action.newNotes } : {}),
-              }
-            : r,
-        ),
+        prev.map((r) => {
+          if (r.id !== target.id) return r;
+          return {
+            ...r,
+            ...(action.newTitle ? { title: action.newTitle } : {}),
+            ...(typeof action.newNotes === "string" ? { notes: action.newNotes } : {}),
+            ...(action.newPriority !== undefined ? { priority: action.newPriority } : {}),
+            ...(action.newDomain !== undefined ? { domain: (action.newDomain ?? undefined) as import("@repo/reminder").LifeDomain | undefined } : {}),
+            ...(action.newRecurrence !== undefined ? { recurrence: action.newRecurrence } : {}),
+            ...(action.newLinkedTaskId !== undefined ? { linkedTaskId: action.newLinkedTaskId ?? undefined } : {}),
+          };
+        }),
       );
       void refreshAfterReminderMutation(
         fetch(`/api/reminders/${target.id}`, {
@@ -604,18 +622,26 @@ export function useChatEngine(params: UseChatEngineParams) {
             // Needs confirmation before applying (consistent with normal edit flow)
             const { pendingField, pendingValue } = disambigSnapshot;
             const previewValue = pendingValue.length > 40 ? `${pendingValue.slice(0, 40)}…` : pendingValue;
+            // Map pendingField → the correct action key
+            let editPayload: Partial<typeof pendingConfirmAction> = {};
+            if (pendingField === "title") editPayload = { newTitle: pendingValue };
+            else if (pendingField === "notes") editPayload = { newNotes: pendingValue };
+            else if (pendingField === "priority") editPayload = { newPriority: parseInt(pendingValue, 10) || 3 };
+            else if (pendingField === "domain") editPayload = { newDomain: pendingValue || null };
+            else if (pendingField === "recurrence") editPayload = { newRecurrence: (pendingValue as "none" | "daily" | "weekly" | "monthly") || "none" };
+            else if (pendingField === "linkedTaskId") editPayload = { newLinkedTaskId: pendingValue || null };
             setPendingConfirmAction({
               type: "edit_reminder",
               targetId: match.id,
               targetTitle: match.title,
-              ...(pendingField === "title" ? { newTitle: pendingValue } : { newNotes: pendingValue }),
+              ...editPayload,
             });
             setMessages((prev) => [
               ...prev,
               {
                 id: crypto.randomUUID(),
                 role: "assistant",
-                content: `Change the ${pendingField} of "${match.title}" to "${previewValue}"? Reply **yes** to confirm.`,
+                content: `Update "${match.title}" — change ${pendingField} to "${previewValue}"? Reply **yes** to confirm.`,
                 createdAt: new Date().toISOString(),
               },
             ]);

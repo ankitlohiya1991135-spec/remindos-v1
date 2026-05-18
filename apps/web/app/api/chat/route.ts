@@ -66,9 +66,13 @@ interface ReminderAgentAction {
   pendingType?: "mark_done" | "delete_reminder" | "edit_reminder";
   /** Only on snooze_reminder: minutes to push the due time forward */
   delayMinutes?: number;
-  /** Only on edit_reminder: new title or new notes value */
+  /** Only on edit_reminder: new field values */
   newTitle?: string;
   newNotes?: string;
+  newPriority?: number;          // 1–5
+  newDomain?: LifeDomain | null; // null = clear domain
+  newRecurrence?: "none" | "daily" | "weekly" | "monthly";
+  newLinkedTaskId?: string | null; // null = delink from task
   /** Only on bulk_action / pending_confirm(bulk): operation and resolved IDs */
   bulkOperation?: "mark_done" | "delete";
   bulkTargetIds?: string[];
@@ -83,7 +87,7 @@ interface ReminderAgentAction {
   /** Only on clarify (reschedule disambiguation): the already-parsed new due date ISO string */
   pendingDueAt?: string;
   /** Only on clarify (edit disambiguation): which field is being edited */
-  pendingField?: "title" | "notes";
+  pendingField?: "title" | "notes" | "priority" | "domain" | "recurrence" | "linkedTaskId";
   /** Only on clarify (edit disambiguation): the new value for the field */
   pendingValue?: string;
   /** Only on clarify (snooze disambiguation): snooze delay in minutes */
@@ -149,7 +153,9 @@ ACTIONS (JSON action.type):
 - delete_reminder: user wants to remove one reminder; set targetTitle or targetId.
 - reschedule_reminder: user wants a new time for one reminder; set dueAt as ISO in action only, plus targetTitle/targetId.
 - snooze_reminder: user wants to delay a reminder by a duration (e.g. "snooze 30 min", "push back 1 hour"). Set targetTitle/targetId and delayMinutes (integer). The server will handle this fast-path so you rarely need to emit it directly.
-- edit_reminder: user wants to change the title or notes of one reminder. Set targetTitle/targetId plus newTitle or newNotes.
+- edit_reminder: user wants to change any field of one reminder. Set targetTitle/targetId plus the relevant field:
+  newTitle (rename), newNotes (update notes), newPriority (1-5 integer), newDomain ("health"|"finance"|"career"|"hobby"|"fun"|null to clear),
+  newRecurrence ("none"|"daily"|"weekly"|"monthly"), newLinkedTaskId (task ID string to link, or null to delink).
 - bulk_action: user wants to act on ALL reminders in a scope (e.g. "mark all today's reminders done", "delete all missed"). Set bulkOperation ("mark_done"|"delete") and scope.
 - create_reminder: only if user clearly wants to create. May include priority (1-5), domain, recurrence, linkedTaskId.
 - clarify: you need exactly one missing piece (which reminder, which time). Ask a single focused question.
@@ -955,11 +961,22 @@ function extractTargetFromSnooze(message: string): string {
 
 // ─── Gap 5: edit title/notes helpers ─────────────────────────────────────────
 
-function extractEditField(message: string): "title" | "notes" | null {
+function extractEditField(message: string): "title" | "notes" | "priority" | "domain" | "recurrence" | "linkedTaskId" | null {
   const n = message.toLowerCase();
   if (/\b(rename|retitle)\b/.test(n)) return "title";
   if (/\b(title|name)\b/.test(n)) return "title";
   if (/\bnotes?\b/.test(n)) return "notes";
+  if (/\bpriority\b/.test(n)) return "priority";
+  if (/\b(domain|category)\b/.test(n)) return "domain";
+  if (/\b(recurrence|recurring|repeat)\b/.test(n)) return "recurrence";
+  if (/\b(make|set|change|update)\b.{0,30}\b(daily|weekly|monthly|one.?time|non.?recurring)\b/.test(n)) return "recurrence";
+  if (/\bstop\s+(repeating|recurring)\b/.test(n)) return "recurrence";
+  if (/\b(link|attach|connect|unlink|delink|detach|disconnect)\b.{0,30}\btask\b/.test(n)) return "linkedTaskId";
+  if (/\b(unlink|delink|detach|disconnect)\b.{0,15}\bfrom\b/.test(n)) return "linkedTaskId";
+  if (/\bremove\b.{0,20}\btask\b.{0,20}\b(link|connection)\b/.test(n)) return "linkedTaskId";
+  // Priority as adjective: "high priority X", "make X urgent"
+  if (/\b(high|medium|low|urgent|normal)\s+priority\b/.test(n)) return "priority";
+  if (/\b(make|set)\b.{0,20}\b(high|medium|low|urgent|normal)\b/.test(n)) return "priority";
   return null;
 }
 
@@ -998,6 +1015,61 @@ function extractTargetFromEdit(message: string): string {
     .replace(/\b(my|the|a|an|reminder|reminders|for|about)\b/gi, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+/** Extract numeric priority (1–5) from phrases like "high priority", "priority 3", "make it urgent" */
+function extractPriorityFromEdit(message: string): number | null {
+  const n = message.toLowerCase();
+  // Explicit number: "priority 4", "set to 3 stars"
+  const numMatch = n.match(/\bpriority\s+(\d)\b/) ?? n.match(/\bto\s+(\d)\s*(?:stars?)?\b/);
+  if (numMatch?.[1]) {
+    const v = parseInt(numMatch[1], 10);
+    if (v >= 1 && v <= 5) return v;
+  }
+  // Word labels
+  if (/\b(urgent|critical|highest|top|5\s*stars?)\b/.test(n)) return 5;
+  if (/\b(high|important|4\s*stars?)\b/.test(n)) return 4;
+  if (/\b(medium|normal|default|3\s*stars?)\b/.test(n)) return 3;
+  if (/\b(low|minor|2\s*stars?)\b/.test(n)) return 2;
+  if (/\b(lowest|trivial|none|no\s*priority|1\s*star)\b/.test(n)) return 1;
+  return null;
+}
+
+/** Extract domain tag from phrases like "domain health", "category finance", "make it a career reminder" */
+function extractDomainFromEdit(message: string): LifeDomain | null | undefined {
+  const n = message.toLowerCase();
+  // Explicit clear: "clear domain", "remove domain", "no domain", "clear category"
+  if (/\b(clear|remove|none|no)\b.{0,15}\b(domain|category)\b/.test(n)) return null;
+  if (/\b(health|fitness|medical|exercise|workout)\b/.test(n)) return "health";
+  if (/\b(finance|financial|money|budget|investment|saving)\b/.test(n)) return "finance";
+  if (/\b(career|work|job|professional|business)\b/.test(n)) return "career";
+  if (/\b(hobby|hobbies|personal|leisure|creative)\b/.test(n)) return "hobby";
+  if (/\b(fun|entertainment|social|play|game)\b/.test(n)) return "fun";
+  return undefined; // not found
+}
+
+/** Extract recurrence from phrases like "make it daily", "set recurrence to weekly", "stop repeating" */
+function extractRecurrenceFromEdit(message: string): "none" | "daily" | "weekly" | "monthly" | null {
+  const n = message.toLowerCase();
+  if (/\b(stop\s+(repeating|recurring)|one.?time|non.?recurring|no\s+recurrence|remove\s+recurrence)\b/.test(n)) return "none";
+  if (/\bdaily\b/.test(n)) return "daily";
+  if (/\bweekly\b/.test(n)) return "weekly";
+  if (/\bmonthly\b/.test(n)) return "monthly";
+  return null;
+}
+
+/** Extract task link intent: returns { link: true, taskHint } for link, or { link: false } for delink */
+function extractTaskLinkIntent(message: string): { link: false } | { link: true; taskHint: string } | null {
+  const n = message.toLowerCase();
+  if (/\b(unlink|delink|detach|disconnect)\b/.test(n) || /\bremove\b.{0,20}\btask\b.{0,20}\b(link|connection)\b/.test(n)) {
+    return { link: false };
+  }
+  if (/\b(link|attach|connect)\b/.test(n)) {
+    // Try to extract task name hint from "to task X", "with task X", "to X task"
+    const m = message.match(/\b(?:to|with)\s+(?:task\s+)?["']?([A-Za-z0-9 _-]{2,50})["']?/i);
+    return { link: true, taskHint: m?.[1]?.trim() ?? "" };
+  }
+  return null;
 }
 
 // ─── Gap 6: bulk helpers ──────────────────────────────────────────────────────
@@ -1422,6 +1494,10 @@ export async function POST(request: Request) {
       recurrence?: string;
       newTitle?: string;
       newNotes?: string;
+      newPriority?: number;
+      newDomain?: LifeDomain | null;
+      newRecurrence?: "none" | "daily" | "weekly" | "monthly";
+      newLinkedTaskId?: string | null;
     };
     recentListedIds?: string[];
   };
@@ -1459,24 +1535,42 @@ export async function POST(request: Request) {
       }
     }
 
-    // Edit confirmation
-    if (pendingType === "edit_reminder" && (body.pendingAction?.newTitle || body.pendingAction?.newNotes !== undefined)) {
-      const { newTitle, newNotes } = body.pendingAction;
-      const editTarget = findTargetReminder(reminders, targetId, targetTitle);
-      if (editTarget) {
-        const field = newTitle !== undefined ? "title" : "notes";
-        const reply = `Done — updated the ${field} of "${editTarget.title}".`;
-        void saveMessageServerSide(userId, "user", message);
-        void saveMessageServerSide(userId, "assistant", reply);
-        return NextResponse.json({
-          reply,
-          action: {
-            type: "edit_reminder",
-            targetId: editTarget.id,
-            targetTitle: editTarget.title,
-            ...(newTitle !== undefined ? { newTitle } : { newNotes }),
-          },
-        } satisfies ReminderAgentResponse);
+    // Edit confirmation — any edit field
+    if (pendingType === "edit_reminder") {
+      const pa = body.pendingAction ?? {};
+      const hasEditPayload =
+        pa.newTitle || pa.newNotes !== undefined ||
+        pa.newPriority !== undefined || pa.newDomain !== undefined ||
+        pa.newRecurrence !== undefined || pa.newLinkedTaskId !== undefined;
+      if (hasEditPayload) {
+        const editTarget = findTargetReminder(reminders, targetId, targetTitle);
+        if (editTarget) {
+          // Determine a human-readable field label for the reply
+          let fieldLabel = "fields";
+          if (pa.newTitle !== undefined) fieldLabel = "title";
+          else if (pa.newNotes !== undefined) fieldLabel = "notes";
+          else if (pa.newPriority !== undefined) fieldLabel = "priority";
+          else if (pa.newDomain !== undefined) fieldLabel = "domain";
+          else if (pa.newRecurrence !== undefined) fieldLabel = "recurrence";
+          else if (pa.newLinkedTaskId !== undefined) fieldLabel = pa.newLinkedTaskId === null ? "task link (unlinked)" : "task link";
+          const reply = `Done — updated the ${fieldLabel} of "${editTarget.title}".`;
+          void saveMessageServerSide(userId, "user", message);
+          void saveMessageServerSide(userId, "assistant", reply);
+          return NextResponse.json({
+            reply,
+            action: {
+              type: "edit_reminder",
+              targetId: editTarget.id,
+              targetTitle: editTarget.title,
+              ...(pa.newTitle !== undefined ? { newTitle: pa.newTitle } : {}),
+              ...(pa.newNotes !== undefined ? { newNotes: pa.newNotes } : {}),
+              ...(pa.newPriority !== undefined ? { newPriority: pa.newPriority } : {}),
+              ...(pa.newDomain !== undefined ? { newDomain: pa.newDomain } : {}),
+              ...(pa.newRecurrence !== undefined ? { newRecurrence: pa.newRecurrence } : {}),
+              ...(pa.newLinkedTaskId !== undefined ? { newLinkedTaskId: pa.newLinkedTaskId } : {}),
+            },
+          } satisfies ReminderAgentResponse);
+        }
       }
     }
 
@@ -1813,14 +1907,13 @@ export async function POST(request: Request) {
     // Target not resolved — fall through to LLM
   }
 
-  // ─── Gap 5: edit title/notes fast path ────────────────────────────────────
+  // ─── Gap 5: edit fast path (title, notes, priority, domain, recurrence, task link) ────
   if (looksLikeEditIntent(message)) {
     const field = extractEditField(message);
-    const newValue = extractNewValueFromEdit(message);
 
     if (!field) {
       const r: ReminderAgentResponse = {
-        reply: "What would you like to change — the title or the notes?",
+        reply: "What would you like to change — the title, notes, priority, domain, recurrence, or task link?",
         action: { type: "clarify" },
       };
       void saveMessageServerSide(userId, "user", message);
@@ -1828,27 +1921,155 @@ export async function POST(request: Request) {
       return NextResponse.json(r);
     }
 
-    if (!newValue) {
-      const r: ReminderAgentResponse = {
-        reply: `What should the new ${field} be?`,
-        action: { type: "clarify" },
-      };
-      void saveMessageServerSide(userId, "user", message);
-      void saveMessageServerSide(userId, "assistant", r.reply);
-      return NextResponse.json(r);
+    // ── Resolve the parsed new value for each field type ──────────────────────
+    let resolvedNewValue: string | null = null;        // for title/notes (string)
+    let resolvedPriority: number | null = null;        // for priority
+    let resolvedDomain: LifeDomain | null | undefined = undefined; // for domain (undefined=not found)
+    let resolvedRecurrence: "none"|"daily"|"weekly"|"monthly" | null = null;
+    let resolvedTaskLink: { link: false } | { link: true; taskHint: string } | null = null;
+
+    if (field === "title" || field === "notes") {
+      resolvedNewValue = extractNewValueFromEdit(message);
+      if (!resolvedNewValue) {
+        const r: ReminderAgentResponse = {
+          reply: `What should the new ${field} be?`,
+          action: { type: "clarify" },
+        };
+        void saveMessageServerSide(userId, "user", message);
+        void saveMessageServerSide(userId, "assistant", r.reply);
+        return NextResponse.json(r);
+      }
+    } else if (field === "priority") {
+      resolvedPriority = extractPriorityFromEdit(message);
+      if (resolvedPriority === null) {
+        const r: ReminderAgentResponse = {
+          reply: "What priority level? Use 1 (low) to 5 (urgent), or say high, medium, or low.",
+          action: { type: "clarify" },
+        };
+        void saveMessageServerSide(userId, "user", message);
+        void saveMessageServerSide(userId, "assistant", r.reply);
+        return NextResponse.json(r);
+      }
+    } else if (field === "domain") {
+      resolvedDomain = extractDomainFromEdit(message);
+      if (resolvedDomain === undefined) {
+        const r: ReminderAgentResponse = {
+          reply: "Which domain — health, finance, career, hobby, or fun? (or say 'clear' to remove the domain)",
+          action: { type: "clarify" },
+        };
+        void saveMessageServerSide(userId, "user", message);
+        void saveMessageServerSide(userId, "assistant", r.reply);
+        return NextResponse.json(r);
+      }
+    } else if (field === "recurrence") {
+      resolvedRecurrence = extractRecurrenceFromEdit(message);
+      if (resolvedRecurrence === null) {
+        const r: ReminderAgentResponse = {
+          reply: "What recurrence — daily, weekly, monthly, or one-time (none)?",
+          action: { type: "clarify" },
+        };
+        void saveMessageServerSide(userId, "user", message);
+        void saveMessageServerSide(userId, "assistant", r.reply);
+        return NextResponse.json(r);
+      }
+    } else if (field === "linkedTaskId") {
+      resolvedTaskLink = extractTaskLinkIntent(message);
+      if (!resolvedTaskLink) {
+        const r: ReminderAgentResponse = {
+          reply: "Would you like to link this reminder to a task, or unlink it from its current task?",
+          action: { type: "clarify" },
+        };
+        void saveMessageServerSide(userId, "user", message);
+        void saveMessageServerSide(userId, "assistant", r.reply);
+        return NextResponse.json(r);
+      }
+      // Linking but task hint provided and no match found → ask which task
+      if (resolvedTaskLink.link && resolvedTaskLink.taskHint && tasks.length > 0) {
+        const hint = resolvedTaskLink.taskHint.toLowerCase();
+        const matched = tasks.find(
+          (t) => t.title.toLowerCase().includes(hint) || hint.includes(t.title.toLowerCase()),
+        );
+        if (!matched) {
+          const taskNames = tasks.slice(0, 4).map((t) => `"${t.title}"`).join(", ");
+          const r: ReminderAgentResponse = {
+            reply: `I couldn't find a task named "${resolvedTaskLink.taskHint}". Your tasks: ${taskNames}. Which one should I link to?`,
+            action: { type: "clarify" },
+          };
+          void saveMessageServerSide(userId, "user", message);
+          void saveMessageServerSide(userId, "assistant", r.reply);
+          return NextResponse.json(r);
+        }
+      }
+    }
+
+    // ── Build the action payload for pending_confirm ───────────────────────────
+    function buildEditActionPayload(): Partial<ReminderAgentAction> {
+      if (field === "title") return { newTitle: resolvedNewValue! };
+      if (field === "notes") return { newNotes: resolvedNewValue! };
+      if (field === "priority") return { newPriority: resolvedPriority! };
+      if (field === "domain") return { newDomain: resolvedDomain as LifeDomain | null };
+      if (field === "recurrence") return { newRecurrence: resolvedRecurrence! };
+      if (field === "linkedTaskId") {
+        if (!resolvedTaskLink) return {};
+        if (!resolvedTaskLink.link) return { newLinkedTaskId: null };
+        // Linking: try to resolve task ID from hint
+        if (resolvedTaskLink.taskHint) {
+          const hint = resolvedTaskLink.taskHint.toLowerCase();
+          const matched = tasks.find((t) =>
+            t.title.toLowerCase().includes(hint) || hint.includes(t.title.toLowerCase()),
+          );
+          if (matched) return { newLinkedTaskId: matched.id };
+        }
+        return {}; // will fall through to LLM if task not found
+      }
+      return {};
+    }
+
+    // ── Build human-readable preview for confirmation prompt ─────────────────
+    function buildEditPreview(): string {
+      if (field === "title" && resolvedNewValue) {
+        const p = resolvedNewValue.length > 40 ? `${resolvedNewValue.slice(0, 40)}…` : resolvedNewValue;
+        return `rename it to "${p}"`;
+      }
+      if (field === "notes" && resolvedNewValue) {
+        const p = resolvedNewValue.length > 40 ? `${resolvedNewValue.slice(0, 40)}…` : resolvedNewValue;
+        return `set notes to "${p}"`;
+      }
+      if (field === "priority" && resolvedPriority !== null) {
+        const labels: Record<number, string> = { 1: "low (1★)", 2: "2★", 3: "medium (3★)", 4: "high (4★)", 5: "urgent (5★)" };
+        return `set priority to ${labels[resolvedPriority] ?? `${resolvedPriority}★`}`;
+      }
+      if (field === "domain") {
+        return resolvedDomain === null ? "clear the domain tag" : `set domain to "${resolvedDomain}"`;
+      }
+      if (field === "recurrence") {
+        const labels: Record<string, string> = { none: "one-time (no recurrence)", daily: "daily", weekly: "weekly", monthly: "monthly" };
+        return `set recurrence to ${labels[resolvedRecurrence!] ?? resolvedRecurrence}`;
+      }
+      if (field === "linkedTaskId" && resolvedTaskLink) {
+        if (!resolvedTaskLink.link) return "unlink from its task";
+        const payload = buildEditActionPayload();
+        if (payload.newLinkedTaskId) {
+          const t = tasks.find((t) => t.id === payload.newLinkedTaskId);
+          return `link to task "${t?.title ?? payload.newLinkedTaskId}"`;
+        }
+        return `link to a task`;
+      }
+      return `update ${field}`;
     }
 
     const ordinalEditTarget = resolveByOrdinal(message, reminders, body.recentListedIds);
     if (ordinalEditTarget) {
-      const previewValue = newValue.length > 40 ? `${newValue.slice(0, 40)}…` : newValue;
+      const payload = buildEditActionPayload();
+      const preview = buildEditPreview();
       const r: ReminderAgentResponse = {
-        reply: `Change the ${field} of "${ordinalEditTarget.title}" to "${previewValue}"? Reply **yes** to confirm.`,
+        reply: `Update "${ordinalEditTarget.title}" — ${preview}? Reply **yes** to confirm.`,
         action: {
           type: "pending_confirm",
           pendingType: "edit_reminder",
           targetId: ordinalEditTarget.id,
           targetTitle: ordinalEditTarget.title,
-          ...(field === "title" ? { newTitle: newValue } : { newNotes: newValue }),
+          ...payload,
         },
       };
       void saveMessageServerSide(userId, "user", effectiveMessage);
@@ -1865,15 +2086,16 @@ export async function POST(request: Request) {
       );
       if (matches.length === 1) {
         const target = matches[0]!;
-        const previewValue = newValue.length > 40 ? `${newValue.slice(0, 40)}…` : newValue;
+        const payload = buildEditActionPayload();
+        const preview = buildEditPreview();
         const r: ReminderAgentResponse = {
-          reply: `Change the ${field} of "${target.title}" to "${previewValue}"? Reply **yes** to confirm.`,
+          reply: `Update "${target.title}" — ${preview}? Reply **yes** to confirm.`,
           action: {
             type: "pending_confirm",
             pendingType: "edit_reminder",
             targetId: target.id,
             targetTitle: target.title,
-            ...(field === "title" ? { newTitle: newValue } : { newNotes: newValue }),
+            ...payload,
           },
         };
         void saveMessageServerSide(userId, "user", effectiveMessage);
@@ -1888,8 +2110,8 @@ export async function POST(request: Request) {
             type: "clarify",
             pendingOp: "edit",
             candidateIds: matches.map((m) => m.id),
-            pendingField: field as "title" | "notes",
-            pendingValue: newValue,
+            pendingField: field,
+            pendingValue: resolvedNewValue ?? String(resolvedPriority ?? resolvedDomain ?? resolvedRecurrence ?? ""),
           },
         };
         void saveMessageServerSide(userId, "user", effectiveMessage);
@@ -1898,19 +2120,20 @@ export async function POST(request: Request) {
       }
       // Zero matches — fall through to LLM
     }
-    // Phase 1C: pronoun resolution for edit — "rename it" / "change its title"
+    // Phase 1C: pronoun resolution for edit — "rename it" / "change its priority"
     if (isPronoun) {
       const pronounTarget = resolveTargetFromHistory(history, reminders.filter((r) => r.status === "pending"));
       if (pronounTarget) {
-        const previewValue = newValue.length > 40 ? `${newValue.slice(0, 40)}…` : newValue;
+        const payload = buildEditActionPayload();
+        const preview = buildEditPreview();
         const r: ReminderAgentResponse = {
-          reply: `Change the ${field} of "${pronounTarget.title}" to "${previewValue}"? Reply **yes** to confirm.`,
+          reply: `Update "${pronounTarget.title}" — ${preview}? Reply **yes** to confirm.`,
           action: {
             type: "pending_confirm",
             pendingType: "edit_reminder",
             targetId: pronounTarget.id,
             targetTitle: pronounTarget.title,
-            ...(field === "title" ? { newTitle: newValue } : { newNotes: newValue }),
+            ...payload,
           },
         };
         void saveMessageServerSide(userId, "user", effectiveMessage);
@@ -2431,20 +2654,35 @@ export async function POST(request: Request) {
     // Phase 1A — server-side execution for edit_reminder.
     // edit_reminder from the LLM path bypasses the fast-path pending_confirm flow,
     // so we execute it here to guarantee persistence.
-    if (parsed.action.type === "edit_reminder" && (parsed.action.newTitle || parsed.action.newNotes !== undefined)) {
-      const editTarget = findTargetReminder(reminders, parsed.action.targetId, parsed.action.targetTitle);
-      if (editTarget) {
-        try {
-          const convex = getConvexClient();
-          await convex.mutation(api.reminders.update, {
-            userId,
-            reminderId: editTarget.id as any, // eslint-disable-line @typescript-eslint/no-explicit-any
-            ...(parsed.action.newTitle ? { title: parsed.action.newTitle } : {}),
-            ...(parsed.action.newNotes !== undefined ? { notes: parsed.action.newNotes } : {}),
-          });
-          parsed.action.targetId = editTarget.id;
-        } catch {
-          // Non-fatal
+    {
+      const a = parsed.action;
+      const hasEditPayload =
+        a.type === "edit_reminder" &&
+        (a.newTitle || a.newNotes !== undefined ||
+         a.newPriority !== undefined || a.newDomain !== undefined ||
+         a.newRecurrence !== undefined || a.newLinkedTaskId !== undefined);
+      if (hasEditPayload) {
+        const editTarget = findTargetReminder(reminders, a.targetId, a.targetTitle);
+        if (editTarget) {
+          try {
+            const convex = getConvexClient();
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            const patch: Record<string, any> = {};
+            if (a.newTitle) patch.title = a.newTitle;
+            if (a.newNotes !== undefined) patch.notes = a.newNotes;
+            if (a.newPriority !== undefined) patch.priority = a.newPriority;
+            if (a.newDomain !== undefined) patch.domain = a.newDomain; // null = clear
+            if (a.newRecurrence !== undefined) patch.recurrence = a.newRecurrence;
+            if (a.newLinkedTaskId !== undefined) patch.linkedTaskId = a.newLinkedTaskId; // null = delink
+            await convex.mutation(api.reminders.update, {
+              userId,
+              reminderId: editTarget.id as any,
+              ...patch,
+            });
+            a.targetId = editTarget.id;
+          } catch {
+            // Non-fatal
+          }
         }
       }
     }

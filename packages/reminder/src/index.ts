@@ -321,10 +321,30 @@ export function looksLikeBulkIntent(message: string): boolean {
 
 export function looksLikeEditIntent(message: string): boolean {
   const n = message.toLowerCase().trim();
+  // Hard-block: question starters that are never edits
   if (/^(did i|have i|do i|does|is there|was there|what|which|show|list|how many)\b/.test(n)) return false;
+  // Hard-block: creation/addition openers — "create a high priority reminder", "set a daily reminder"
+  if (/^(remind\s+me|create|add|new\s+(reminder|task)|schedule|make\s+a|set\s+a|set\s+up)\b/.test(n)) return false;
+  // title / notes
   if (/\b(rename|retitle)\b/.test(n)) return true;
   if (/\b(change|update|edit|modify)\b.{0,35}\b(title|name|notes?|description)\b/.test(n)) return true;
   if (/\b(add|set)\s+(notes?|description)\s+(for|to|on)\b/.test(n)) return true;
+  // priority — require an existing-item context (the|my|its|reminder) before priority keyword
+  if (/\b(set|change|update|make)\b.{0,30}\b(the|my|its|reminder)\b.{0,30}\bpriority\b/.test(n)) return true;
+  if (/\bpriority\b.{0,30}\b(of|for|on)\b.{0,30}\b(the|my)\b/.test(n)) return true;
+  if (/\bpriority\b.{0,25}\b(to|as)\b.{0,20}\b(high|medium|low|urgent|normal|\d)\b/.test(n)) return true;
+  // domain
+  if (/\b(set|change|update)\b.{0,30}\b(the|my|its)\b.{0,20}\b(domain|category)\b/.test(n)) return true;
+  if (/\b(domain|category)\b.{0,25}\b(to|as)\b/.test(n)) return true;
+  // recurrence — require an existing-item context
+  if (/\b(make|set|change|update)\b.{0,25}\b(the|my|its)\b.{0,30}\b(daily|weekly|monthly|recurring|recurrence|one.?time|non.?recurring)\b/.test(n)) return true;
+  if (/\b(recurrence|recurring)\b.{0,25}\b(to|as)\b/.test(n)) return true;
+  if (/\bstop\s+(repeating|recurring)\b/.test(n)) return true;
+  // task link / delink
+  if (/\b(link|attach|connect)\b.{0,30}\b(the|my|this)\b.{0,30}\b(reminder|it)\b.{0,30}\b(to|with)\b.{0,30}\btask\b/.test(n)) return true;
+  if (/\b(link|attach|connect)\b.{0,15}\b(reminder|it)\b/.test(n) && /\btask\b/.test(n)) return true;
+  if (/\b(unlink|delink|detach|disconnect)\b.{0,30}\b(task|from|reminder)\b/.test(n)) return true;
+  if (/\bremove\b.{0,20}\btask\b.{0,20}\b(link|connection|association)\b/.test(n)) return true;
   return false;
 }
 
