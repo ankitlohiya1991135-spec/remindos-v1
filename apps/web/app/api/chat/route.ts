@@ -48,7 +48,13 @@ type ReminderAgentActionType =
   | "bulk_action"
   | "clarify"
   | "pending_confirm"
-  | "unknown";
+  | "unknown"
+  // ─── Task CRUD ──────────────────────────────────────────────────────────
+  | "create_task"
+  | "list_tasks"
+  | "mark_task_done"
+  | "delete_task"
+  | "edit_task";
 
 interface ReminderAgentAction {
   type: ReminderAgentActionType;
@@ -63,7 +69,7 @@ interface ReminderAgentAction {
   targetId?: string;
   scope?: "today" | "tomorrow" | "missed" | "done" | "pending" | "all" | "later" | "future";
   /** Only on pending_confirm: the action waiting for user confirmation */
-  pendingType?: "mark_done" | "delete_reminder" | "edit_reminder";
+  pendingType?: "mark_done" | "delete_reminder" | "edit_reminder" | "mark_task_done" | "delete_task" | "edit_task";
   /** Only on snooze_reminder: minutes to push the due time forward */
   delayMinutes?: number;
   /** Only on edit_reminder: new field values */
@@ -158,8 +164,15 @@ ACTIONS (JSON action.type):
   newRecurrence ("none"|"daily"|"weekly"|"monthly"), newLinkedTaskId (task ID string to link, or null to delink).
 - bulk_action: user wants to act on ALL reminders in a scope (e.g. "mark all today's reminders done", "delete all missed"). Set bulkOperation ("mark_done"|"delete") and scope.
 - create_reminder: only if user clearly wants to create. May include priority (1-5), domain, recurrence, linkedTaskId.
-- clarify: you need exactly one missing piece (which reminder, which time). Ask a single focused question.
+- clarify: you need exactly one missing piece (which reminder, which time, which task). Ask a single focused question.
 - unknown: questions you answer in "reply" only (no database change). Use for explanations, reasoning, comparisons, counts, behavioral insights, and open-ended Q&A.
+
+TASK ACTIONS (JSON action.type) — use when the user explicitly mentions "task" or "tasks":
+- create_task: user wants to create a new task. Set title; optionally priority (1-5), domain.
+- list_tasks: user wants to see tasks. Set scope: pending|done.
+- mark_task_done: user wants to complete a task. Set targetTitle or targetId.
+- delete_task: user wants to remove a task. Set targetTitle or targetId.
+- edit_task: user wants to change a task field. Set targetTitle/targetId plus newTitle, newNotes, newPriority (1-5), or newDomain.
 
 IMPORTANT RULES FOR ACTIONS:
 - snooze and edit are handled by fast-path code; prefer snooze_reminder/edit_reminder action types so the server can resolve them deterministically.
@@ -1465,6 +1478,112 @@ function normalizeClientTimeZone(raw: unknown): string | undefined {
   return t;
 }
 
+// ─── Task CRUD helpers ────────────────────────────────────────────────────────
+
+/** True if the message is about tasks at all — required before any task classifier. */
+function taskGate(m: string): boolean {
+  return /\btasks?\b/i.test(m);
+}
+
+function looksLikeCreateTaskIntent(m: string): boolean {
+  const n = m.toLowerCase();
+  return (
+    /\b(create|add|make|new)\b.{0,40}\btasks?\b/.test(n) ||
+    /\btasks?\b.{0,30}\b(create|add|make|new)\b/.test(n)
+  );
+}
+
+function looksLikeListTasksIntent(m: string): boolean {
+  const n = m.toLowerCase().trim();
+  return (
+    /\b(show|list|see|what|which|display|view)\b.{0,30}\btasks?\b/.test(n) ||
+    /\btasks?\b.{0,20}\b(show|list|see|what)\b/.test(n) ||
+    /^(my\s+)?tasks?\s*\??\s*$/.test(n)
+  );
+}
+
+function looksLikeMarkTaskDoneIntent(m: string): boolean {
+  const n = m.toLowerCase();
+  return (
+    /\b(mark|complete|finish|done|completed|finished|checked\s+off)\b.{0,40}\btasks?\b/.test(n) ||
+    /\btasks?\b.{0,40}\b(mark|complete|finish|done|completed|finished)\b/.test(n) ||
+    /\b(i'?ve?\s+)?(done|finished|completed)\b.{0,30}\btasks?\b/.test(n)
+  );
+}
+
+function looksLikeDeleteTaskIntent(m: string): boolean {
+  const n = m.toLowerCase();
+  return (
+    /\b(delete|remove|cancel|drop|trash|erase)\b.{0,40}\btasks?\b/.test(n) ||
+    /\btasks?\b.{0,40}\b(delete|remove|cancel|drop|trash)\b/.test(n)
+  );
+}
+
+function looksLikeEditTaskIntent(m: string): boolean {
+  const n = m.toLowerCase();
+  return (
+    /\b(rename|retitle|edit|update|change|modify)\b.{0,40}\btasks?\b/.test(n) ||
+    /\btasks?\b.{0,40}\b(rename|retitle|edit|update|change|modify)\b/.test(n) ||
+    /\b(set|add)\b.{0,20}\b(priority|notes?|domain|category)\b.{0,30}\btasks?\b/.test(n) ||
+    /\btasks?\b.{0,30}\b(priority|notes?|domain|category)\b/.test(n)
+  );
+}
+
+/** Strip task-CRUD verbs to leave just the task title. */
+function extractTargetFromTaskMessage(message: string): string {
+  return message
+    .replace(/^(please\s+)?/i, "")
+    .replace(/\b(create|add|make|new|delete|remove|cancel|drop|trash|erase|mark|complete|finish|done|completed|finished|checked\s+off)\s*/gi, " ")
+    .replace(/\b(my|the|a|an|task|tasks|for|about)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Strip edit verbs and the new value to leave just the task title. */
+function extractTargetFromTaskEdit(message: string): string {
+  let working = message
+    .replace(/^(please\s+)?/i, "")
+    .replace(/\b(rename|retitle|change|update|edit|modify)\s*/gi, " ");
+  working = working.replace(/\b(the\s+)?(title|name|notes?|description|priority|domain|category)\s+(?:of|for|on|in)\s*/gi, " ");
+  working = working.replace(/\b(the\s+)?(title|name|notes?|description|priority|domain|category)\s*/gi, " ");
+  working = working.replace(/\s+to\s+.+$/i, " ");
+  working = working.replace(/\s+with\s+.+$/i, " ");
+  working = working.replace(/\s+as\s+.+$/i, " ");
+  return working
+    .replace(/\b(my|the|a|an|task|tasks|for|about)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Which field does this edit-task message target? (title, notes, priority, domain) */
+function extractEditTaskField(message: string): "title" | "notes" | "priority" | "domain" | null {
+  const n = message.toLowerCase();
+  if (/\b(rename|retitle)\b/.test(n)) return "title";
+  if (/\b(title|name)\b/.test(n)) return "title";
+  if (/\bnotes?\b/.test(n)) return "notes";
+  if (/\bpriority\b/.test(n)) return "priority";
+  if (/\b(domain|category)\b/.test(n)) return "domain";
+  if (/\b(high|medium|low|urgent|normal)\s+priority\b/.test(n)) return "priority";
+  if (/\b(make|set)\b.{0,20}\b(high|medium|low|urgent|normal)\b/.test(n)) return "priority";
+  return null;
+}
+
+/** Extract a clean task title from a "create task <title>" message. */
+function extractTitleFromTaskInput(message: string): string | undefined {
+  let working = message.trim();
+  // Remove "create/add/make/new [a/the] task" prefix
+  working = working
+    .replace(/^(?:please\s+)?(?:create|add|make|new)\s+(?:(?:a|an|the|my)\s+)?tasks?\s*/i, "")
+    .trim();
+  working = working.replace(/^(?:called|named|titled)\s+/i, "");
+  // Remove trailing filler words
+  working = working
+    .replace(/\b(for|about|called|named|titled)\b/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return working || undefined;
+}
+
 // ─── POST handler ─────────────────────────────────────────────────────────────
 
 export async function POST(request: Request) {
@@ -1483,7 +1602,7 @@ export async function POST(request: Request) {
     timeZone?: string;
     replyContext?: ReplyContextPayload;
     pendingAction?: {
-      type: "mark_done" | "delete_reminder" | "create_reminder" | "edit_reminder";
+      type: "mark_done" | "delete_reminder" | "create_reminder" | "edit_reminder" | "mark_task_done" | "delete_task" | "edit_task";
       targetId?: string;
       targetTitle?: string;
       targetIds?: string[];
@@ -1598,6 +1717,86 @@ export async function POST(request: Request) {
         action: { type: pendingType, targetId: target.id, targetTitle: target.title },
       } satisfies ReminderAgentResponse);
     }
+    // ─── Task confirmation handlers ────────────────────────────────────────────
+    if (pendingType === "mark_task_done") {
+      const target = tasks.find((t) =>
+        (targetId && t.id === targetId) ||
+        (targetTitle && titleIncludesTarget(t.title, targetTitle))
+      );
+      if (target) {
+        const reply = `Done — task "${target.title}" marked as complete.`;
+        void saveMessageServerSide(userId, "user", message);
+        void saveMessageServerSide(userId, "assistant", reply);
+        return NextResponse.json({
+          reply,
+          action: { type: "mark_task_done", targetId: target.id, targetTitle: target.title },
+        } satisfies ReminderAgentResponse);
+      }
+      const reply = "I couldn't find that task — it may have already been updated.";
+      void saveMessageServerSide(userId, "user", message);
+      void saveMessageServerSide(userId, "assistant", reply);
+      return NextResponse.json({ reply, action: { type: "unknown" } } satisfies ReminderAgentResponse);
+    }
+
+    if (pendingType === "delete_task") {
+      const target = tasks.find((t) =>
+        (targetId && t.id === targetId) ||
+        (targetTitle && titleIncludesTarget(t.title, targetTitle))
+      );
+      if (target) {
+        const linkedCount = reminders.filter((r) => r.linkedTaskId === target.id).length;
+        const suffix = linkedCount > 0
+          ? ` (${linkedCount} linked reminder${linkedCount !== 1 ? "s" : ""} unlinked)`
+          : "";
+        const reply = `Done — task "${target.title}" deleted${suffix}.`;
+        void saveMessageServerSide(userId, "user", message);
+        void saveMessageServerSide(userId, "assistant", reply);
+        return NextResponse.json({
+          reply,
+          action: { type: "delete_task", targetId: target.id, targetTitle: target.title },
+        } satisfies ReminderAgentResponse);
+      }
+      const reply = "I couldn't find that task — it may have already been deleted.";
+      void saveMessageServerSide(userId, "user", message);
+      void saveMessageServerSide(userId, "assistant", reply);
+      return NextResponse.json({ reply, action: { type: "unknown" } } satisfies ReminderAgentResponse);
+    }
+
+    if (pendingType === "edit_task") {
+      const pa = body.pendingAction ?? {};
+      const hasEditPayload =
+        pa.newTitle || pa.newNotes !== undefined ||
+        pa.newPriority !== undefined || pa.newDomain !== undefined;
+      if (hasEditPayload) {
+        const target = tasks.find((t) =>
+          (targetId && t.id === targetId) ||
+          (targetTitle && titleIncludesTarget(t.title, targetTitle))
+        );
+        if (target) {
+          let fieldLabel = "fields";
+          if (pa.newTitle !== undefined) fieldLabel = "title";
+          else if (pa.newNotes !== undefined) fieldLabel = "notes";
+          else if (pa.newPriority !== undefined) fieldLabel = "priority";
+          else if (pa.newDomain !== undefined) fieldLabel = pa.newDomain === null ? "domain (cleared)" : "domain";
+          const reply = `Done — updated the ${fieldLabel} of task "${target.title}".`;
+          void saveMessageServerSide(userId, "user", message);
+          void saveMessageServerSide(userId, "assistant", reply);
+          return NextResponse.json({
+            reply,
+            action: {
+              type: "edit_task",
+              targetId: target.id,
+              targetTitle: target.title,
+              ...(pa.newTitle !== undefined ? { newTitle: pa.newTitle } : {}),
+              ...(pa.newNotes !== undefined ? { newNotes: pa.newNotes } : {}),
+              ...(pa.newPriority !== undefined ? { newPriority: pa.newPriority } : {}),
+              ...(pa.newDomain !== undefined ? { newDomain: pa.newDomain } : {}),
+            },
+          } satisfies ReminderAgentResponse);
+        }
+      }
+    }
+
     // Target no longer found (already deleted/done) — tell the user
     const reply = "I couldn't find that reminder anymore — it may have already been updated.";
     void saveMessageServerSide(userId, "user", message);
@@ -1619,6 +1818,230 @@ export async function POST(request: Request) {
   // NOTE: Always classify on raw `message` — effectiveMessage contains wrapper text that
   // pollutes keyword classifiers and causes misclassification.
   const intent = classifyReminderIntent(message);
+
+  // ─── Task CRUD fast paths ──────────────────────────────────────────────────
+  // Gate: only enter if the message explicitly mentions "task" or "tasks".
+  // This block runs BEFORE all reminder fast paths so task messages can't be
+  // consumed by looksLikeDeleteIntent / looksLikeMarkDoneIntent / looksLikeEditIntent.
+  // Reminder guard: if "remind" or "reminder" appears, treat as a reminder message even if
+  // "task" also appears (e.g. "create a reminder about my task", "remind me to finish the gym task").
+  if (taskGate(message) && !/\bremind(er)?\b/i.test(message)) {
+    // ── Create task ──────────────────────────────────────────────────────────
+    if (looksLikeCreateTaskIntent(message)) {
+      const title = extractTitleFromTaskInput(message) ?? "New Task";
+      const priority = extractPriorityFromInput(message);
+      const domain = extractDomainFromInput(message);
+      const r: ReminderAgentResponse = {
+        reply: `Task "${title}" created.`,
+        action: {
+          type: "create_task",
+          title,
+          ...(priority !== undefined ? { priority } : {}),
+          ...(domain !== undefined ? { domain } : {}),
+        },
+      };
+      void saveMessageServerSide(userId, "user", message);
+      void saveMessageServerSide(userId, "assistant", r.reply);
+      return NextResponse.json(r);
+    }
+
+    // ── List tasks ───────────────────────────────────────────────────────────
+    if (looksLikeListTasksIntent(message)) {
+      const n = message.toLowerCase();
+      const showDone = /\b(done|completed|finished)\b/.test(n);
+      const list = showDone
+        ? tasks.filter((t) => t.status === "done")
+        : tasks.filter((t) => t.status === "pending");
+      let reply: string;
+      if (list.length === 0) {
+        reply = showDone
+          ? "You have no completed tasks."
+          : "You have no pending tasks yet. Say 'create task <name>' to add one.";
+      } else {
+        const lines = list.map((t, i) => {
+          const priorityBadge = t.priority !== undefined ? ` (p${t.priority})` : "";
+          const dueLabel = t.dueAt ? ` — due ${formatDueInUserZone(t.dueAt, timeZone)}` : "";
+          return `${i + 1}. ${t.title}${priorityBadge}${dueLabel}`;
+        });
+        const header = showDone
+          ? `**Completed tasks (${list.length}):**`
+          : `**Pending tasks (${list.length}):**`;
+        reply = `${header}\n${lines.join("\n")}`;
+      }
+      const r: ReminderAgentResponse = {
+        reply,
+        action: { type: "list_tasks", scope: showDone ? "done" : "pending" },
+      };
+      void saveMessageServerSide(userId, "user", message);
+      void saveMessageServerSide(userId, "assistant", r.reply);
+      return NextResponse.json(r);
+    }
+
+    // ── Mark task done ───────────────────────────────────────────────────────
+    if (looksLikeMarkTaskDoneIntent(message)) {
+      const rawTarget = extractTargetFromTaskMessage(message);
+      if (rawTarget.length >= 2) {
+        const matches = tasks.filter(
+          (t) => t.status === "pending" && titleIncludesTarget(t.title, rawTarget),
+        );
+        if (matches.length === 1) {
+          const target = matches[0]!;
+          const linkedCount = reminders.filter(
+            (r) => r.linkedTaskId === target.id && r.status === "pending",
+          ).length;
+          const warning = linkedCount > 0
+            ? ` It has ${linkedCount} linked reminder${linkedCount !== 1 ? "s" : ""} that will remain active.`
+            : "";
+          const r: ReminderAgentResponse = {
+            reply: `Mark task "${target.title}" as done?${warning} Reply **yes** to confirm.`,
+            action: { type: "pending_confirm", pendingType: "mark_task_done", targetId: target.id, targetTitle: target.title },
+          };
+          void saveMessageServerSide(userId, "user", message);
+          void saveMessageServerSide(userId, "assistant", r.reply);
+          return NextResponse.json(r);
+        }
+        if (matches.length > 1) {
+          const sample = matches.slice(0, 2).map((t) => `"${t.title}"`);
+          const r: ReminderAgentResponse = {
+            reply: `Which task do you mean — ${sample.join(" or ")}?`,
+            action: { type: "clarify" },
+          };
+          void saveMessageServerSide(userId, "user", message);
+          void saveMessageServerSide(userId, "assistant", r.reply);
+          return NextResponse.json(r);
+        }
+        // Zero matches — fall through to LLM
+      }
+    }
+
+    // ── Delete task ──────────────────────────────────────────────────────────
+    if (looksLikeDeleteTaskIntent(message)) {
+      const rawTarget = extractTargetFromTaskMessage(message);
+      if (rawTarget.length >= 2) {
+        const matches = tasks.filter((t) => titleIncludesTarget(t.title, rawTarget));
+        if (matches.length === 1) {
+          const target = matches[0]!;
+          const linkedCount = reminders.filter((r) => r.linkedTaskId === target.id).length;
+          const warning = linkedCount > 0
+            ? ` Deleting it will unlink ${linkedCount} reminder${linkedCount !== 1 ? "s" : ""}.`
+            : "";
+          const r: ReminderAgentResponse = {
+            reply: `Delete task "${target.title}"?${warning} Reply **yes** to confirm.`,
+            action: { type: "pending_confirm", pendingType: "delete_task", targetId: target.id, targetTitle: target.title },
+          };
+          void saveMessageServerSide(userId, "user", message);
+          void saveMessageServerSide(userId, "assistant", r.reply);
+          return NextResponse.json(r);
+        }
+        if (matches.length > 1) {
+          const sample = matches.slice(0, 2).map((t) => `"${t.title}"`);
+          const r: ReminderAgentResponse = {
+            reply: `Which task do you mean — ${sample.join(" or ")}?`,
+            action: { type: "clarify" },
+          };
+          void saveMessageServerSide(userId, "user", message);
+          void saveMessageServerSide(userId, "assistant", r.reply);
+          return NextResponse.json(r);
+        }
+        // Zero matches — fall through to LLM
+      }
+    }
+
+    // ── Edit task ────────────────────────────────────────────────────────────
+    if (looksLikeEditTaskIntent(message)) {
+      const field = extractEditTaskField(message);
+      if (field) {
+        let resolvedNewValue: string | null = null;
+        let resolvedPriority: number | null = null;
+        let resolvedDomain: LifeDomain | null | undefined = undefined;
+
+        if (field === "title" || field === "notes") {
+          resolvedNewValue = extractNewValueFromEdit(message);
+          if (!resolvedNewValue) {
+            const r: ReminderAgentResponse = {
+              reply: `What should the new ${field} be?`,
+              action: { type: "clarify" },
+            };
+            void saveMessageServerSide(userId, "user", message);
+            void saveMessageServerSide(userId, "assistant", r.reply);
+            return NextResponse.json(r);
+          }
+        } else if (field === "priority") {
+          resolvedPriority = extractPriorityFromEdit(message);
+          if (resolvedPriority === null) {
+            const r: ReminderAgentResponse = {
+              reply: "What priority level? Use 1 (low) to 5 (urgent), or say high, medium, or low.",
+              action: { type: "clarify" },
+            };
+            void saveMessageServerSide(userId, "user", message);
+            void saveMessageServerSide(userId, "assistant", r.reply);
+            return NextResponse.json(r);
+          }
+        } else if (field === "domain") {
+          resolvedDomain = extractDomainFromEdit(message);
+          if (resolvedDomain === undefined) {
+            const r: ReminderAgentResponse = {
+              reply: "Which domain — health, finance, career, hobby, or fun? (or say 'clear' to remove it)",
+              action: { type: "clarify" },
+            };
+            void saveMessageServerSide(userId, "user", message);
+            void saveMessageServerSide(userId, "assistant", r.reply);
+            return NextResponse.json(r);
+          }
+        }
+
+        const rawTarget = extractTargetFromTaskEdit(message);
+        if (rawTarget.length >= 2) {
+          const matches = tasks.filter((t) => titleIncludesTarget(t.title, rawTarget));
+          if (matches.length === 1) {
+            const target = matches[0]!;
+            // Build the payload and a human-readable preview
+            const editPayload: Partial<ReminderAgentAction> = {};
+            let previewStr = `update ${field}`;
+            if (field === "title" && resolvedNewValue) {
+              editPayload.newTitle = resolvedNewValue;
+              previewStr = `rename to "${resolvedNewValue.slice(0, 40)}"`;
+            } else if (field === "notes" && resolvedNewValue !== null) {
+              editPayload.newNotes = resolvedNewValue;
+              previewStr = `set notes to "${resolvedNewValue.slice(0, 40)}"`;
+            } else if (field === "priority" && resolvedPriority !== null) {
+              editPayload.newPriority = resolvedPriority;
+              const labels: Record<number, string> = { 1: "low (1★)", 2: "2★", 3: "medium (3★)", 4: "high (4★)", 5: "urgent (5★)" };
+              previewStr = `set priority to ${labels[resolvedPriority] ?? `${resolvedPriority}★`}`;
+            } else if (field === "domain") {
+              editPayload.newDomain = resolvedDomain as LifeDomain | null;
+              previewStr = resolvedDomain === null ? "clear the domain tag" : `set domain to "${resolvedDomain}"`;
+            }
+            const r: ReminderAgentResponse = {
+              reply: `Update task "${target.title}" — ${previewStr}? Reply **yes** to confirm.`,
+              action: {
+                type: "pending_confirm",
+                pendingType: "edit_task",
+                targetId: target.id,
+                targetTitle: target.title,
+                ...editPayload,
+              },
+            };
+            void saveMessageServerSide(userId, "user", message);
+            void saveMessageServerSide(userId, "assistant", r.reply);
+            return NextResponse.json(r);
+          }
+          if (matches.length > 1) {
+            const sample = matches.slice(0, 2).map((t) => `"${t.title}"`);
+            const r: ReminderAgentResponse = {
+              reply: `Which task do you mean — ${sample.join(" or ")}?`,
+              action: { type: "clarify" },
+            };
+            void saveMessageServerSide(userId, "user", message);
+            void saveMessageServerSide(userId, "assistant", r.reply);
+            return NextResponse.json(r);
+          }
+          // Zero matches — fall through to LLM
+        }
+      }
+    }
+    // If taskGate matched but no task classifier matched, fall through to reminder paths / LLM
+  }
 
   if (looksLikeCreateIntent(message)) {
     const title = extractTitleFromCreateInput(message);

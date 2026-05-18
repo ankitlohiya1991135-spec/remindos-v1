@@ -66,6 +66,7 @@ export interface UseChatEngineParams {
   recentListedIds: string[];
   setRecentListedIds: Dispatch<SetStateAction<string[]>>;
   refreshReminders: () => Promise<void>;
+  refreshTasks: () => Promise<void>;
   /** Immediately update local reminder state for optimistic UI — before the API call resolves.
    *  On API failure the caller should invoke refreshReminders() to re-sync from the server. */
   optimisticUpdateReminder: (updater: (prev: ReminderItem[]) => ReminderItem[]) => void;
@@ -104,6 +105,7 @@ export function useChatEngine(params: UseChatEngineParams) {
     recentListedIds,
     setRecentListedIds,
     refreshReminders,
+    refreshTasks,
     optimisticUpdateReminder,
     playReminderSuccessAnimation,
     refreshAfterReminderMutation,
@@ -372,15 +374,151 @@ export function useChatEngine(params: UseChatEngineParams) {
       ).catch(() => showShareToast("Could not reschedule reminder. Try again."));
     }
 
+    // ─── Task CRUD handlers ───────────────────────────────────────────────────
+
+    if (action.type === "create_task" && action.title) {
+      const title = action.title;
+      void (async () => {
+        const validDomains = ["health", "finance", "career", "hobby", "fun"] as const;
+        try {
+          const res = await fetch("/api/tasks", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              title,
+              notes: action.notes?.trim() ? action.notes : undefined,
+              priority:
+                typeof action.priority === "number" && action.priority >= 1 && action.priority <= 5
+                  ? action.priority
+                  : 3,
+              domain: validDomains.includes(action.domain as typeof validDomains[number])
+                ? action.domain
+                : undefined,
+              status: "pending",
+            }),
+          });
+          if (!res.ok) {
+            const data = (await res.json().catch(() => ({}))) as { error?: string };
+            showShareToast(data.error ?? "Could not save the task. Please try again.");
+            return;
+          }
+          await refreshTasks();
+        } catch {
+          showShareToast("Could not save the task. Please try again.");
+        }
+      })();
+      return;
+    }
+
+    if (action.type === "mark_task_done") {
+      if (!action.targetId) {
+        showShareToast("Couldn't find that task.");
+        void refreshTasks();
+        return;
+      }
+      void (async () => {
+        try {
+          const res = await fetch(`/api/tasks/${action.targetId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ status: "done" }),
+          });
+          if (!res.ok) {
+            showShareToast("Could not complete task. Try again.");
+          }
+          await refreshTasks();
+        } catch {
+          showShareToast("Could not complete task. Try again.");
+          void refreshTasks();
+        }
+      })();
+      return;
+    }
+
+    if (action.type === "delete_task") {
+      if (!action.targetId) {
+        showShareToast("Couldn't find that task.");
+        void refreshTasks();
+        return;
+      }
+      void (async () => {
+        try {
+          const res = await fetch(`/api/tasks/${action.targetId}`, { method: "DELETE" });
+          if (!res.ok) {
+            showShareToast("Could not delete task. Try again.");
+          } else {
+            // Linked reminders are unlinked server-side; refresh to reflect
+            const data = (await res.json().catch(() => ({}))) as { unlinkedReminderCount?: number };
+            if (data.unlinkedReminderCount && data.unlinkedReminderCount > 0) {
+              void refreshReminders();
+            }
+          }
+          await refreshTasks();
+        } catch {
+          showShareToast("Could not delete task. Try again.");
+          void refreshTasks();
+        }
+      })();
+      return;
+    }
+
+    if (action.type === "edit_task") {
+      const hasPayload =
+        action.newTitle || action.newNotes !== undefined ||
+        action.newPriority !== undefined || action.newDomain !== undefined;
+      if (!hasPayload || !action.targetId) {
+        void refreshTasks();
+        return;
+      }
+      void (async () => {
+        try {
+          // Build patch — PATCH /api/tasks/[id] requires priority when updating title or notes
+          const patch: Record<string, unknown> = {};
+          if (action.newTitle) patch.title = action.newTitle;
+          if (typeof action.newNotes === "string") patch.notes = action.newNotes;
+          if (action.newPriority !== undefined) patch.priority = action.newPriority;
+          if (action.newDomain !== undefined) patch.domain = action.newDomain; // null clears it
+          // priority is REQUIRED when updating title or notes
+          if ((patch.title !== undefined || patch.notes !== undefined) && patch.priority === undefined) {
+            const taskRow = tasks.find((t) => t.id === action.targetId);
+            patch.priority = typeof taskRow?.priority === "number" ? taskRow.priority : 3;
+          }
+          const res = await fetch(`/api/tasks/${action.targetId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(patch),
+          });
+          if (!res.ok) {
+            showShareToast("Could not edit task. Try again.");
+          }
+          await refreshTasks();
+        } catch {
+          showShareToast("Could not edit task. Try again.");
+          void refreshTasks();
+        }
+      })();
+      return;
+    }
+
+    if (action.type === "list_tasks") {
+      // list_tasks is display-only — the reply already contains the formatted list.
+      // No mutation needed; nothing to do.
+      return;
+    }
+
     if (action.type === "pending_confirm" && action.pendingType) {
       setPendingConfirmAction({
         type: action.pendingType,
         targetId: action.targetId,
         targetTitle: action.targetTitle,
         targetIds: action.bulkTargetIds,
-        // edit_reminder confirmation carries the new value
+        // edit_reminder / edit_task confirmation carries the new field values
         newTitle: action.newTitle,
         newNotes: action.newNotes,
+        newPriority: action.newPriority,
+        newDomain: action.newDomain,
+        newRecurrence: action.newRecurrence,
+        newLinkedTaskId: action.newLinkedTaskId,
       });
       return;
     }

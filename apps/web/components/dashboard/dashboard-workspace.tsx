@@ -856,6 +856,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     recentListedIds,
     setRecentListedIds,
     refreshReminders,
+    refreshTasks,
     optimisticUpdateReminder,
     playReminderSuccessAnimation,
     refreshAfterReminderMutation,

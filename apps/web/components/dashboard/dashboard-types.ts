@@ -55,7 +55,13 @@ export interface AgentAction {
     | "bulk_action"
     | "clarify"
     | "pending_confirm"
-    | "unknown";
+    | "unknown"
+    // ─── Task CRUD ─────────────────────────────────────────────────────────
+    | "create_task"
+    | "list_tasks"
+    | "mark_task_done"
+    | "delete_task"
+    | "edit_task";
   title?: string;
   dueAt?: string;
   notes?: string;
@@ -63,7 +69,7 @@ export interface AgentAction {
   priority?: number;
   domain?: string;
   recurrence?: string;
-  pendingType?: "mark_done" | "delete_reminder" | "edit_reminder";
+  pendingType?: "mark_done" | "delete_reminder" | "edit_reminder" | "mark_task_done" | "delete_task" | "edit_task";
   delayMinutes?: number;
   newTitle?: string;
   newNotes?: string;
@@ -168,7 +174,7 @@ export interface ShareInboxRow {
 // ─── Pending chat states ──────────────────────────────────────────────────
 
 export interface PendingConfirmAction {
-  type: "mark_done" | "delete_reminder" | "edit_reminder";
+  type: "mark_done" | "delete_reminder" | "edit_reminder" | "mark_task_done" | "delete_task" | "edit_task";
   targetId?: string;
   targetTitle?: string;
   targetIds?: string[];
