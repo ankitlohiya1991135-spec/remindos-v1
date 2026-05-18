@@ -24,7 +24,7 @@ export interface CreateReminderOverlayProps {
   reminders: ReminderItem[];
   tasks: TaskRow[];
   onClose: () => void;
-  onDeleteReminder: (id: string, title: string) => void;
+  onDeleteReminder: (id: string) => void;
   onSaveSuccess: (info: { title: string; time: string }) => void;
   refreshReminders: () => Promise<void>;
   refreshTasks: () => Promise<void>;
@@ -584,7 +584,7 @@ export function CreateReminderOverlay({
             {editingReminder && (
               <button
                 type="button"
-                onClick={() => onDeleteReminder(editingReminder.id, editingReminder.title)}
+                onClick={() => onDeleteReminder(editingReminder.id)}
                 className="w-full rounded-2xl bg-rose-500 py-3.5 text-[14px] font-bold text-white"
               >
                 Delete Reminder

@@ -51,10 +51,18 @@ export interface ReminderListOverlayProps {
   onClose: () => void;
   onOpenCreate: () => void;
   onMarkDone: (id: string) => void;
-  onDelete: (id: string, title: string) => void;
+  onDelete: (id: string) => void;
   onEdit: (reminder: ReminderItem) => void;
   onShare: (ids: string[]) => void;
   onSnooze: (id: string, currentDueAt: string | number) => void;
+  /** Phase 2B: reschedule a missed reminder to today / tomorrow */
+  onRescheduleToday: (id: string) => void;
+  onRescheduleTomorrow: (id: string) => void;
+  /** Phase 2C: bulk overdue banner actions */
+  onArchiveAllMissed: () => void;
+  onRescheduleAllMissed: () => void;
+  /** Phase 2D: restore a done reminder back to pending */
+  onRestore: (id: string) => void;
   onAcceptShare: (batchKey: string) => void;
   onDenyShare: (batchKey: string) => void;
   onShowToast: (msg: string) => void;
@@ -78,6 +86,11 @@ export function ReminderListOverlay({
   onEdit,
   onShare,
   onSnooze,
+  onRescheduleToday,
+  onRescheduleTomorrow,
+  onArchiveAllMissed,
+  onRescheduleAllMissed,
+  onRestore,
   onAcceptShare,
   onDenyShare,
   onShowToast,
@@ -225,14 +238,34 @@ export function ReminderListOverlay({
           })}
         </div>
 
-        {/* ── Missed alert banner ── */}
+        {/* ── Missed alert banner (Phase 2C: bulk actions) ── */}
         {reminderListTab === "missed" && snapshot.missed > 0 && (
-          <div className="mx-3 mt-3 flex shrink-0 items-center gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-2.5">
-            <span className="h-2 w-2 rounded-full bg-rose-500 shrink-0" />
-            <span className="flex-1 text-[12px] font-semibold text-rose-800">
-              {snapshot.missed} reminder{snapshot.missed > 1 ? "s" : ""} need{snapshot.missed === 1 ? "s" : ""} immediate action
-            </span>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="h-4 w-4 text-rose-400"><path d="m9 18 6-6-6-6"/></svg>
+          <div className="mx-3 mt-3 flex shrink-0 flex-col gap-2 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3">
+            <div className="flex items-center gap-2">
+              <span className="h-2 w-2 rounded-full bg-rose-500 shrink-0" />
+              <span className="flex-1 text-[12px] font-semibold text-rose-800">
+                {snapshot.missed} reminder{snapshot.missed > 1 ? "s" : ""} need{snapshot.missed === 1 ? "s" : ""} immediate action
+              </span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" className="h-4 w-4 text-rose-400"><path d="m9 18 6-6-6-6"/></svg>
+            </div>
+            {snapshot.missed > 1 && (
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={onArchiveAllMissed}
+                  className="rounded-full border border-rose-300 bg-white px-3 py-1 text-[11px] font-bold text-rose-700 active:bg-rose-100"
+                >
+                  Archive all
+                </button>
+                <button
+                  type="button"
+                  onClick={onRescheduleAllMissed}
+                  className="rounded-full border border-rose-300 bg-white px-3 py-1 text-[11px] font-bold text-rose-700 active:bg-rose-100"
+                >
+                  Reschedule to this week
+                </button>
+              </div>
+            )}
           </div>
         )}
 
@@ -382,10 +415,13 @@ export function ReminderListOverlay({
                     onLongPressStart={() => handleLongPressStart(reminder)}
                     onLongPressEnd={handleLongPressEnd}
                     onMarkDone={() => onMarkDone(reminder.id)}
-                    onDelete={() => onDelete(reminder.id, reminder.title)}
+                    onDelete={() => onDelete(reminder.id)}
                     onEdit={() => onEdit(reminder)}
                     onShare={() => onShare([reminder.id])}
                     onSnooze={() => onSnooze(reminder.id, reminder.dueAt)}
+                    onRescheduleToday={reminderListTab === "missed" ? () => onRescheduleToday(reminder.id) : undefined}
+                    onRescheduleTomorrow={reminderListTab === "missed" ? () => onRescheduleTomorrow(reminder.id) : undefined}
+                    onRestore={reminderListTab === "done" ? () => onRestore(reminder.id) : undefined}
                   />
                 );
 

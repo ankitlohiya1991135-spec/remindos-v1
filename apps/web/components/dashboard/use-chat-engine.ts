@@ -200,7 +200,12 @@ export function useChatEngine(params: UseChatEngineParams) {
       const target = reminders.find((r) =>
         matchesReminder(r, action.targetId, action.targetTitle),
       );
-      if (!target) return;
+      if (!target) {
+        // Could not find the reminder locally — it may already be done or the server handled it
+        showShareToast("Couldn't find that reminder. It may already be completed.");
+        void refreshReminders();
+        return;
+      }
       // Optimistic: mark done instantly so the UI doesn't wait for the API
       optimisticUpdateReminder((prev) =>
         prev.map((r) => r.id === target.id ? { ...r, status: "done" as const } : r),
@@ -223,7 +228,11 @@ export function useChatEngine(params: UseChatEngineParams) {
       const target = reminders.find((r) =>
         matchesReminder(r, action.targetId, action.targetTitle),
       );
-      if (!target) return;
+      if (!target) {
+        showShareToast("Couldn't find that reminder. It may have already been deleted.");
+        void refreshReminders();
+        return;
+      }
       // Optimistic: remove immediately so the list updates before API returns
       optimisticUpdateReminder((prev) => prev.filter((r) => r.id !== target.id));
       void refreshAfterReminderMutation(
@@ -239,7 +248,11 @@ export function useChatEngine(params: UseChatEngineParams) {
       const target = reminders.find((r) =>
         matchesReminder(r, action.targetId, action.targetTitle),
       );
-      if (!target) return;
+      if (!target) {
+        showShareToast("Couldn't find that reminder to snooze.");
+        void refreshReminders();
+        return;
+      }
       const newDueAt = Date.now() + action.delayMinutes * 60_000;
       // Optimistic: update due time immediately
       optimisticUpdateReminder((prev) =>
@@ -264,7 +277,11 @@ export function useChatEngine(params: UseChatEngineParams) {
       const target = reminders.find((r) =>
         matchesReminder(r, action.targetId, action.targetTitle),
       );
-      if (!target) return;
+      if (!target) {
+        // Server (Phase 1A) may have already applied the edit; refresh to show updated state
+        void refreshReminders();
+        return;
+      }
       const patch: Record<string, unknown> = {
         priority: typeof target.priority === "number" ? target.priority : 3,
       };
@@ -323,7 +340,11 @@ export function useChatEngine(params: UseChatEngineParams) {
       const target = reminders.find((r) =>
         matchesReminder(r, action.targetId, action.targetTitle),
       );
-      if (!target) return;
+      if (!target) {
+        // Server (Phase 1A) may have already rescheduled; refresh to reflect new date
+        void refreshReminders();
+        return;
+      }
       void refreshAfterReminderMutation(
         fetch(`/api/reminders/${target.id}`, {
           method: "PATCH",

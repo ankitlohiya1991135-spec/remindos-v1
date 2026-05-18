@@ -888,6 +888,43 @@ function extractTargetFromReschedule(message: string): string {
 
 const PRONOUN_TARGETS = new Set(["it", "that", "this", "them", "those", "one"]);
 
+/**
+ * Phase 1C — Pronoun resolution.
+ * When the user says "reschedule it" / "delete that" / etc., try to identify
+ * the reminder being referred to from the most-recent assistant message.
+ * The assistant's previous reply almost always contains the reminder title
+ * in double-quotes (e.g. `Rescheduled "Buy groceries" to tomorrow.`).
+ */
+function resolveTargetFromHistory(
+  history: Array<{ role: string; content: string }>,
+  reminders: ReminderItem[],
+): ReminderItem | undefined {
+  const lastAssistant = [...history].reverse().find((m) => m.role === "assistant");
+  if (!lastAssistant?.content) return undefined;
+
+  // 1. Try quoted titles first — most reliable
+  const quoted = [...lastAssistant.content.matchAll(/"([^"]{2,80})"/g)].map((m) => m[1]!);
+  for (const q of quoted) {
+    const match = reminders.find(
+      (r) =>
+        r.title.toLowerCase() === q.toLowerCase() ||
+        r.title.toLowerCase().includes(q.toLowerCase()) ||
+        q.toLowerCase().includes(r.title.toLowerCase()),
+    );
+    if (match) return match;
+  }
+
+  // 2. Try reminder titles that appear verbatim in the assistant message
+  const body = lastAssistant.content.toLowerCase();
+  // Sort longest-first so a more-specific title wins over a shorter substring
+  const sorted = [...reminders].sort((a, b) => b.title.length - a.title.length);
+  for (const r of sorted) {
+    if (r.title.length >= 4 && body.includes(r.title.toLowerCase())) return r;
+  }
+
+  return undefined;
+}
+
 /** Returns delay in minutes, or null if no duration found in message. */
 function extractSnoozeDelayMinutes(message: string): number | null {
   const n = message.toLowerCase();
@@ -1637,6 +1674,19 @@ export async function POST(request: Request) {
       }
       // Zero matches — fall through to LLM
     }
+    // Phase 1C: pronoun resolution — "mark it done" with no extractable title
+    if (rawTarget.length < 2 || PRONOUN_TARGETS.has(rawTarget.toLowerCase())) {
+      const pronounTarget = resolveTargetFromHistory(history, reminders.filter((r) => r.status === "pending"));
+      if (pronounTarget) {
+        const r: ReminderAgentResponse = {
+          reply: `Are you sure you want to mark "${pronounTarget.title}" — ${formatDueInUserZone(pronounTarget.dueAt, timeZone)} as done? Reply **yes** to confirm.`,
+          action: { type: "pending_confirm", pendingType: "mark_done", targetId: pronounTarget.id, targetTitle: pronounTarget.title },
+        };
+        void saveMessageServerSide(userId, "user", effectiveMessage);
+        void saveMessageServerSide(userId, "assistant", r.reply);
+        return NextResponse.json(r);
+      }
+    }
   }
 
   // ─── Gap 2: deterministic delete fast path ─────────────────────────────────
@@ -1678,6 +1728,19 @@ export async function POST(request: Request) {
       }
       // Zero matches — fall through to LLM
     }
+    // Phase 1C: pronoun resolution — "delete it" / "remove that"
+    if (rawTarget.length < 2 || PRONOUN_TARGETS.has(rawTarget.toLowerCase())) {
+      const pronounTarget = resolveTargetFromHistory(history, reminders.filter((r) => r.status === "pending"));
+      if (pronounTarget) {
+        const r: ReminderAgentResponse = {
+          reply: `Are you sure you want to delete "${pronounTarget.title}" — ${formatDueInUserZone(pronounTarget.dueAt, timeZone)}? Reply **yes** to confirm.`,
+          action: { type: "pending_confirm", pendingType: "delete_reminder", targetId: pronounTarget.id, targetTitle: pronounTarget.title },
+        };
+        void saveMessageServerSide(userId, "user", effectiveMessage);
+        void saveMessageServerSide(userId, "assistant", r.reply);
+        return NextResponse.json(r);
+      }
+    }
   }
 
   // ─── Reschedule fast path ─────────────────────────────────────────────────
@@ -1714,6 +1777,11 @@ export async function POST(request: Request) {
         void saveMessageServerSide(userId, "assistant", r.reply);
         return NextResponse.json(r);
       }
+    }
+
+    // Phase 1C: resolve pronoun ("reschedule it to tomorrow") from last assistant message
+    if (!target && isPronoun) {
+      target = resolveTargetFromHistory(history, reminders.filter((r) => r.status === "pending"));
     }
 
     if (target) {
@@ -1830,6 +1898,26 @@ export async function POST(request: Request) {
       }
       // Zero matches — fall through to LLM
     }
+    // Phase 1C: pronoun resolution for edit — "rename it" / "change its title"
+    if (isPronoun) {
+      const pronounTarget = resolveTargetFromHistory(history, reminders.filter((r) => r.status === "pending"));
+      if (pronounTarget) {
+        const previewValue = newValue.length > 40 ? `${newValue.slice(0, 40)}…` : newValue;
+        const r: ReminderAgentResponse = {
+          reply: `Change the ${field} of "${pronounTarget.title}" to "${previewValue}"? Reply **yes** to confirm.`,
+          action: {
+            type: "pending_confirm",
+            pendingType: "edit_reminder",
+            targetId: pronounTarget.id,
+            targetTitle: pronounTarget.title,
+            ...(field === "title" ? { newTitle: newValue } : { newNotes: newValue }),
+          },
+        };
+        void saveMessageServerSide(userId, "user", effectiveMessage);
+        void saveMessageServerSide(userId, "assistant", r.reply);
+        return NextResponse.json(r);
+      }
+    }
     // Pronoun or no target — fall through to LLM for disambiguation
   }
 
@@ -1906,6 +1994,11 @@ export async function POST(request: Request) {
         void saveMessageServerSide(userId, "assistant", r.reply);
         return NextResponse.json(r);
       }
+    }
+
+    // Phase 1C: pronoun resolution — "snooze it" → reminder from last assistant message
+    if (!target && isPronoun) {
+      target = resolveTargetFromHistory(history, reminders.filter((r) => r.status === "pending"));
     }
 
     // No explicit title (or pronoun) → pick nearest overdue, then nearest upcoming
@@ -2186,6 +2279,27 @@ export async function POST(request: Request) {
       if (deterministicDueAt) parsed.action.dueAt = deterministicDueAt;
     }
 
+    // Phase 1A — server-side execution for reschedule_reminder.
+    // When the LLM identifies a target, execute the mutation here so the change persists
+    // even if the client-side PATCH is skipped (stale state, slow network, etc.).
+    if (parsed.action.type === "reschedule_reminder" && parsed.action.dueAt) {
+      const rsTarget = findTargetReminder(reminders, parsed.action.targetId, parsed.action.targetTitle);
+      if (rsTarget && isValidFutureIsoDate(parsed.action.dueAt)) {
+        try {
+          const convex = getConvexClient();
+          await convex.mutation(api.reminders.update, {
+            userId,
+            reminderId: rsTarget.id as any, // eslint-disable-line @typescript-eslint/no-explicit-any
+            dueAt: new Date(parsed.action.dueAt).getTime(),
+          });
+          // Canonicalise so the client uses the correct ID for its optimistic update
+          parsed.action.targetId = rsTarget.id;
+        } catch {
+          // Non-fatal — client will still try its own PATCH
+        }
+      }
+    }
+
     if (parsed.action.type === "create_reminder") {
       const deterministicDueAt = parseDateTimeFromInput(message, timeZone);
       if (deterministicDueAt) parsed.action.dueAt = deterministicDueAt;
@@ -2312,6 +2426,27 @@ export async function POST(request: Request) {
       void saveMessageServerSide(userId, "user", effectiveMessage);
       void saveMessageServerSide(userId, "assistant", r.reply);
       return NextResponse.json(r);
+    }
+
+    // Phase 1A — server-side execution for edit_reminder.
+    // edit_reminder from the LLM path bypasses the fast-path pending_confirm flow,
+    // so we execute it here to guarantee persistence.
+    if (parsed.action.type === "edit_reminder" && (parsed.action.newTitle || parsed.action.newNotes !== undefined)) {
+      const editTarget = findTargetReminder(reminders, parsed.action.targetId, parsed.action.targetTitle);
+      if (editTarget) {
+        try {
+          const convex = getConvexClient();
+          await convex.mutation(api.reminders.update, {
+            userId,
+            reminderId: editTarget.id as any, // eslint-disable-line @typescript-eslint/no-explicit-any
+            ...(parsed.action.newTitle ? { title: parsed.action.newTitle } : {}),
+            ...(parsed.action.newNotes !== undefined ? { notes: parsed.action.newNotes } : {}),
+          });
+          parsed.action.targetId = editTarget.id;
+        } catch {
+          // Non-fatal
+        }
+      }
     }
 
     void saveMessageServerSide(userId, "user", effectiveMessage);

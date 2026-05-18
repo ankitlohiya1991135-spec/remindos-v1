@@ -180,6 +180,13 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const [shareToast, setShareToast] = useState<string | null>(null);
   const shareToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const reminderSuccessTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Phase 2A: 5-second undo queue for mark-done and delete. */
+  const [pendingUndoAction, setPendingUndoAction] = useState<{
+    type: "done" | "delete";
+    reminder: ReminderItem;
+  } | null>(null);
+  const pendingUndoRef = useRef<{ type: "done" | "delete"; reminder: ReminderItem } | null>(null);
+  const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** DOM timer id; avoid NodeJS.Timeout vs number mismatch in mixed typings. */
   const reminderLongPressTimerRef = useRef<number | null>(null);
   const [replyTarget, setReplyTarget] = useState<ChatMessage | null>(null);
@@ -361,6 +368,85 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     [setReminders],
   );
 
+  // ── Phase 2A: undo queue for Done + Delete ─────────────────────────────────
+
+  /** Commit (execute) the pending undo action immediately. */
+  const commitPendingUndo = useCallback(async (action: { type: "done" | "delete"; reminder: ReminderItem }) => {
+    try {
+      if (action.type === "done") {
+        await fetch(`/api/reminders/${action.reminder.id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "done" }),
+        });
+      } else {
+        await fetch(`/api/reminders/${action.reminder.id}`, { method: "DELETE" });
+      }
+      await refreshReminders();
+    } catch {
+      // Rollback optimistic update on failure
+      optimisticUpdateReminder((prev) => {
+        if (action.type === "done") {
+          return prev.map((r) => r.id === action.reminder.id ? { ...r, status: "pending" as const } : r);
+        }
+        const exists = prev.find((r) => r.id === action.reminder.id);
+        return exists ? prev : [...prev, action.reminder];
+      });
+      showShareToast("Could not complete action. Try again.");
+    }
+  }, [refreshReminders, optimisticUpdateReminder, showShareToast]);
+
+  /** Queue a Done or Delete with a 5-second undo window. */
+  const triggerUndoAction = useCallback((type: "done" | "delete", reminder: ReminderItem) => {
+    // If there is already a queued action, commit it immediately before replacing
+    if (pendingUndoRef.current && undoTimerRef.current) {
+      clearTimeout(undoTimerRef.current);
+      undoTimerRef.current = null;
+      void commitPendingUndo(pendingUndoRef.current);
+    }
+    // Optimistic update
+    if (type === "done") {
+      optimisticUpdateReminder((prev) =>
+        prev.map((r) => r.id === reminder.id ? { ...r, status: "done" as const } : r),
+      );
+    } else {
+      optimisticUpdateReminder((prev) => prev.filter((r) => r.id !== reminder.id));
+    }
+    pendingUndoRef.current = { type, reminder };
+    setPendingUndoAction({ type, reminder });
+    undoTimerRef.current = setTimeout(() => {
+      undoTimerRef.current = null;
+      const pending = pendingUndoRef.current;
+      if (pending) {
+        pendingUndoRef.current = null;
+        setPendingUndoAction(null);
+        void commitPendingUndo(pending);
+      }
+    }, 5000);
+  }, [commitPendingUndo, optimisticUpdateReminder]);
+
+  /** Cancel the pending undo action and restore the reminder. */
+  const cancelUndoAction = useCallback(() => {
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    undoTimerRef.current = null;
+    const action = pendingUndoRef.current;
+    pendingUndoRef.current = null;
+    setPendingUndoAction(null);
+    if (!action) return;
+    if (action.type === "done") {
+      optimisticUpdateReminder((prev) =>
+        prev.map((r) => r.id === action.reminder.id ? { ...r, status: "pending" as const } : r),
+      );
+    } else {
+      optimisticUpdateReminder((prev) => {
+        const exists = prev.find((r) => r.id === action.reminder.id);
+        return exists ? prev : [...prev, action.reminder].sort(
+          (a, b) => new Date(a.dueAt).getTime() - new Date(b.dueAt).getTime(),
+        );
+      });
+    }
+  }, [optimisticUpdateReminder]);
+
   const playReminderSuccessAnimation = useCallback((info?: { title: string; time: string }) => {
     setShowReminderSuccess(true);
     if (info) setReminderSuccessInfo(info);
@@ -413,11 +499,17 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const runReminderQuickAction = useCallback(
     async (reminderId: string, action: "delete" | "done" | "snooze") => {
       if (action === "delete") {
-        // Show confirmation dialog instead of immediately deleting
+        // Phase 2A: undo queue instead of confirmation dialog
         const reminder = reminders.find((r) => r.id === reminderId);
-        setPendingReminderCardDelete({ id: reminderId, title: reminder?.title ?? "this reminder" });
+        if (reminder) { triggerUndoAction("delete", reminder); return; }
+        // Fallback: show confirmation dialog if reminder not found in local state
+        setPendingReminderCardDelete({ id: reminderId, title: "this reminder" });
         return;
       } else if (action === "done") {
+        // Phase 2A: undo queue instead of immediate API call
+        const reminder = reminders.find((r) => r.id === reminderId);
+        if (reminder) { triggerUndoAction("done", reminder); return; }
+        // Fallback: direct call if not found locally
         await refreshAfterReminderMutation(
           fetch(`/api/reminders/${reminderId}`, {
             method: "PATCH",
@@ -435,7 +527,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
         );
       }
     },
-    [refreshAfterReminderMutation, reminders],
+    [refreshAfterReminderMutation, reminders, triggerUndoAction],
   );
 
   useEffect(() => {
@@ -449,8 +541,8 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   useEffect(() => {
     return () => {
       if (shareToastTimerRef.current) clearTimeout(shareToastTimerRef.current);
-      if (reminderSuccessTimerRef.current)
-        clearTimeout(reminderSuccessTimerRef.current);
+      if (reminderSuccessTimerRef.current) clearTimeout(reminderSuccessTimerRef.current);
+      if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
     };
   }, []);
 
@@ -1125,6 +1217,103 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   );
 
 
+  /** Phase 2B: reschedule to today — keep same clock time or nudge 1h ahead if already past. */
+  const handleRescheduleToday = useCallback((id: string) => {
+    const reminder = reminders.find((r) => r.id === id);
+    if (!reminder) return;
+    const original = new Date(reminder.dueAt);
+    const now = new Date();
+    const todayTarget = new Date(now);
+    todayTarget.setHours(original.getHours(), original.getMinutes(), 0, 0);
+    const newDueAt = todayTarget.getTime() > now.getTime() ? todayTarget.getTime()
+      : (() => {
+          const bumped = new Date(now.getTime() + 60 * 60 * 1000);
+          bumped.setMinutes(Math.ceil(bumped.getMinutes() / 15) * 15, 0, 0);
+          return bumped.getTime();
+        })();
+    optimisticUpdateReminder((prev) =>
+      prev.map((r) => r.id === id ? { ...r, dueAt: new Date(newDueAt).toISOString() } : r),
+    );
+    void refreshAfterReminderMutation(
+      fetch(`/api/reminders/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dueAt: newDueAt }) })
+    ).catch(() => { showShareToast("Could not reschedule. Try again."); void refreshReminders(); });
+  }, [reminders, optimisticUpdateReminder, refreshAfterReminderMutation, showShareToast, refreshReminders]);
+
+  /** Phase 2B: reschedule to tomorrow — keep same clock time. */
+  const handleRescheduleTomorrow = useCallback((id: string) => {
+    const reminder = reminders.find((r) => r.id === id);
+    if (!reminder) return;
+    const original = new Date(reminder.dueAt);
+    const tomorrow = new Date();
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    tomorrow.setHours(original.getHours(), original.getMinutes(), 0, 0);
+    const newDueAt = tomorrow.getTime();
+    optimisticUpdateReminder((prev) =>
+      prev.map((r) => r.id === id ? { ...r, dueAt: new Date(newDueAt).toISOString() } : r),
+    );
+    void refreshAfterReminderMutation(
+      fetch(`/api/reminders/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dueAt: newDueAt }) })
+    ).catch(() => { showShareToast("Could not reschedule. Try again."); void refreshReminders(); });
+  }, [reminders, optimisticUpdateReminder, refreshAfterReminderMutation, showShareToast, refreshReminders]);
+
+  /** Phase 2C: archive all missed reminders at once. */
+  const handleArchiveAllMissed = useCallback(() => {
+    const missedIds = grouped.missed.map((r) => r.id);
+    if (!missedIds.length) return;
+    optimisticUpdateReminder((prev) =>
+      prev.map((r) => missedIds.includes(r.id) ? { ...r, status: "archived" as const } : r),
+    );
+    void Promise.all(
+      missedIds.map((id) =>
+        fetch(`/api/reminders/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "archived" }) }),
+      ),
+    ).then(() => refreshReminders()).catch(() => {
+      showShareToast("Some reminders could not be archived. Try again.");
+      void refreshReminders();
+    });
+  }, [grouped.missed, optimisticUpdateReminder, refreshReminders, showShareToast]);
+
+  /** Phase 2C: distribute all missed reminders across the next 7 days. */
+  const handleRescheduleAllMissed = useCallback(() => {
+    const missed = [...grouped.missed].sort((a, b) => (b.priority ?? 3) - (a.priority ?? 3));
+    if (!missed.length) return;
+    const now = Date.now();
+    const updates = missed.map((r, idx) => {
+      const original = new Date(r.dueAt);
+      const daysAhead = Math.floor((idx * 7) / missed.length) + 1; // spread across week
+      const target = new Date(now);
+      target.setDate(target.getDate() + daysAhead);
+      target.setHours(original.getHours(), original.getMinutes(), 0, 0);
+      // If that time is in the past (same day), bump to 1 hour from now
+      const newDueAt = target.getTime() > now ? target.getTime() : now + 60 * 60 * 1000;
+      return { id: r.id, dueAt: newDueAt };
+    });
+    optimisticUpdateReminder((prev) =>
+      prev.map((r) => {
+        const upd = updates.find((u) => u.id === r.id);
+        return upd ? { ...r, dueAt: new Date(upd.dueAt).toISOString() } : r;
+      }),
+    );
+    void Promise.all(
+      updates.map(({ id, dueAt }) =>
+        fetch(`/api/reminders/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ dueAt }) }),
+      ),
+    ).then(() => refreshReminders()).catch(() => {
+      showShareToast("Some reminders could not be rescheduled. Try again.");
+      void refreshReminders();
+    });
+  }, [grouped.missed, optimisticUpdateReminder, refreshReminders, showShareToast]);
+
+  /** Phase 2D: restore a done reminder back to pending. */
+  const handleRestore = useCallback((id: string) => {
+    optimisticUpdateReminder((prev) =>
+      prev.map((r) => r.id === id ? { ...r, status: "pending" as const } : r),
+    );
+    void refreshAfterReminderMutation(
+      fetch(`/api/reminders/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "pending" }) })
+    ).catch(() => { showShareToast("Could not restore reminder. Try again."); void refreshReminders(); });
+  }, [optimisticUpdateReminder, refreshAfterReminderMutation, showShareToast, refreshReminders]);
+
   return (
     <>
       <section className="relative flex h-full min-h-0 flex-1 overflow-hidden bg-[#fafaf9]">
@@ -1145,9 +1334,13 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
             onNewReminder={() => showCreateOverlay({})}
             onAllTasks={openAllTasksFromSnapshot}
             onRunBriefing={runBriefingStream}
-            onMarkDone={(id) => void refreshAfterReminderMutation(
-              fetch(`/api/reminders/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "done" }) })
-            )}
+            onMarkDone={(id) => {
+              const reminder = reminders.find((r) => r.id === id);
+              if (reminder) { triggerUndoAction("done", reminder); return; }
+              void refreshAfterReminderMutation(
+                fetch(`/api/reminders/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: "done" }) })
+              );
+            }}
             onEdit={openEditModal}
             onShare={showShareOverlay}
             onAcceptShare={(batchKey) => void joinShareBatch(batchKey)}
@@ -1262,10 +1455,12 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
             setReminderInitialLinkedTaskId("");
             closeCreateOverlay();
           }}
-          onDeleteReminder={(id, title) => {
+          onDeleteReminder={(id) => {
             setEditingReminder(null);
             closeCreateOverlay();
-            setPendingReminderCardDelete({ id, title });
+            const reminder = reminders.find((r) => r.id === id);
+            if (reminder) { triggerUndoAction("delete", reminder); return; }
+            setPendingReminderCardDelete({ id, title: "this reminder" });
           }}
           onSaveSuccess={playReminderSuccessAnimation}
           refreshReminders={refreshReminders}
@@ -1289,6 +1484,9 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
           onClose={closeReminderListOverlay}
           onOpenCreate={() => showCreateOverlay()}
           onMarkDone={(id) => {
+            const reminder = reminders.find((r) => r.id === id);
+            if (reminder) { triggerUndoAction("done", reminder); return; }
+            // Fallback
             optimisticUpdateReminder((prev) =>
               prev.map((r) => r.id === id ? { ...r, status: "done" as const } : r),
             );
@@ -1299,7 +1497,11 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
               void refreshReminders();
             });
           }}
-          onDelete={(id, title) => setPendingReminderCardDelete({ id, title })}
+          onDelete={(id) => {
+            const reminder = reminders.find((r) => r.id === id);
+            if (reminder) { triggerUndoAction("delete", reminder); return; }
+            setPendingReminderCardDelete({ id, title: "this reminder" });
+          }}
           onEdit={openEditModal}
           onShare={showShareOverlay}
           onSnooze={(id, dueAt) => {
@@ -1314,6 +1516,11 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
               void refreshReminders();
             });
           }}
+          onRescheduleToday={handleRescheduleToday}
+          onRescheduleTomorrow={handleRescheduleTomorrow}
+          onArchiveAllMissed={handleArchiveAllMissed}
+          onRescheduleAllMissed={handleRescheduleAllMissed}
+          onRestore={handleRestore}
           onAcceptShare={(batchKey) => void joinShareBatch(batchKey)}
           onDenyShare={(batchKey) => void dismissShareBatch(batchKey)}
           onShowToast={showShareToast}
@@ -1417,6 +1624,27 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
           onClose={closeImportOverlay}
         />
       )}
+
+      {/* Phase 2A: Undo toast — appears for 5 seconds after Done or Delete */}
+      {pendingUndoAction ? (
+        <div
+          className="pointer-events-auto fixed bottom-[max(1rem,env(safe-area-inset-bottom))] left-1/2 z-[60] -translate-x-1/2 flex items-center gap-3 rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-900 shadow-lg dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
+          role="status"
+          aria-live="polite"
+        >
+          <span>
+            {pendingUndoAction.type === "done" ? "Marked done" : "Deleted"}{" "}
+            &ldquo;{pendingUndoAction.reminder.title.length > 30 ? `${pendingUndoAction.reminder.title.slice(0, 30)}…` : pendingUndoAction.reminder.title}&rdquo;
+          </span>
+          <button
+            onClick={cancelUndoAction}
+            className="ml-1 font-semibold text-indigo-600 hover:text-indigo-700 dark:text-indigo-400 dark:hover:text-indigo-300"
+            aria-label="Undo"
+          >
+            Undo
+          </button>
+        </div>
+      ) : null}
 
       {shareToast ? (
         <div

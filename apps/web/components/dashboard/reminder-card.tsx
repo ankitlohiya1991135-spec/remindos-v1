@@ -28,6 +28,11 @@ export interface ReminderCardProps {
   onEdit: () => void;
   onShare: () => void;
   onSnooze: () => void;
+  /** Phase 2B: Quick reschedule buttons shown only on Missed tab */
+  onRescheduleToday?: () => void;
+  onRescheduleTomorrow?: () => void;
+  /** Phase 2D: Restore button shown only on Done tab */
+  onRestore?: () => void;
 }
 
 export const ReminderCard = memo(function ReminderCard({
@@ -44,6 +49,9 @@ export const ReminderCard = memo(function ReminderCard({
   onEdit,
   onShare,
   onSnooze,
+  onRescheduleToday,
+  onRescheduleTomorrow,
+  onRestore,
 }: ReminderCardProps) {
   const isDone = reminder.status === "done" || reminder.status === "archived";
   const linkedTaskTitle = reminder.linkedTaskId ? taskTitleById[reminder.linkedTaskId] : undefined;
@@ -225,6 +233,27 @@ export const ReminderCard = memo(function ReminderCard({
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="h-2.5 w-2.5"><path d="m5 12 4 4 10-10"/></svg>
               Done
             </button>
+            {/* Phase 2B: Quick reschedule buttons on Missed tab */}
+            {tab === "missed" && onRescheduleToday && (
+              <button
+                type="button"
+                onClick={onRescheduleToday}
+                className="flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-1 text-[10px] font-bold text-amber-700"
+                title="Reschedule to today at a nearby time"
+              >
+                Today
+              </button>
+            )}
+            {tab === "missed" && onRescheduleTomorrow && (
+              <button
+                type="button"
+                onClick={onRescheduleTomorrow}
+                className="flex items-center gap-1 rounded-full bg-violet-100 px-2.5 py-1 text-[10px] font-bold text-violet-700"
+                title="Reschedule to tomorrow at the same time"
+              >
+                Tomorrow
+              </button>
+            )}
             <button
               type="button"
               onClick={onEdit}
@@ -259,6 +288,18 @@ export const ReminderCard = memo(function ReminderCard({
               className="rounded-full border border-rose-100 bg-rose-50 px-2.5 py-1 text-[10px] font-bold text-rose-600"
             >
               Delete
+            </button>
+          </div>
+        )}
+        {/* Phase 2D: Restore button on Done tab */}
+        {isDone && onRestore && (
+          <div className="mt-2 flex gap-1.5">
+            <button
+              type="button"
+              onClick={onRestore}
+              className="flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[10px] font-bold text-slate-600"
+            >
+              ↩ Restore
             </button>
           </div>
         )}
