@@ -123,9 +123,12 @@ export async function POST(request: Request) {
       syncUserWiki(userId).catch(() => {});
 
       // ── Immediate push if reminder is due sooner than the pre-due window ──
-      // The cron runs every minute but only looks ±60s around the pre-due target.
-      // If the reminder is created inside that window the cron will miss it.
-      // Fix: fire the push right now when dueAt ≤ now + preDueMinutes + 1 min.
+      // The cron fires pre_due_reminder when dueAt ≈ now + preDueMs (±60 s).
+      // If the reminder is created inside that window the cron tick may have
+      // already passed — fire the warning immediately.
+      // We always send pre_due_reminder here and let the cron send due_reminder
+      // at actual due time, so the user reliably receives TWO distinct notifications
+      // with different tags ("predue-X" vs "due-X") — Android treats them separately.
       void (async () => {
         try {
           const subs = await client.query(api.pushSubscriptions.listForUser, { userId });
@@ -141,29 +144,31 @@ export async function POST(request: Request) {
           const now = Date.now();
           const msUntilDue = dueAt - now;
 
-          // Only fire if we are already inside the pre-due window (cron would miss it).
+          // Only fire when inside (or right at the edge of) the pre-due window.
+          // If there is still plenty of time, the cron will handle the pre-due push.
           if (msUntilDue > preDueMs + 60_000) return;
+          if (msUntilDue <= 0) return; // already overdue — skip
 
-          if (msUntilDue <= 2 * 60_000) {
-            // Due in ≤ 2 min — send "due now" push
-            await sendWebPushToUser(userId, {
-              type: "due_reminder",
-              reminderId,
-              title: reminderTitle,
-              body: body.notes ?? "Tap to open",
-              dueAt,
-            });
-          } else {
-            // Inside pre-due window — send warning push with actual time remaining
-            const minsLeft = Math.max(1, Math.round(msUntilDue / 60_000));
-            await sendWebPushToUser(userId, {
-              type: "pre_due_reminder",
-              reminderId,
-              title: reminderTitle,
-              body: `Due in ${minsLeft} minute${minsLeft !== 1 ? "s" : ""}`,
-              dueAt,
-            });
-          }
+          // Always fire as pre_due_reminder so the cron can still fire due_reminder
+          // at the actual due time using a different notification tag.
+          const minsLeft = Math.max(1, Math.round(msUntilDue / 60_000));
+          const pushBody = minsLeft <= 1
+            ? "Due very soon — tap to open"
+            : `Due in ${minsLeft} minute${minsLeft !== 1 ? "s" : ""}`;
+          await sendWebPushToUser(userId, {
+            type: "pre_due_reminder",
+            reminderId,
+            title: reminderTitle,
+            body: pushBody,
+            dueAt,
+          });
+          // Log it so the cron's alreadySent check skips the duplicate pre_due push.
+          await client.mutation(api.pushNotificationLogs.logSent, {
+            userId,
+            type: "pre_due_reminder",
+            reminderId,
+            sentAt: Date.now(),
+          });
         } catch {
           /* push is best-effort — never block the response */
         }

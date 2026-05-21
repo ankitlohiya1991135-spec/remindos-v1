@@ -12,7 +12,7 @@ self.addEventListener("fetch", () => {
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 
-function showNotif(event, title, body, tag, data, actions) {
+function showNotif(event, title, body, tag, data, actions, extraOpts) {
   event.waitUntil(
     self.registration.showNotification(title, {
       body,
@@ -23,6 +23,7 @@ function showNotif(event, title, body, tag, data, actions) {
       actions: actions || [],
       requireInteraction: false,
       vibrate: [200, 100, 200],
+      ...(extraOpts || {}),
     })
   );
 }
@@ -81,7 +82,10 @@ self.addEventListener("push", (event) => {
       [
         { action: "done",   title: "✅ Mark done" },
         { action: "snooze", title: "⏱ Snooze 15 min" },
-      ]
+      ],
+      // Keep due-time notifications visible until the user explicitly dismisses them.
+      // More insistent vibration pattern differentiates it from the pre-due warning.
+      { requireInteraction: true, vibrate: [300, 100, 300, 100, 300] }
     );
     return;
   }
