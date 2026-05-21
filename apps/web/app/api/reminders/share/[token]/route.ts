@@ -4,6 +4,7 @@ import { NextResponse } from "next/server";
 import { formatNameWithInitial } from "../../../../../lib/actor-display";
 import { appendSystemChatMessage } from "../../../../../lib/server/chat-notify";
 import { getConvexClient } from "../../../../../lib/server/convex-client";
+import { sendWebPushToUser } from "../../../../../lib/server/send-web-push";
 
 function errorMessage(err: unknown) {
   return err instanceof Error ? err.message : String(err);
@@ -97,6 +98,15 @@ export async function POST(
       userId,
       `${displayWithInitial} — you joined "${title}" (shared by the owner). Manage it under Reminders.`
     );
+    // Push to owner so they know on their phone too
+    void sendWebPushToUser(ownerUserId, {
+      type: "share_accepted",
+      title: "Reminder share accepted",
+      body: `${displayWithInitial} accepted your reminder "${title}".`,
+      tag: `share-ack-token-${token}`,
+      accepterName: displayWithInitial,
+      count: 1,
+    });
   }
 
   try {

@@ -3,6 +3,7 @@ import { api } from "@repo/db/convex/api";
 import { NextResponse } from "next/server";
 import { getConvexClient } from "../../../lib/server/convex-client";
 import { syncUserWiki } from "../../../lib/server/wiki-sync";
+import { sendWebPushToUser } from "../../../lib/server/send-web-push";
 
 function errorMessage(err: unknown) {
   return err instanceof Error ? err.message : String(err);
@@ -107,16 +108,66 @@ export async function POST(request: Request) {
     });
     // MISSING-3: track creation event (fire-and-forget)
     if ((result as any)?.created) {
+      const reminderId = String((result as any)?.reminder?._id ?? "");
+      const reminderTitle = body.title.trim();
+
       client.mutation(api.userEvents.track, {
         userId,
         eventType: "reminder_created",
-        entityId: String((result as any)?.reminder?._id ?? ""),
-        entityTitle: body.title.trim(),
+        entityId: reminderId,
+        entityTitle: reminderTitle,
         ...(body.domain ? { domain: body.domain } : {}),
       }).catch(() => {});
 
       // Wiki ingest: rebuild wiki pages directly (no HTTP roundtrip)
       syncUserWiki(userId).catch(() => {});
+
+      // ── Immediate push if reminder is due sooner than the pre-due window ──
+      // The cron runs every minute but only looks ±60s around the pre-due target.
+      // If the reminder is created inside that window the cron will miss it.
+      // Fix: fire the push right now when dueAt ≤ now + preDueMinutes + 1 min.
+      void (async () => {
+        try {
+          const subs = await client.query(api.pushSubscriptions.listForUser, { userId });
+          if (subs.length === 0) return;
+
+          // Take the max preDueMinutes across the user's devices (same logic as cron).
+          const DEFAULT_PRE = Number(process.env.PRE_DUE_MINUTES ?? "15");
+          const userPreDue = subs.reduce(
+            (max, s) => Math.max(max, s.preDueMinutes ?? DEFAULT_PRE),
+            0,
+          );
+          const preDueMs = userPreDue * 60_000;
+          const now = Date.now();
+          const msUntilDue = dueAt - now;
+
+          // Only fire if we are already inside the pre-due window (cron would miss it).
+          if (msUntilDue > preDueMs + 60_000) return;
+
+          if (msUntilDue <= 2 * 60_000) {
+            // Due in ≤ 2 min — send "due now" push
+            await sendWebPushToUser(userId, {
+              type: "due_reminder",
+              reminderId,
+              title: reminderTitle,
+              body: body.notes ?? "Tap to open",
+              dueAt,
+            });
+          } else {
+            // Inside pre-due window — send warning push with actual time remaining
+            const minsLeft = Math.max(1, Math.round(msUntilDue / 60_000));
+            await sendWebPushToUser(userId, {
+              type: "pre_due_reminder",
+              reminderId,
+              title: reminderTitle,
+              body: `Due in ${minsLeft} minute${minsLeft !== 1 ? "s" : ""}`,
+              dueAt,
+            });
+          }
+        } catch {
+          /* push is best-effort — never block the response */
+        }
+      })();
     }
     return NextResponse.json(result);
   } catch (err) {
