@@ -164,6 +164,7 @@ ACTIONS (JSON action.type):
   newRecurrence ("none"|"daily"|"weekly"|"monthly"), newLinkedTaskId (task ID string to link, or null to delink).
 - bulk_action: user wants to act on ALL reminders in a scope (e.g. "mark all today's reminders done", "delete all missed"). Set bulkOperation ("mark_done"|"delete") and scope.
 - create_reminder: only if user clearly wants to create. May include priority (1-5), domain, recurrence, linkedTaskId.
+  action.title must be the reminder name ONLY — strip leading prepositions: "create reminder for update meeting" → title:"update meeting" (NOT "for update meeting"). Never include "for", "about", "called", "named" as the first word of a title.
 - clarify: you need exactly one missing piece (which reminder, which time, which task). Ask a single focused question.
 - unknown: questions you answer in "reply" only (no database change). Use for explanations, reasoning, comparisons, counts, behavioral insights, and open-ended Q&A.
 
@@ -734,6 +735,14 @@ function extractTitleFromCreateInput(input: string) {
     .replace(/\b\d{1,2}[:.]\d{2}\b/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+
+  // Guard: if prefix-stripping failed and the result still reads like an intent command
+  // (e.g. "so create the reminder", "go ahead and add reminder"), return undefined
+  // so the fast-path uses the DEFAULT title and the LLM can handle context properly.
+  if (/\b(create|add|set|make|schedule)\b.{0,40}\b(reminder|reminders)\b/i.test(normalized)) {
+    return undefined;
+  }
+
   return normalized || undefined;
 }
 
@@ -2972,6 +2981,12 @@ export async function POST(request: Request) {
     if (parsed.action.type === "create_reminder") {
       const deterministicDueAt = parseDateTimeFromInput(message, timeZone);
       if (deterministicDueAt) parsed.action.dueAt = deterministicDueAt;
+
+      // Always prefer the deterministic title extractor over the LLM title.
+      // The LLM frequently returns "for update meeting" instead of "update meeting"
+      // when the user says "create reminder for update meeting at 4pm".
+      const deterministicTitle = extractTitleFromCreateInput(message);
+      if (deterministicTitle) parsed.action.title = deterministicTitle;
 
       // FLAW-2: enrich LLM-generated create action with extracted metadata
       if (!parsed.action.priority) parsed.action.priority = extractPriorityFromInput(message);
