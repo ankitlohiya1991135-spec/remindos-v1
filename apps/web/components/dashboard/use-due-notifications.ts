@@ -27,6 +27,11 @@ import {
   markDueShown,
   dueMinuteKey,
   isDueThisMinute,
+  PRE_DUE_SHOWN_KEY,
+  readPreDueShown,
+  markPreDueShown,
+  preDueMinuteKey,
+  isDueInMinutes,
 } from "./dashboard-utils";
 import type { ChatMessage } from "./dashboard-types";
 
@@ -68,11 +73,11 @@ export function useDueNotifications({
     return () => document.removeEventListener("visibilitychange", onVis);
   }, []);
 
-  // Sync push subscription once history is loaded
+  // Sync push subscription once history is loaded (and whenever preDueMinutes changes).
   useEffect(() => {
     if (!isHistoryLoaded) return;
-    void syncReminderPushSubscription();
-  }, [isHistoryLoaded]);
+    void syncReminderPushSubscription(dueNotifPrefs.preDueMinutes);
+  }, [isHistoryLoaded, dueNotifPrefs.preDueMinutes]);
 
   // Main due-reminder tick: fire chat bubbles + system notifications
   useEffect(() => {
@@ -117,6 +122,38 @@ export function useDueNotifications({
               /* iOS / unsupported */
             }
           })();
+        }
+      }
+
+      // ── Pre-due in-app alert ──────────────────────────────────────────────
+      if (dueNotifPrefs.preDueMinutes > 0) {
+        for (const r of reminders) {
+          if (r.status !== "pending") continue;
+          if (!isDueInMinutes(r.dueAt, dueNotifPrefs.preDueMinutes, now)) continue;
+          const preKey = preDueMinuteKey(r.id, now);
+          if (!readPreDueShown().has(preKey)) {
+            markPreDueShown(preKey);
+            const msg: ChatMessage = {
+              id: crypto.randomUUID(),
+              role: "assistant",
+              content: `Reminder in ${dueNotifPrefs.preDueMinutes} min: ${r.title}`,
+              createdAt: new Date().toISOString(),
+              meta: {
+                kind: "due_reminder",
+                reminderId: r.id,
+                dueAt: new Date(r.dueAt).getTime(),
+                title: r.title,
+                notes: r.notes,
+              },
+            };
+            setMessages((prev) => [...prev, msg]);
+            if (dueNotifPrefs.soundEnabled !== false) {
+              playDueChime();
+            }
+            if (typeof navigator !== "undefined" && navigator.vibrate && isCompactViewport()) {
+              navigator.vibrate(60);
+            }
+          }
         }
       }
     };

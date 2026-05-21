@@ -105,6 +105,8 @@ const pushSubscriptions = defineTable({
   p256dh: v.string(),
   auth: v.string(),
   createdAt: v.number(),
+  /** Minutes before due to send a pre-due push (0 = disabled). Mirrors localStorage pref. */
+  preDueMinutes: v.optional(v.number()),
 })
   .index("by_user", ["userId"])
   .index("by_endpoint", ["endpoint"]);

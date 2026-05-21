@@ -14,6 +14,7 @@ export async function POST(request: Request) {
   const body = (await request.json()) as {
     endpoint?: string;
     keys?: { p256dh?: string; auth?: string };
+    preDueMinutes?: number;
   };
   const endpoint = typeof body.endpoint === "string" ? body.endpoint.trim() : "";
   const p256dh = typeof body.keys?.p256dh === "string" ? body.keys.p256dh : "";
@@ -21,6 +22,10 @@ export async function POST(request: Request) {
   if (!endpoint || !p256dh || !authSecret) {
     return NextResponse.json({ error: "Invalid subscription" }, { status: 400 });
   }
+  const preDueMinutes =
+    typeof body.preDueMinutes === "number" && Number.isFinite(body.preDueMinutes)
+      ? Math.max(0, Math.round(body.preDueMinutes))
+      : undefined;
 
   try {
     const client = getConvexClient();
@@ -29,6 +34,7 @@ export async function POST(request: Request) {
       endpoint,
       p256dh,
       auth: authSecret,
+      ...(preDueMinutes !== undefined ? { preDueMinutes } : {}),
     });
     return NextResponse.json({ ok: true });
   } catch (err) {

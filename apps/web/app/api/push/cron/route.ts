@@ -15,7 +15,8 @@ import { api } from "@repo/db/convex/api";
 import { getConvexClient } from "../../../../lib/server/convex-client";
 import { sendWebPushToUser } from "../../../../lib/server/send-web-push";
 
-const PRE_DUE_MINUTES = Number(process.env.PRE_DUE_MINUTES ?? "15");
+/** Global fallback — used when a subscription has no per-user preference stored. */
+const DEFAULT_PRE_DUE_MINUTES = Number(process.env.PRE_DUE_MINUTES ?? "15");
 
 // ── helpers ────────────────────────────────────────────────────────────────────
 
@@ -103,21 +104,28 @@ export async function POST(request: Request) {
 
   try {
     // ── 1. Collect all users with active push subscriptions ───────────────────
-    // We iterate reminders by dueAt window and group by userId.
-    // Window: [now - 60s, now + PRE_DUE_MINUTES * 60s + 60s]
-    const windowStart = now - 60_000;
-    const windowEnd = now + (PRE_DUE_MINUTES + 1) * 60_000;
-
-    // Fetch all pending reminders in the window across ALL users.
-    // Convex doesn't support cross-user queries without a full scan, so we use
-    // the by_user_status_dueAt index per-user — but we don't know all user IDs
-    // without a scan. Instead, we query the pushSubscriptions table to get the
-    // set of users who have push enabled, then query reminders per user.
+    // Build a per-user map: userId → max(preDueMinutes) across all their devices.
+    // This ensures a user with "30 min" on one device still gets a 30-min push.
     const allSubs = await client.query(api.pushSubscriptions.listAllUsers, {});
-    const userIds = [...new Set(allSubs.map((s) => s.userId))];
+    const userPreDueMap = new Map<string, number>();
+    for (const sub of allSubs) {
+      const minutes = sub.preDueMinutes ?? DEFAULT_PRE_DUE_MINUTES;
+      const current = userPreDueMap.get(sub.userId) ?? 0;
+      if (minutes > current) userPreDueMap.set(sub.userId, minutes);
+    }
+    const userIds = [...userPreDueMap.keys()];
+
+    // Fetch reminders up to the widest pre-due window any user has.
+    const maxPreDueMinutes = userIds.length > 0
+      ? Math.max(...userIds.map((id) => userPreDueMap.get(id) ?? DEFAULT_PRE_DUE_MINUTES))
+      : DEFAULT_PRE_DUE_MINUTES;
+    const windowStart = now - 60_000;
+    const windowEnd = now + (maxPreDueMinutes + 1) * 60_000;
 
     for (const userId of userIds) {
       try {
+        // Per-user pre-due preference (with global fallback).
+        const userPreDueMinutes = userPreDueMap.get(userId) ?? DEFAULT_PRE_DUE_MINUTES;
         const reminders = await client.query(api.reminders.listForCron, {
           userId,
           statusFilter: "pending",
@@ -147,23 +155,25 @@ export async function POST(request: Request) {
             }
           }
 
-          // ── 1b. pre_due_reminder: dueAt is PRE_DUE_MINUTES from now ──────────
-          const preDueWindow = PRE_DUE_MINUTES * 60_000;
-          if (dueAt >= now + preDueWindow - 60_000 && dueAt <= now + preDueWindow + 60_000) {
-            const sent = await alreadySent(client, userId, "pre_due_reminder", reminder._id, 20 * 60_000);
-            if (!sent) {
-              const payload = {
-                type: "pre_due_reminder",
-                reminderId: reminder._id,
-                title: reminder.title,
-                body: `Due in ${PRE_DUE_MINUTES} minutes (${formatTime(dueAt)})`,
-                dueAt,
-              };
-              await sendWebPushToUser(userId, payload);
-              await recordSent(client, userId, "pre_due_reminder", reminder._id);
-              await saveNotification(client, userId, "pre_due_reminder",
-                reminder.title, `Due in ${PRE_DUE_MINUTES} min — ${formatTime(dueAt)}`, reminder._id);
-              results.preDue += 1;
+          // ── 1b. pre_due_reminder: fires userPreDueMinutes before dueAt ───────
+          if (userPreDueMinutes > 0) {
+            const preDueWindow = userPreDueMinutes * 60_000;
+            if (dueAt >= now + preDueWindow - 60_000 && dueAt <= now + preDueWindow + 60_000) {
+              const sent = await alreadySent(client, userId, "pre_due_reminder", reminder._id, 20 * 60_000);
+              if (!sent) {
+                const payload = {
+                  type: "pre_due_reminder",
+                  reminderId: reminder._id,
+                  title: reminder.title,
+                  body: `Due in ${userPreDueMinutes} minutes (${formatTime(dueAt)})`,
+                  dueAt,
+                };
+                await sendWebPushToUser(userId, payload);
+                await recordSent(client, userId, "pre_due_reminder", reminder._id);
+                await saveNotification(client, userId, "pre_due_reminder",
+                  reminder.title, `Due in ${userPreDueMinutes} min — ${formatTime(dueAt)}`, reminder._id);
+                results.preDue += 1;
+              }
             }
           }
         }

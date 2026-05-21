@@ -14,7 +14,7 @@ function urlBase64ToUint8Array(base64String: string) {
   return outputArray;
 }
 
-export async function syncReminderPushSubscription(): Promise<boolean> {
+export async function syncReminderPushSubscription(preDueMinutes?: number): Promise<boolean> {
   if (typeof window === "undefined" || !("serviceWorker" in navigator) || !("PushManager" in window)) {
     return false;
   }
@@ -39,6 +39,7 @@ export async function syncReminderPushSubscription(): Promise<boolean> {
       body: JSON.stringify({
         endpoint: j.endpoint,
         keys: { p256dh: j.keys.p256dh, auth: j.keys.auth },
+        ...(preDueMinutes !== undefined ? { preDueMinutes } : {}),
       }),
     });
     return save.ok;

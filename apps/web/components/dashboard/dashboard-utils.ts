@@ -31,6 +31,7 @@ export const CHAT_THREAD_BACKUP_PREFIX = "remindos:chatThread:";
 export const WALKTHROUGH_RELEASE_AT = Date.parse("2026-04-20T00:00:00.000Z");
 export const WALKTHROUGH_STORAGE_PREFIX = "remindos:walkthrough-completed:";
 export const DUE_SHOWN_KEY = "remindos:dueShown";
+export const PRE_DUE_SHOWN_KEY = "remindos:preDueShown";
 export const LIFE_DOMAINS = new Set<string>([
   "health",
   "finance",
@@ -191,6 +192,43 @@ export function markDueShown(key: string): void {
   const next = readDueShown();
   next.add(key);
   sessionStorage.setItem(DUE_SHOWN_KEY, JSON.stringify([...next]));
+}
+
+export function readPreDueShown(): Set<string> {
+  if (typeof sessionStorage === "undefined") return new Set();
+  try {
+    const raw = sessionStorage.getItem(PRE_DUE_SHOWN_KEY);
+    if (!raw) return new Set();
+    return new Set(JSON.parse(raw) as string[]);
+  } catch {
+    return new Set();
+  }
+}
+
+export function markPreDueShown(key: string): void {
+  if (typeof sessionStorage === "undefined") return;
+  const next = readPreDueShown();
+  next.add(key);
+  sessionStorage.setItem(PRE_DUE_SHOWN_KEY, JSON.stringify([...next]));
+}
+
+/**
+ * Key for a pre-due alert: encodes reminder id + the exact minute at which the
+ * alert fires (i.e. now's minute, NOT dueAt's minute).
+ */
+export function preDueMinuteKey(reminderId: string, nowMinute: Date): string {
+  return `pre:${reminderId}|${nowMinute.getFullYear()}-${nowMinute.getMonth()}-${nowMinute.getDate()}-${nowMinute.getHours()}-${nowMinute.getMinutes()}`;
+}
+
+/**
+ * Returns true if `dueAtIso` is exactly `minutes` minutes in the future
+ * (within a ±30-second window to account for tick drift).
+ */
+export function isDueInMinutes(dueAtIso: string, minutes: number, now: Date): boolean {
+  if (minutes <= 0) return false;
+  const dueMs = new Date(dueAtIso).getTime();
+  const targetMs = now.getTime() + minutes * 60_000;
+  return Math.abs(dueMs - targetMs) <= 30_000;
 }
 
 // ─── Chat message helpers ───────────────────────────────────────────────────

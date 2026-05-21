@@ -7,6 +7,8 @@ export const savePushSubscription = mutation({
     endpoint: v.string(),
     p256dh: v.string(),
     auth: v.string(),
+    /** Minutes before due to fire a pre-due push (0 = disabled). */
+    preDueMinutes: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const existing = await ctx.db
@@ -22,6 +24,7 @@ export const savePushSubscription = mutation({
           p256dh: args.p256dh,
           auth: args.auth,
           createdAt: now,
+          ...(args.preDueMinutes !== undefined ? { preDueMinutes: args.preDueMinutes } : {}),
         });
         return { ok: true as const };
       }
@@ -32,6 +35,7 @@ export const savePushSubscription = mutation({
       p256dh: args.p256dh,
       auth: args.auth,
       createdAt: now,
+      ...(args.preDueMinutes !== undefined ? { preDueMinutes: args.preDueMinutes } : {}),
     });
     return { ok: true as const };
   },
@@ -69,7 +73,10 @@ export const listAllUsers = query({
   args: {},
   handler: async (ctx) => {
     const rows = await ctx.db.query("pushSubscriptions").collect();
-    // Return deduplicated userId list with endpoint for subscription health checks
-    return rows.map((r) => ({ userId: r.userId, endpoint: r.endpoint }));
+    return rows.map((r) => ({
+      userId: r.userId,
+      endpoint: r.endpoint,
+      preDueMinutes: r.preDueMinutes,
+    }));
   },
 });

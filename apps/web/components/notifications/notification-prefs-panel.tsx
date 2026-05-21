@@ -5,6 +5,7 @@ import {
   saveDueNotificationPrefs,
 } from "../../lib/reminder-notification-prefs";
 import { playDueChime } from "../../lib/notification-sounds";
+import { syncReminderPushSubscription } from "../../lib/push-subscription-client";
 
 interface NotificationPrefsPanelProps {
   prefs: DueNotificationPrefs;
@@ -131,10 +132,14 @@ export function NotificationPrefsPanel({
           onChange={(v) => update({ desktopEnabled: v })}
         />
         <Toggle
-          label="Pre-due 15 min"
-          description="Alert 15 min before reminder is due"
+          label="Pre-due alert"
+          description="Alert before reminder is due (set timing below)"
           checked={prefs.preDueMinutes > 0}
-          onChange={(v) => update({ preDueMinutes: v ? 15 : 0 })}
+          onChange={(v) => {
+            const minutes = v ? 15 : 0;
+            update({ preDueMinutes: minutes });
+            void syncReminderPushSubscription(minutes);
+          }}
         />
         <Toggle
           label="Morning briefing"
@@ -187,7 +192,10 @@ export function NotificationPrefsPanel({
             <button
               key={opt.value}
               type="button"
-              onClick={() => update({ preDueMinutes: opt.value })}
+              onClick={() => {
+                update({ preDueMinutes: opt.value });
+                void syncReminderPushSubscription(opt.value);
+              }}
               className={`rounded-full border px-3 py-1 text-xs font-semibold transition ${
                 prefs.preDueMinutes === opt.value
                   ? "border-violet-500 bg-violet-600 text-white"
