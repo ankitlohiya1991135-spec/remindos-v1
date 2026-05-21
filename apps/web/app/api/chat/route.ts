@@ -693,16 +693,39 @@ function extractTitleFromCreateInput(input: string) {
       )
       .trim();
   }
+
+  // ── Quoted title early return ────────────────────────────────────────────────
+  // If the user wrapped the title in quotes (e.g. add reminder "next payment for URL"),
+  // extract it verbatim — this bypasses the keyword-strip pipeline which would otherwise
+  // eat "next" (date stop-word) and "for" (preposition stop-word) even when they are
+  // legitimate parts of the title.
+  working = working.trim();
+  if ((working.startsWith('"') || working.startsWith("'")) &&
+      (working.endsWith('"') || working.endsWith("'"))) {
+    const inner = working.slice(1, -1).trim();
+    if (inner) return inner;
+  }
+
   const normalized = working
     .replace(/^(?:called|named|titled)\s+/i, "")
-    .replace(/\b(for|about|called|named|titled|के लिए|साठी)\b/gi, " ")
+    // Strip "for"/"about" only at the very start of the remaining fragment —
+    // e.g. "for gym" → "gym". Stripping them globally was eating titles like
+    // "next priority for payment" or "budget plan for next month".
+    .replace(/^(for|about)\s+/i, "")
+    .replace(/\b(called|named|titled|के लिए|साठी)\b/gi, " ")
     // Strip date/time keywords that are never part of the reminder *title*.
     // NOTE: morning|afternoon|evening|night are intentionally kept here because they
     // ARE valid parts of a title (e.g. "morning standup", "evening walk").
     // Time extraction uses parseTimeFromInput() on the original raw input, so removing
     // them from the title does not affect time resolution.
+    // "next/this/coming" are stripped only when they precede a time/day word so that
+    // titles like "next priority payment" or "this month's budget" are preserved.
     .replace(
-      /\b(today|tomorrow|tomorow|tommarow|tmrw|day after tomorrow|after tomorrow|आज|कल|उद्या|परसों|परवा|at|on|by|noon|midnight|next|this|coming|every|in|बजे|वाजता|वाजले|सुबह|सकाळी|दोपहर|दुपारी|शाम|सायंकाळी|रात|sunday|monday|tuesday|wednesday|thursday|friday|saturday|january|february|march|april|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)\b/gi,
+      /\b(next|this|coming)\s+(?=today|tomorrow|tomorow|tommarow|tmrw|monday|tuesday|wednesday|thursday|friday|saturday|sunday|week|month|year|morning|afternoon|evening|night|noon|midnight)\b/gi,
+      " "
+    )
+    .replace(
+      /\b(today|tomorrow|tomorow|tommarow|tmrw|day after tomorrow|after tomorrow|आज|कल|उद्या|परसों|परवा|at|on|by|noon|midnight|every|in|बजे|वाजता|वाजले|सुबह|सकाळी|दोपहर|दुपारी|शाम|सायंकाळी|रात|sunday|monday|tuesday|wednesday|thursday|friday|saturday|january|february|march|april|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)\b/gi,
       " "
     )
     .replace(/\bin\s+\d+\s*(hour|hr|minute|min|day|week)s?\b/gi, " ")
