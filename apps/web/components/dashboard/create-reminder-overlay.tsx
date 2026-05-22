@@ -344,12 +344,17 @@ export function CreateReminderOverlay({
 
             {/* Date + Time chips */}
             <div className="grid grid-cols-2 gap-3">
-              <label className="flex flex-col gap-1">
+              {/* DATE chip — native date picker, styled with hover affordance for web */}
+              <label className="group flex cursor-pointer flex-col gap-1">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">DATE</span>
                 <div className="relative">
-                  <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-[13px] font-semibold text-slate-700">
+                  <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-[13px] font-semibold text-slate-700 transition-colors group-hover:border-violet-400 group-hover:bg-violet-50">
                     <span>📅</span>
-                    <span>{newDate ? new Date(`${newDate}T12:00`).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "Pick date"}</span>
+                    <span className="flex-1 truncate">{newDate ? new Date(`${newDate}T12:00`).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" }) : "Pick date"}</span>
+                    {/* Pencil icon — subtle on rest, violet on hover */}
+                    <svg className="h-3 w-3 shrink-0 text-slate-300 transition-colors group-hover:text-violet-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M17 3a2.83 2.83 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                    </svg>
                   </div>
                   <input
                     type="date"
@@ -357,23 +362,29 @@ export function CreateReminderOverlay({
                     value={newDate}
                     onChange={(e) => setNewDate(e.target.value)}
                     data-testid="reminder-date-input"
-                    className="absolute inset-0 cursor-pointer opacity-[0.01]"
+                    title="Click to change date"
+                    className="absolute inset-0 cursor-pointer opacity-0"
                   />
                 </div>
               </label>
-              <label className="flex flex-col gap-1">
+              {/* TIME chip */}
+              <label className="group flex cursor-pointer flex-col gap-1">
                 <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">TIME</span>
                 <div className="relative">
-                  <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-[13px] font-semibold text-slate-700">
+                  <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-[13px] font-semibold text-slate-700 transition-colors group-hover:border-violet-400 group-hover:bg-violet-50">
                     <span>🕐</span>
-                    <span>{newTime ? new Date(`1970-01-01T${newTime}`).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : "Pick time"}</span>
+                    <span className="flex-1 truncate">{newTime ? new Date(`1970-01-01T${newTime}`).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" }) : "Pick time"}</span>
+                    <svg className="h-3 w-3 shrink-0 text-slate-300 transition-colors group-hover:text-violet-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M17 3a2.83 2.83 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5Z" />
+                    </svg>
                   </div>
                   <input
                     type="time"
                     value={newTime}
                     onChange={(e) => setNewTime(e.target.value)}
                     data-testid="reminder-time-input"
-                    className="absolute inset-0 cursor-pointer opacity-[0.01]"
+                    title="Click to change time"
+                    className="absolute inset-0 cursor-pointer opacity-0"
                   />
                 </div>
               </label>

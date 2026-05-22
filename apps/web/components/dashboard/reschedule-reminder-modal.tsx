@@ -92,33 +92,38 @@ export function RescheduleReminderModal({
 
           {/* Custom date/time input */}
           <div className="mt-4">
-            <div className="relative flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3.5">
-              <div className="flex-1">
-                <p className="text-[14px] font-semibold text-slate-700">
-                  {rescheduleReminder.value
-                    ? new Date(rescheduleReminder.value.replace("T", " ")).toLocaleString(undefined, {
-                        month: "short", day: "numeric", year: "numeric",
-                        hour: "numeric", minute: "2-digit",
-                      })
-                    : "Custom date & time"}
-                </p>
+            {/* group hover shows edit affordance — makes it obvious on web/desktop */}
+            <label className="group block cursor-pointer">
+              <div className="relative flex items-center gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3.5 transition-colors group-hover:border-violet-400 group-hover:bg-violet-50">
+                <div className="flex-1">
+                  <p className="text-[14px] font-semibold text-slate-700">
+                    {rescheduleReminder.value
+                      ? new Date(rescheduleReminder.value.replace("T", " ")).toLocaleString(undefined, {
+                          month: "short", day: "numeric", year: "numeric",
+                          hour: "numeric", minute: "2-digit",
+                        })
+                      : "Custom date & time"}
+                  </p>
+                  <p className="mt-0.5 text-[11px] text-slate-400 group-hover:text-violet-400">Tap to pick a custom date & time</p>
+                </div>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="h-5 w-5 shrink-0 text-slate-300 transition-colors group-hover:text-violet-500">
+                  <rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>
+                </svg>
+                <input
+                  type="datetime-local"
+                  min={currentDateTimeLocalValue()}
+                  value={rescheduleReminder.value}
+                  onChange={(event) =>
+                    setRescheduleReminder((prev) =>
+                      prev ? { ...prev, value: event.target.value, error: null } : prev,
+                    )
+                  }
+                  data-testid="reschedule-datetime-input"
+                  title="Click to pick a custom date & time"
+                  className="absolute inset-0 cursor-pointer opacity-0"
+                />
               </div>
-              <svg viewBox="0 0 24 24" fill="none" stroke="#7c3aed" strokeWidth="2" strokeLinecap="round" className="h-5 w-5 shrink-0">
-                <rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>
-              </svg>
-              <input
-                type="datetime-local"
-                min={currentDateTimeLocalValue()}
-                value={rescheduleReminder.value}
-                onChange={(event) =>
-                  setRescheduleReminder((prev) =>
-                    prev ? { ...prev, value: event.target.value, error: null } : prev,
-                  )
-                }
-                data-testid="reschedule-datetime-input"
-                className="absolute inset-0 cursor-pointer opacity-[0.01]"
-              />
-            </div>
+            </label>
           </div>
 
           {rescheduleReminder.error && (
