@@ -17,6 +17,11 @@ export type DueNotificationPrefs = {
   morningBriefingHourUtc: number;
   /** Hourly nudge push for overdue reminders (default true). */
   overdueNudgeEnabled: boolean;
+  /**
+   * Smart engagement nudges — Zomato-style witty pushes when the user hasn't
+   * opened the app for 24+ hours. Opt-in, default false.
+   */
+  smartNudgeEnabled: boolean;
 };
 
 const defaultPrefs: DueNotificationPrefs = {
@@ -28,6 +33,7 @@ const defaultPrefs: DueNotificationPrefs = {
   morningBriefingEnabled: true,
   morningBriefingHourUtc: 2,
   overdueNudgeEnabled: true,
+  smartNudgeEnabled: false,
 };
 
 export function loadDueNotificationPrefs(): DueNotificationPrefs {

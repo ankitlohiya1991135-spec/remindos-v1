@@ -153,6 +153,15 @@ export function NotificationPrefsPanel({
           checked={prefs.overdueNudgeEnabled}
           onChange={(v) => update({ overdueNudgeEnabled: v })}
         />
+        <Toggle
+          label="Smart nudges ✨"
+          description="Witty reminders when you haven't opened the app in a day"
+          checked={prefs.smartNudgeEnabled}
+          onChange={(v) => {
+            update({ smartNudgeEnabled: v });
+            void syncReminderPushSubscription(prefs.preDueMinutes, v);
+          }}
+        />
       </div>
 
       {/* Notification sound */}

@@ -130,6 +130,21 @@ self.addEventListener("push", (event) => {
     );
     return;
   }
+
+  // ── Smart engagement nudge (Zomato-style) ────────────────────────────────────
+  if (type === "smart_nudge") {
+    const title = payload.title || "Hey, you there? 👋";
+    const body  = payload.body  || "You have pending tasks waiting for you!";
+    showNotif(event, title, body,
+      "smart-nudge",   // single tag per user — newer nudge replaces the old one
+      { type: "smart_nudge" },
+      [
+        { action: "open",  title: "Let's go! 🚀" },
+        { action: "snooze", title: "Remind me later" },
+      ]
+    );
+    return;
+  }
 });
 
 // ── notification click handler ─────────────────────────────────────────────────

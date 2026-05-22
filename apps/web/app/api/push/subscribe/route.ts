@@ -1,4 +1,4 @@
-import { auth } from "@clerk/nextjs/server";
+import { auth, currentUser } from "@clerk/nextjs/server";
 import { api } from "@repo/db/convex/api";
 import { NextResponse } from "next/server";
 import { getConvexClient } from "../../../../lib/server/convex-client";
@@ -15,6 +15,8 @@ export async function POST(request: Request) {
     endpoint?: string;
     keys?: { p256dh?: string; auth?: string };
     preDueMinutes?: number;
+    smartNudgeEnabled?: boolean;
+    timeZone?: string;
   };
   const endpoint = typeof body.endpoint === "string" ? body.endpoint.trim() : "";
   const p256dh = typeof body.keys?.p256dh === "string" ? body.keys.p256dh : "";
@@ -26,6 +28,18 @@ export async function POST(request: Request) {
     typeof body.preDueMinutes === "number" && Number.isFinite(body.preDueMinutes)
       ? Math.max(0, Math.round(body.preDueMinutes))
       : undefined;
+  const smartNudgeEnabled =
+    typeof body.smartNudgeEnabled === "boolean" ? body.smartNudgeEnabled : undefined;
+  const timeZone =
+    typeof body.timeZone === "string" && body.timeZone.trim() ? body.timeZone.trim() : undefined;
+
+  // Capture first name for personalised nudge copy (best-effort).
+  let displayName: string | undefined;
+  try {
+    const user = await currentUser();
+    const name = [user?.firstName, user?.lastName].filter(Boolean).join(" ").trim();
+    displayName = name || user?.username || undefined;
+  } catch { /* non-critical */ }
 
   try {
     const client = getConvexClient();
@@ -35,6 +49,9 @@ export async function POST(request: Request) {
       p256dh,
       auth: authSecret,
       ...(preDueMinutes !== undefined ? { preDueMinutes } : {}),
+      ...(smartNudgeEnabled !== undefined ? { smartNudgeEnabled } : {}),
+      ...(timeZone !== undefined ? { timeZone } : {}),
+      ...(displayName !== undefined ? { displayName } : {}),
     });
     return NextResponse.json({ ok: true });
   } catch (err) {

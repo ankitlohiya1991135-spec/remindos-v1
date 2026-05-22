@@ -9,6 +9,12 @@ export const savePushSubscription = mutation({
     auth: v.string(),
     /** Minutes before due to fire a pre-due push (0 = disabled). */
     preDueMinutes: v.optional(v.number()),
+    /** Opt-in for smart engagement nudges. */
+    smartNudgeEnabled: v.optional(v.boolean()),
+    /** IANA timezone string e.g. "Asia/Kolkata". */
+    timeZone: v.optional(v.string()),
+    /** User display name for personalised nudge copy. */
+    displayName: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const existing = await ctx.db
@@ -16,16 +22,17 @@ export const savePushSubscription = mutation({
       .withIndex("by_endpoint", (q) => q.eq("endpoint", args.endpoint))
       .first();
     const now = Date.now();
+    const extra = {
+      ...(args.preDueMinutes !== undefined ? { preDueMinutes: args.preDueMinutes } : {}),
+      ...(args.smartNudgeEnabled !== undefined ? { smartNudgeEnabled: args.smartNudgeEnabled } : {}),
+      ...(args.timeZone !== undefined ? { timeZone: args.timeZone } : {}),
+      ...(args.displayName !== undefined ? { displayName: args.displayName } : {}),
+    };
     if (existing) {
       if (existing.userId !== args.userId) {
         await ctx.db.delete(existing._id);
       } else {
-        await ctx.db.patch(existing._id, {
-          p256dh: args.p256dh,
-          auth: args.auth,
-          createdAt: now,
-          ...(args.preDueMinutes !== undefined ? { preDueMinutes: args.preDueMinutes } : {}),
-        });
+        await ctx.db.patch(existing._id, { p256dh: args.p256dh, auth: args.auth, createdAt: now, ...extra });
         return { ok: true as const };
       }
     }
@@ -35,7 +42,7 @@ export const savePushSubscription = mutation({
       p256dh: args.p256dh,
       auth: args.auth,
       createdAt: now,
-      ...(args.preDueMinutes !== undefined ? { preDueMinutes: args.preDueMinutes } : {}),
+      ...extra,
     });
     return { ok: true as const };
   },
@@ -77,6 +84,9 @@ export const listAllUsers = query({
       userId: r.userId,
       endpoint: r.endpoint,
       preDueMinutes: r.preDueMinutes,
+      smartNudgeEnabled: r.smartNudgeEnabled,
+      timeZone: r.timeZone,
+      displayName: r.displayName,
     }));
   },
 });

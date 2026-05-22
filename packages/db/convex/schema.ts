@@ -107,6 +107,12 @@ const pushSubscriptions = defineTable({
   createdAt: v.number(),
   /** Minutes before due to send a pre-due push (0 = disabled). Mirrors localStorage pref. */
   preDueMinutes: v.optional(v.number()),
+  /** Opt-in for smart engagement nudges (inactivity, overdue pile-up, etc.). Default false. */
+  smartNudgeEnabled: v.optional(v.boolean()),
+  /** IANA timezone string captured at subscribe time — used for quiet-hour checks. */
+  timeZone: v.optional(v.string()),
+  /** User's display name captured at subscribe time — used in smart nudge copy. */
+  displayName: v.optional(v.string()),
 })
   .index("by_user", ["userId"])
   .index("by_endpoint", ["endpoint"]);

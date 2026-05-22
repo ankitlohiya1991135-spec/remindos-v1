@@ -1,5 +1,5 @@
 import { v } from "convex/values";
-import { mutation } from "./_generated/server";
+import { mutation, query } from "./_generated/server";
 
 /** Heartbeats within this gap are merged into one session. */
 const SESSION_GAP_MS = 5 * 60 * 1000;
@@ -31,5 +31,22 @@ export const heartbeat = mutation({
       lastSeenAt: now,
     });
     return { sessionId: String(id), extended: false };
+  },
+});
+
+/**
+ * Returns the most-recent lastSeenAt timestamp for a user, or null if they
+ * have never sent a heartbeat. Used by the smart-nudge cron to determine
+ * how long a user has been inactive.
+ */
+export const getLastSeenAt = query({
+  args: { userId: v.string() },
+  handler: async (ctx, args) => {
+    const session = await ctx.db
+      .query("userSessions")
+      .withIndex("by_user_lastSeen", (q) => q.eq("userId", args.userId))
+      .order("desc")
+      .first();
+    return session?.lastSeenAt ?? null;
   },
 });

@@ -301,3 +301,48 @@ export const remove = mutation({
     };
   },
 });
+
+/**
+ * Lightweight stats used by the smart-nudge cron to personalise messages.
+ * Returns counts and the dominant domain for a user's pending reminders.
+ */
+export const getSmartNudgeStats = query({
+  args: { userId: v.string() },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const pending = await ctx.db
+      .query("reminders")
+      .withIndex("by_user_status_dueAt", (q) =>
+        q.eq("userId", args.userId).eq("status", "pending"),
+      )
+      .collect();
+
+    const overdueCount = pending.filter((r) => r.dueAt < now).length;
+    const pendingCount = pending.length;
+
+    // Find the domain with the most pending reminders.
+    const domainCounts = new Map<string, number>();
+    for (const r of pending) {
+      if (r.domain) domainCounts.set(r.domain, (domainCounts.get(r.domain) ?? 0) + 1);
+    }
+    let topDomain: string | undefined;
+    let topDomainCount = 0;
+    for (const [d, c] of domainCounts) {
+      if (c > topDomainCount) { topDomainCount = c; topDomain = d; }
+    }
+
+    // Next upcoming reminder (soonest future due date).
+    const upcoming = pending
+      .filter((r) => r.dueAt >= now)
+      .sort((a, b) => a.dueAt - b.dueAt)[0];
+
+    return {
+      pendingCount,
+      overdueCount,
+      topDomain,
+      nextDueTitle: upcoming?.title ?? null,
+      nextDueAt: upcoming?.dueAt ?? null,
+    };
+  },
+});
+

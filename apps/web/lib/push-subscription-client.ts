@@ -14,7 +14,10 @@ function urlBase64ToUint8Array(base64String: string) {
   return outputArray;
 }
 
-export async function syncReminderPushSubscription(preDueMinutes?: number): Promise<boolean> {
+export async function syncReminderPushSubscription(
+  preDueMinutes?: number,
+  smartNudgeEnabled?: boolean,
+): Promise<boolean> {
   if (typeof window === "undefined" || !("serviceWorker" in navigator) || !("PushManager" in window)) {
     return false;
   }
@@ -33,6 +36,13 @@ export async function syncReminderPushSubscription(preDueMinutes?: number): Prom
     }
     const j = sub.toJSON();
     if (!j.endpoint || !j.keys?.p256dh || !j.keys?.auth) return false;
+
+    // Capture IANA timezone for quiet-hour checks on the server.
+    let timeZone: string | undefined;
+    try {
+      timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+    } catch { /* ignore */ }
+
     const save = await fetch("/api/push/subscribe", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -40,6 +50,8 @@ export async function syncReminderPushSubscription(preDueMinutes?: number): Prom
         endpoint: j.endpoint,
         keys: { p256dh: j.keys.p256dh, auth: j.keys.auth },
         ...(preDueMinutes !== undefined ? { preDueMinutes } : {}),
+        ...(smartNudgeEnabled !== undefined ? { smartNudgeEnabled } : {}),
+        ...(timeZone !== undefined ? { timeZone } : {}),
       }),
     });
     return save.ok;
