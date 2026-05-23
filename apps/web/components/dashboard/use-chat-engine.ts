@@ -365,13 +365,25 @@ export function useChatEngine(params: UseChatEngineParams) {
         void refreshReminders();
         return;
       }
+      const newDueAt = new Date(action.dueAt).getTime();
+      // Optimistic: update due time immediately so the card moves to the right bucket
+      // without waiting for the PATCH to return (mirrors the snooze_reminder pattern).
+      optimisticUpdateReminder((prev) =>
+        prev.map((r) =>
+          r.id === target.id ? { ...r, dueAt: new Date(newDueAt).toISOString() } : r,
+        ),
+      );
       void refreshAfterReminderMutation(
         fetch(`/api/reminders/${target.id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ dueAt: new Date(action.dueAt).getTime() }),
+          body: JSON.stringify({ dueAt: newDueAt }),
         }),
-      ).catch(() => showShareToast("Could not reschedule reminder. Try again."));
+      ).catch(() => {
+        showShareToast("Could not reschedule reminder. Try again.");
+        void refreshReminders(); // rollback to server state
+      });
+      return;
     }
 
     // ─── Task CRUD handlers ───────────────────────────────────────────────────

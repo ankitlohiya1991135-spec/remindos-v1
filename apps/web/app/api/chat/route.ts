@@ -689,7 +689,9 @@ function extractTitleFromCreateInput(input: string) {
   if (!stripped) {
     working = working
       .replace(
-        /^(?:please\s+)?(?:create|add|set|make|schedule|बनाओ|तैयार करो|set karo|करो)\s+(?:(?:a|an|the|my)\s+)?(?:reminder|रिमाइंडर|स्मरणपत्र)?\s*/i,
+        // Also consumes the trailing "to " so "add a reminder to check X" → "check X"
+        // not "to check X". The optional `(?:to\s+)` at the end handles this.
+        /^(?:please\s+)?(?:create|add|set|make|schedule|बनाओ|तैयार करो|set karo|करो)\s+(?:(?:a|an|the|my)\s+)?(?:reminder|रिमाइंडर|स्मरणपत्र)?\s*(?:to\s+)?/i,
         "",
       )
       .trim();
@@ -829,6 +831,10 @@ function safeAgentResponse(
 
 function polishReply(reply: string): string {
   let r = reply.trim();
+
+  // 0. Strip leaked internal Convex IDs that the LLM sometimes parrots from the digest.
+  //    Pattern: " | id=<alphanumeric>" — never belongs in a user-facing reply.
+  r = r.replace(/\s*\|\s*id=[a-zA-Z0-9_-]+/g, "");
 
   // 1. Collapse 3+ consecutive blank lines to a single blank line.
   r = r.replace(/\n{3,}/g, "\n\n");
@@ -2791,6 +2797,41 @@ export async function POST(request: Request) {
       void saveMessageServerSide(userId, "user", message);
       void saveMessageServerSide(userId, "assistant", fuzzy);
       return NextResponse.json({ reply: fuzzy, action: { type: "unknown" } } satisfies ReminderAgentResponse);
+    }
+  }
+
+  // ─── Keyword search: "related to X" / "about X" fast path ───────────────────
+  // findReminderByFuzzyMatch requires 2+ matching tokens which is too strict for
+  // short queries like "related to car". This path runs BEFORE the LLM specifically
+  // to prevent LLM chat-history confusion (e.g. previous shivshakti listing causes
+  // LLM to answer "shivshakti" when user asks about "car").
+  // Only triggers when the user explicitly uses a "related to / about" phrasing.
+  if (/\brelated\s+to\b/i.test(message) && !isCompoundReminderQuestion(message)) {
+    const kwExtract = message.match(/\brelated\s+to\s+(.+?)(?:\?|$)/i)?.[1]?.trim();
+    if (kwExtract && kwExtract.length >= 2) {
+      const kwLower = kwExtract.toLowerCase();
+      // Use individual words (≥3 chars) from the keyword phrase as match tokens
+      const STOP_WORDS = new Set(["reminder", "reminders", "task", "tasks", "today", "tomorrow",
+        "with", "that", "this", "from", "have", "what", "tell", "show", "any"]);
+      const kwTokens = kwLower.split(/\s+/).filter((t) => t.length >= 3 && !STOP_WORDS.has(t));
+      if (kwTokens.length > 0) {
+        const matched = reminders
+          .filter((r) => r.status === "pending" &&
+            kwTokens.some((tok) => r.title.toLowerCase().includes(tok)))
+          .slice(0, 5);
+        const listedIds = matched.map((r) => r.id);
+        const reply = matched.length === 0
+          ? `No pending reminders found related to "${kwExtract}".`
+          : `Here are the reminders related to "${kwExtract}":\n${matched.map((r, i) => `${i + 1}. ${describeReminderForChat(r, new Date(), displayOptions)}`).join("\n")}`;
+        void saveMessageServerSide(userId, "user", effectiveMessage);
+        void saveMessageServerSide(userId, "assistant", reply);
+        return NextResponse.json({
+          reply,
+          action: matched.length > 0
+            ? { type: "list_reminders", listedIds }
+            : { type: "unknown" },
+        } satisfies ReminderAgentResponse);
+      }
     }
   }
 

@@ -487,11 +487,14 @@ export function describeReminderForChat(
     line += ` · ${reminder.domain}`;
   }
   if (isAdhocReminder(reminder)) {
-    line += " · ADHOC";
+    // Adhoc = no linked task — omit the task label entirely in user-facing output
+    // (the internal context block adds "| id=..." separately for LLM use)
   } else {
     const tid = reminder.linkedTaskId!;
     const tname = options?.taskTitleById?.[tid];
-    line += tname ? ` · task: ${tname}` : ` · taskId=${tid}`;
+    // If the task name is not found in the lookup map, fall back to a clean label
+    // rather than leaking the raw Convex ID to the user.
+    line += tname ? ` · task: ${tname}` : ` · task: (linked)`;
   }
   if (reminder.recurrence && reminder.recurrence !== "none") {
     line += `. Repeats ${reminder.recurrence}`;
