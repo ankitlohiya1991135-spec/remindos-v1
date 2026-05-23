@@ -231,6 +231,19 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     );
   }, [reminders]);
 
+  // Sync the suggested-questions toggle from the AppDrawer in real time.
+  // AppDrawer writes localStorage and dispatches this event; we update
+  // the in-memory state so the chat panel reflects the change immediately
+  // without requiring a page reload.
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const on = (e as CustomEvent<boolean>).detail;
+      setShowSuggestedQuestions(on);
+    };
+    window.addEventListener("dashboard:suggested-questions-toggle", handler);
+    return () => window.removeEventListener("dashboard:suggested-questions-toggle", handler);
+  }, []);
+
   const onChatScroll = useCallback(() => {
     const el = chatScrollRef.current;
     if (!el) return;
@@ -264,6 +277,14 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     reminders,
     setMessages,
   });
+
+  // Allow the layout-level AppDrawer to trigger notification permission requests
+  // by dispatching "dashboard:request-notification-permission".
+  useEffect(() => {
+    const handler = () => { void requestDueNotificationPermission(); };
+    window.addEventListener("dashboard:request-notification-permission", handler);
+    return () => window.removeEventListener("dashboard:request-notification-permission", handler);
+  }, [requestDueNotificationPermission]);
 
   const runBriefingStream = useCallback(
     (recordAutoBriefing = false) => {
@@ -758,6 +779,15 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     }),
     [grouped.missed.length, grouped.today.length, grouped.tomorrow.length, reminders],
   );
+
+  // Broadcast snapshot counts whenever they change so the AppDrawer can
+  // display the same Missed / Today / Tomorrow / Later tiles without prop-drilling.
+  useEffect(() => {
+    window.dispatchEvent(
+      new CustomEvent("dashboard:snapshot-update", { detail: snapshot }),
+    );
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [snapshot.missed, snapshot.today, snapshot.tomorrow, snapshot.pending]);
 
   const nextTwoHoursReminders = useMemo(() => {
     const now = new Date();

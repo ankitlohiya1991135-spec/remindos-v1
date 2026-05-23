@@ -8,6 +8,14 @@ import {
   USER_METADATA_CHANGED_EVENT,
   type UserMetadataChangedDetail,
 } from "../../lib/user-metadata-events";
+import {
+  loadDueNotificationPrefs,
+  saveDueNotificationPrefs,
+  type DueNotificationPrefs,
+} from "../../lib/reminder-notification-prefs";
+import { NotificationPrefsPanel } from "../notifications/notification-prefs-panel";
+
+const SUGGESTED_QUESTIONS_KEY = "remindos:showSuggestedQuestions";
 
 export function AppDrawer() {
   const [mounted, setMounted] = useState(false);
@@ -16,6 +24,26 @@ export function AppDrawer() {
   const { user } = useUser();
   const { signOut } = useClerk();
   const router = useRouter();
+
+  // ── Snapshot counts — updated via custom event from the dashboard ─────────
+  const [snapshot, setSnapshot] = useState({ missed: 0, today: 0, tomorrow: 0, pending: 0 });
+
+  // ── Notification prefs — read/write localStorage directly ─────────────────
+  const [dueNotifPrefs, setDueNotifPrefsState] = useState<DueNotificationPrefs>(
+    () => loadDueNotificationPrefs(),
+  );
+  const [showSuggestedQuestions, setShowSuggestedQuestions] = useState(() => {
+    if (typeof window === "undefined") return true;
+    try { return localStorage.getItem(SUGGESTED_QUESTIONS_KEY) !== "0"; } catch { return true; }
+  });
+
+  const updateNotifPrefs = (next: DueNotificationPrefs) => {
+    setDueNotifPrefsState(next);
+    saveDueNotificationPrefs(next);
+  };
+
+  const pushGranted = typeof Notification !== "undefined" && Notification.permission === "granted";
+  const pushDenied  = typeof Notification !== "undefined" && Notification.permission === "denied";
 
   const open = () => {
     if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
@@ -31,6 +59,16 @@ export function AppDrawer() {
   useEffect(() => {
     window.addEventListener("dashboard:open-drawer", open);
     return () => window.removeEventListener("dashboard:open-drawer", open);
+  }, []);
+
+  // Keep snapshot counts fresh — dashboard broadcasts this whenever its snapshot changes
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<typeof snapshot>).detail;
+      if (detail) setSnapshot(detail);
+    };
+    window.addEventListener("dashboard:snapshot-update", handler);
+    return () => window.removeEventListener("dashboard:snapshot-update", handler);
   }, []);
 
   useEffect(() => {
@@ -217,6 +255,26 @@ export function AppDrawer() {
             </div>
           </div>
 
+          {/* ── Stats row (Missed / Today / Tomorrow / Later) ────────────── */}
+          <div className="grid grid-cols-2 gap-2">
+            {[
+              { label: "Missed", count: snapshot.missed, border: "border-rose-100 dark:border-rose-900/40", bg: "bg-rose-50 dark:bg-rose-950/30 hover:bg-rose-100 dark:hover:bg-rose-950/50", text: "text-rose-600 dark:text-rose-400", sub: "text-rose-500/80 dark:text-rose-400/70", tab: "missed" },
+              { label: "Today",  count: snapshot.today,  border: "border-amber-100 dark:border-amber-900/40", bg: "bg-amber-50 dark:bg-amber-950/30 hover:bg-amber-100 dark:hover:bg-amber-950/50", text: "text-amber-600 dark:text-amber-400", sub: "text-amber-500/80 dark:text-amber-400/70", tab: "today" },
+              { label: "Tomorrow", count: snapshot.tomorrow, border: "border-sky-100 dark:border-sky-900/40", bg: "bg-sky-50 dark:bg-sky-950/30 hover:bg-sky-100 dark:hover:bg-sky-950/50", text: "text-sky-600 dark:text-sky-400", sub: "text-sky-500/80 dark:text-sky-400/70", tab: "tomorrow" },
+              { label: "Later",  count: Math.max(0, snapshot.pending - snapshot.missed - snapshot.today - snapshot.tomorrow), border: "border-slate-200 dark:border-slate-700", bg: "bg-slate-50 dark:bg-slate-900 hover:bg-slate-100 dark:hover:bg-slate-800", text: "text-slate-700 dark:text-slate-300", sub: "text-slate-400", tab: "upcoming" },
+            ].map((tile) => (
+              <button
+                key={tile.label}
+                type="button"
+                onClick={() => { dispatch(`dashboard:open-reminders`); }}
+                className={`flex flex-col items-center justify-center rounded-xl border px-1 py-3 text-center transition active:scale-95 ${tile.border} ${tile.bg}`}
+              >
+                <span className={`text-2xl font-extrabold tabular-nums leading-none ${tile.text}`}>{tile.count}</span>
+                <span className={`mt-0.5 text-[9px] font-bold uppercase tracking-widest ${tile.sub}`}>{tile.label}</span>
+              </button>
+            ))}
+          </div>
+
           {/* Quick actions grid */}
           <p className="mb-2.5 mt-5 text-[10px] font-extrabold uppercase tracking-[0.18em] text-slate-400">
             Quick Actions
@@ -254,6 +312,79 @@ export function AppDrawer() {
               </button>
             ))}
           </div>
+
+          {/* ── Quick Settings ────────────────────────────────────────────── */}
+          <p className="mb-1 mt-5 text-[10px] font-extrabold uppercase tracking-[0.18em] text-slate-400">
+            Quick Settings
+          </p>
+          <div className="overflow-hidden rounded-2xl border border-slate-100 dark:border-slate-800">
+            {/* Suggested questions */}
+            <label className="flex cursor-pointer items-center justify-between gap-3 border-b border-slate-100 px-4 py-3 dark:border-slate-800">
+              <span className="text-sm font-medium text-slate-800 dark:text-slate-200">Suggested questions</span>
+              <div className="relative shrink-0">
+                <input type="checkbox" className="sr-only" checked={showSuggestedQuestions}
+                  onChange={(e) => {
+                    const on = e.target.checked;
+                    setShowSuggestedQuestions(on);
+                    try { localStorage.setItem(SUGGESTED_QUESTIONS_KEY, on ? "1" : "0"); } catch { /* ignore */ }
+                    window.dispatchEvent(new CustomEvent("dashboard:suggested-questions-toggle", { detail: on }));
+                  }} />
+                <div className={`h-6 w-11 rounded-full transition-colors ${showSuggestedQuestions ? "bg-violet-600" : "bg-slate-200 dark:bg-slate-700"}`} />
+                <div className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${showSuggestedQuestions ? "translate-x-6" : "translate-x-1"}`} />
+              </div>
+            </label>
+            {/* Push notifications */}
+            <label className="flex cursor-pointer items-center justify-between gap-3 border-b border-slate-100 px-4 py-3 dark:border-slate-800">
+              <span className="text-sm font-medium text-slate-800 dark:text-slate-200">Push notifications</span>
+              <div className="relative shrink-0">
+                <input type="checkbox" className="sr-only"
+                  checked={dueNotifPrefs.enabled && pushGranted}
+                  disabled={pushDenied}
+                  onChange={(e) => {
+                    if (e.target.checked) window.dispatchEvent(new CustomEvent("dashboard:request-notification-permission"));
+                    else updateNotifPrefs({ ...dueNotifPrefs, enabled: false });
+                  }} />
+                <div className={`h-6 w-11 rounded-full transition-colors ${dueNotifPrefs.enabled && pushGranted ? "bg-violet-600" : "bg-slate-200 dark:bg-slate-700"}`} />
+                <div className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${dueNotifPrefs.enabled && pushGranted ? "translate-x-6" : "translate-x-1"}`} />
+              </div>
+            </label>
+            {/* Morning briefing */}
+            <label className="flex cursor-pointer items-center justify-between gap-3 border-b border-slate-100 px-4 py-3 dark:border-slate-800">
+              <span className="text-sm font-medium text-slate-800 dark:text-slate-200">Morning briefing</span>
+              <div className="relative shrink-0">
+                <input type="checkbox" className="sr-only"
+                  checked={dueNotifPrefs.morningBriefingEnabled}
+                  onChange={(e) => updateNotifPrefs({ ...dueNotifPrefs, morningBriefingEnabled: e.target.checked })} />
+                <div className={`h-6 w-11 rounded-full transition-colors ${dueNotifPrefs.morningBriefingEnabled ? "bg-violet-600" : "bg-slate-200 dark:bg-slate-700"}`} />
+                <div className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${dueNotifPrefs.morningBriefingEnabled ? "translate-x-6" : "translate-x-1"}`} />
+              </div>
+            </label>
+            {/* Sound alerts */}
+            <label className="flex cursor-pointer items-center justify-between gap-3 px-4 py-3">
+              <span className="text-sm font-medium text-slate-800 dark:text-slate-200">Sound alerts</span>
+              <div className="relative shrink-0">
+                <input type="checkbox" className="sr-only"
+                  checked={dueNotifPrefs.soundEnabled}
+                  onChange={(e) => updateNotifPrefs({ ...dueNotifPrefs, soundEnabled: e.target.checked })} />
+                <div className={`h-6 w-11 rounded-full transition-colors ${dueNotifPrefs.soundEnabled ? "bg-violet-600" : "bg-slate-200 dark:bg-slate-700"}`} />
+                <div className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${dueNotifPrefs.soundEnabled ? "translate-x-6" : "translate-x-1"}`} />
+              </div>
+            </label>
+          </div>
+
+          {/* More notification options (full prefs panel) */}
+          <details className="mt-2">
+            <summary className="cursor-pointer rounded-xl border border-slate-100 px-4 py-2.5 text-xs font-semibold text-slate-500 hover:bg-slate-50 dark:border-slate-800 dark:text-slate-400 dark:hover:bg-slate-900">
+              More notification options…
+            </summary>
+            <div className="mt-2">
+              <NotificationPrefsPanel
+                prefs={dueNotifPrefs}
+                onChange={updateNotifPrefs}
+                onRequestPermission={() => window.dispatchEvent(new CustomEvent("dashboard:request-notification-permission"))}
+              />
+            </div>
+          </details>
 
           {/* Divider */}
           <div className="my-4 h-px bg-slate-100 dark:bg-slate-800" />

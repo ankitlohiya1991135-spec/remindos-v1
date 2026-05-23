@@ -703,9 +703,13 @@ export function TaskFormOverlay({
             <div className="grid grid-cols-2 gap-3">
               <div>
                 <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">DUE DATE</p>
-                <div className="relative">
-                  <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5">
-                    <span className="text-[13px] font-semibold text-slate-700">{dueDateDisplay}</span>
+                {/* group wraps the visible chip + invisible date input so hover highlights both */}
+                <div className="group relative cursor-pointer">
+                  <div className="flex items-center justify-between gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 transition-colors group-hover:border-violet-400 group-hover:bg-violet-50">
+                    <span className="text-[13px] font-semibold text-slate-700 group-hover:text-violet-700">{dueDateDisplay}</span>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="h-3.5 w-3.5 shrink-0 text-slate-300 transition-colors group-hover:text-violet-500">
+                      <rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>
+                    </svg>
                   </div>
                   <input
                     type="date"
@@ -722,9 +726,12 @@ export function TaskFormOverlay({
               </div>
               <div>
                 <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wider text-slate-400">TIME</p>
-                <div className="relative">
-                  <div className="flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5">
-                    <span className="text-[13px] font-semibold text-slate-500">{dueTimeDisplay}</span>
+                <div className="group relative cursor-pointer">
+                  <div className="flex items-center justify-between gap-2 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2.5 transition-colors group-hover:border-violet-400 group-hover:bg-violet-50">
+                    <span className="text-[13px] font-semibold text-slate-500 group-hover:text-violet-700">{dueTimeDisplay}</span>
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" className="h-3.5 w-3.5 shrink-0 text-slate-300 transition-colors group-hover:text-violet-500">
+                      <circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>
+                    </svg>
                   </div>
                   <input
                     type="time"
