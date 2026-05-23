@@ -113,6 +113,12 @@ const pushSubscriptions = defineTable({
   timeZone: v.optional(v.string()),
   /** User's display name captured at subscribe time — used in smart nudge copy. */
   displayName: v.optional(v.string()),
+  /** UTC hour for morning briefing push (0-23). Default 2 = 7:30 AM IST. */
+  morningBriefingHourUtc: v.optional(v.number()),
+  /** Local hour to start quiet window — no nudges sent at/after this hour. Default 22 (10 PM). */
+  quietStartHour: v.optional(v.number()),
+  /** Local hour to end quiet window — nudges resume at/after this hour. Default 8 (8 AM). */
+  quietEndHour: v.optional(v.number()),
 })
   .index("by_user", ["userId"])
   .index("by_endpoint", ["endpoint"]);

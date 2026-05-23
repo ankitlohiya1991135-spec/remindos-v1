@@ -17,6 +17,9 @@ function urlBase64ToUint8Array(base64String: string) {
 export async function syncReminderPushSubscription(
   preDueMinutes?: number,
   smartNudgeEnabled?: boolean,
+  morningBriefingHourUtc?: number,
+  quietStartHour?: number,
+  quietEndHour?: number,
 ): Promise<boolean> {
   if (typeof window === "undefined" || !("serviceWorker" in navigator) || !("PushManager" in window)) {
     return false;
@@ -52,6 +55,9 @@ export async function syncReminderPushSubscription(
         ...(preDueMinutes !== undefined ? { preDueMinutes } : {}),
         ...(smartNudgeEnabled !== undefined ? { smartNudgeEnabled } : {}),
         ...(timeZone !== undefined ? { timeZone } : {}),
+        ...(morningBriefingHourUtc !== undefined ? { morningBriefingHourUtc } : {}),
+        ...(quietStartHour !== undefined ? { quietStartHour } : {}),
+        ...(quietEndHour !== undefined ? { quietEndHour } : {}),
       }),
     });
     return save.ok;

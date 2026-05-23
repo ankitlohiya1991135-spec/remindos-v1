@@ -28,9 +28,14 @@ const QUIET_END_HOUR           = 8;                  // 8  AM local time
 
 /**
  * Returns true if `now` falls inside quiet hours for the given IANA timezone.
- * Quiet window: QUIET_START_HOUR → QUIET_END_HOUR (wraps midnight).
+ * Quiet window wraps midnight (e.g. 22 → 8).
+ * Per-user quietStart/quietEnd override the global defaults.
  */
-function isQuietHours(timeZone = "Asia/Kolkata"): boolean {
+function isQuietHours(
+  timeZone = "Asia/Kolkata",
+  quietStart = QUIET_START_HOUR,
+  quietEnd = QUIET_END_HOUR,
+): boolean {
   try {
     const localHour = parseInt(
       new Intl.DateTimeFormat("en", {
@@ -40,12 +45,10 @@ function isQuietHours(timeZone = "Asia/Kolkata"): boolean {
       }).format(new Date()),
       10,
     );
-    // Window wraps midnight (e.g. 22 → 8).
-    return localHour >= QUIET_START_HOUR || localHour < QUIET_END_HOUR;
+    return localHour >= quietStart || localHour < quietEnd;
   } catch {
-    // Invalid TZ string — fall back to UTC heuristic.
     const h = new Date().getUTCHours();
-    return h >= QUIET_START_HOUR || h < QUIET_END_HOUR;
+    return h >= quietStart || h < quietEnd;
   }
 }
 
@@ -246,11 +249,16 @@ export async function POST(request: Request) {
     const allSubs = await client.query(api.pushSubscriptions.listAllUsers, {});
 
     // Build: userId → { timeZone, displayName } — take first match per user.
-    const userMeta = new Map<string, { timeZone?: string; displayName?: string }>();
+    const userMeta = new Map<string, { timeZone?: string; displayName?: string; quietStartHour?: number; quietEndHour?: number }>();
     for (const sub of allSubs) {
       if (!sub.smartNudgeEnabled) continue;
       if (!userMeta.has(sub.userId)) {
-        userMeta.set(sub.userId, { timeZone: sub.timeZone, displayName: sub.displayName });
+        userMeta.set(sub.userId, {
+          timeZone: sub.timeZone,
+          displayName: sub.displayName,
+          quietStartHour: sub.quietStartHour,
+          quietEndHour: sub.quietEndHour,
+        });
       }
     }
 
@@ -261,8 +269,8 @@ export async function POST(request: Request) {
         const meta = userMeta.get(userId)!;
         const tz = meta.timeZone ?? "Asia/Kolkata";
 
-        // ── 1a. Quiet hours check ───────────────────────────────────────────────
-        if (isQuietHours(tz)) {
+        // ── 1a. Quiet hours check (uses per-user window if set) ─────────────────
+        if (isQuietHours(tz, meta.quietStartHour, meta.quietEndHour)) {
           results.skipped_quiet += 1;
           continue;
         }

@@ -227,10 +227,14 @@ export async function POST(request: Request) {
           }
         }
 
-        // ── 1d. morning_briefing: once per day at 8 am UTC ────────────────────
+        // ── 1d. morning_briefing: once per day at user's configured UTC hour ──
+        // Per-user hour comes from their push subscription; falls back to
+        // MORNING_BRIEFING_HOUR_UTC env var, then to 2 (= 7:30 AM IST).
         const utcHour = new Date(now).getUTCHours();
         const utcMinute = new Date(now).getUTCMinutes();
-        const briefingHour = Number(process.env.MORNING_BRIEFING_HOUR_UTC ?? "2"); // 2 UTC = 7:30 IST
+        const subForUser = allSubs.find((s) => s.userId === userId);
+        const briefingHour = subForUser?.morningBriefingHourUtc
+          ?? Number(process.env.MORNING_BRIEFING_HOUR_UTC ?? "2");
         if (utcHour === briefingHour && utcMinute < 2) {
           const sent = await alreadySent(client, userId, "morning_briefing", undefined, 23 * 60 * 60_000);
           if (!sent) {

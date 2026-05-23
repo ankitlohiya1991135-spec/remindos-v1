@@ -78,6 +78,33 @@ const PRE_DUE_OPTIONS = [
   { label: "30 min", value: 30 },
 ];
 
+// ── Morning briefing time options (shown in IST, stored as UTC hour) ──────────
+// IST = UTC + 5:30h. We snap to whole UTC hours for simplicity.
+// UTC 0 ≈ 5:30 AM IST, UTC 1 ≈ 6:30 AM IST, UTC 2 ≈ 7:30 AM IST, etc.
+const BRIEFING_HOUR_OPTIONS = [
+  { label: "5:30 AM IST", utcHour: 0 },
+  { label: "6:30 AM IST", utcHour: 1 },
+  { label: "7:30 AM IST", utcHour: 2 },   // default
+  { label: "8:30 AM IST", utcHour: 3 },
+  { label: "9:30 AM IST", utcHour: 4 },
+  { label: "10:30 AM IST", utcHour: 5 },
+];
+
+// ── Quiet hours options ───────────────────────────────────────────────────────
+const QUIET_START_OPTIONS = [
+  { label: "8 PM", value: 20 },
+  { label: "9 PM", value: 21 },
+  { label: "10 PM", value: 22 },   // default
+  { label: "11 PM", value: 23 },
+];
+const QUIET_END_OPTIONS = [
+  { label: "6 AM", value: 6 },
+  { label: "7 AM", value: 7 },
+  { label: "8 AM", value: 8 },    // default
+  { label: "9 AM", value: 9 },
+  { label: "10 AM", value: 10 },
+];
+
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export function NotificationPrefsPanel({
@@ -219,6 +246,111 @@ export function NotificationPrefsPanel({
           Push notification sent this long before each reminder
         </p>
       </div>
+
+      {/* Morning briefing time */}
+      {prefs.morningBriefingEnabled && (
+        <div className="border-t border-slate-100 px-4 pb-4 pt-3 dark:border-slate-800">
+          <p className="mb-2.5 text-[10px] font-extrabold uppercase tracking-[0.18em] text-slate-400">
+            Morning Briefing Time
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {BRIEFING_HOUR_OPTIONS.map((opt) => (
+              <button
+                key={opt.label}
+                type="button"
+                onClick={() => {
+                  update({ morningBriefingHourUtc: opt.utcHour });
+                  void syncReminderPushSubscription(
+                    prefs.preDueMinutes,
+                    prefs.smartNudgeEnabled,
+                    opt.utcHour,
+                    prefs.quietStartHour,
+                    prefs.quietEndHour,
+                  );
+                }}
+                className={`rounded-full border px-3 py-1 text-xs font-semibold transition ${
+                  prefs.morningBriefingHourUtc === opt.utcHour
+                    ? "border-violet-500 bg-violet-600 text-white"
+                    : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+                }`}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <p className="mt-2 text-[11px] text-slate-400">
+            Daily summary notification at this time
+          </p>
+        </div>
+      )}
+
+      {/* Smart nudge quiet hours */}
+      {prefs.smartNudgeEnabled && (
+        <div className="border-t border-slate-100 px-4 pb-4 pt-3 dark:border-slate-800">
+          <p className="mb-1 text-[10px] font-extrabold uppercase tracking-[0.18em] text-slate-400">
+            Smart Nudge Quiet Hours
+          </p>
+          <p className="mb-2.5 text-[11px] text-slate-400">No notifications between these hours</p>
+          <div className="flex items-center gap-3">
+            <div className="flex-1">
+              <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-500">From</p>
+              <div className="flex flex-wrap gap-1.5">
+                {QUIET_START_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => {
+                      update({ quietStartHour: opt.value });
+                      void syncReminderPushSubscription(
+                        prefs.preDueMinutes,
+                        prefs.smartNudgeEnabled,
+                        prefs.morningBriefingHourUtc,
+                        opt.value,
+                        prefs.quietEndHour,
+                      );
+                    }}
+                    className={`rounded-full border px-2.5 py-1 text-xs font-semibold transition ${
+                      prefs.quietStartHour === opt.value
+                        ? "border-violet-500 bg-violet-600 text-white"
+                        : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="flex-1">
+              <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-500">Until</p>
+              <div className="flex flex-wrap gap-1.5">
+                {QUIET_END_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    onClick={() => {
+                      update({ quietEndHour: opt.value });
+                      void syncReminderPushSubscription(
+                        prefs.preDueMinutes,
+                        prefs.smartNudgeEnabled,
+                        prefs.morningBriefingHourUtc,
+                        prefs.quietStartHour,
+                        opt.value,
+                      );
+                    }}
+                    className={`rounded-full border px-2.5 py-1 text-xs font-semibold transition ${
+                      prefs.quietEndHour === opt.value
+                        ? "border-violet-500 bg-violet-600 text-white"
+                        : "border-slate-200 bg-slate-50 text-slate-600 hover:bg-slate-100 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300 dark:hover:bg-slate-700"
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

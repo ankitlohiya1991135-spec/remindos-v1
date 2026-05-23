@@ -15,6 +15,12 @@ export const savePushSubscription = mutation({
     timeZone: v.optional(v.string()),
     /** User display name for personalised nudge copy. */
     displayName: v.optional(v.string()),
+    /** UTC hour for morning briefing push (0-23). Default 2 = 7:30 AM IST. */
+    morningBriefingHourUtc: v.optional(v.number()),
+    /** Local hour to start quiet window. Default 22 (10 PM). */
+    quietStartHour: v.optional(v.number()),
+    /** Local hour to end quiet window. Default 8 (8 AM). */
+    quietEndHour: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const existing = await ctx.db
@@ -27,6 +33,9 @@ export const savePushSubscription = mutation({
       ...(args.smartNudgeEnabled !== undefined ? { smartNudgeEnabled: args.smartNudgeEnabled } : {}),
       ...(args.timeZone !== undefined ? { timeZone: args.timeZone } : {}),
       ...(args.displayName !== undefined ? { displayName: args.displayName } : {}),
+      ...(args.morningBriefingHourUtc !== undefined ? { morningBriefingHourUtc: args.morningBriefingHourUtc } : {}),
+      ...(args.quietStartHour !== undefined ? { quietStartHour: args.quietStartHour } : {}),
+      ...(args.quietEndHour !== undefined ? { quietEndHour: args.quietEndHour } : {}),
     };
     if (existing) {
       if (existing.userId !== args.userId) {
@@ -72,9 +81,8 @@ export const listForUser = query({
 });
 
 /**
- * Returns the unique userId + endpoint for every subscription in the table.
- * Used by the push cron to discover which users have push enabled.
- * Only returns the userId + endpoint fields to keep the payload small.
+ * Returns per-user subscription metadata needed by both cron routes.
+ * Includes timing prefs so each cron can respect per-user schedules.
  */
 export const listAllUsers = query({
   args: {},
@@ -87,6 +95,9 @@ export const listAllUsers = query({
       smartNudgeEnabled: r.smartNudgeEnabled,
       timeZone: r.timeZone,
       displayName: r.displayName,
+      morningBriefingHourUtc: r.morningBriefingHourUtc,
+      quietStartHour: r.quietStartHour,
+      quietEndHour: r.quietEndHour,
     }));
   },
 });

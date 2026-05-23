@@ -17,6 +17,9 @@ export async function POST(request: Request) {
     preDueMinutes?: number;
     smartNudgeEnabled?: boolean;
     timeZone?: string;
+    morningBriefingHourUtc?: number;
+    quietStartHour?: number;
+    quietEndHour?: number;
   };
   const endpoint = typeof body.endpoint === "string" ? body.endpoint.trim() : "";
   const p256dh = typeof body.keys?.p256dh === "string" ? body.keys.p256dh : "";
@@ -32,6 +35,18 @@ export async function POST(request: Request) {
     typeof body.smartNudgeEnabled === "boolean" ? body.smartNudgeEnabled : undefined;
   const timeZone =
     typeof body.timeZone === "string" && body.timeZone.trim() ? body.timeZone.trim() : undefined;
+  const morningBriefingHourUtc =
+    typeof body.morningBriefingHourUtc === "number" && Number.isFinite(body.morningBriefingHourUtc)
+      ? Math.max(0, Math.min(23, Math.round(body.morningBriefingHourUtc)))
+      : undefined;
+  const quietStartHour =
+    typeof body.quietStartHour === "number" && Number.isFinite(body.quietStartHour)
+      ? Math.max(0, Math.min(23, Math.round(body.quietStartHour)))
+      : undefined;
+  const quietEndHour =
+    typeof body.quietEndHour === "number" && Number.isFinite(body.quietEndHour)
+      ? Math.max(0, Math.min(23, Math.round(body.quietEndHour)))
+      : undefined;
 
   // Capture first name for personalised nudge copy (best-effort).
   let displayName: string | undefined;
@@ -52,6 +67,9 @@ export async function POST(request: Request) {
       ...(smartNudgeEnabled !== undefined ? { smartNudgeEnabled } : {}),
       ...(timeZone !== undefined ? { timeZone } : {}),
       ...(displayName !== undefined ? { displayName } : {}),
+      ...(morningBriefingHourUtc !== undefined ? { morningBriefingHourUtc } : {}),
+      ...(quietStartHour !== undefined ? { quietStartHour } : {}),
+      ...(quietEndHour !== undefined ? { quietEndHour } : {}),
     });
     return NextResponse.json({ ok: true });
   } catch (err) {

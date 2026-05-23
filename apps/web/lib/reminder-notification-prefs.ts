@@ -22,6 +22,10 @@ export type DueNotificationPrefs = {
    * opened the app for 24+ hours. Opt-in, default false.
    */
   smartNudgeEnabled: boolean;
+  /** Local hour (0-23) to start quiet window — no smart nudges after this hour. Default 22 (10 PM). */
+  quietStartHour: number;
+  /** Local hour (0-23) to end quiet window — nudges resume from this hour. Default 8 (8 AM). */
+  quietEndHour: number;
 };
 
 const defaultPrefs: DueNotificationPrefs = {
@@ -34,6 +38,8 @@ const defaultPrefs: DueNotificationPrefs = {
   morningBriefingHourUtc: 2,
   overdueNudgeEnabled: true,
   smartNudgeEnabled: false,
+  quietStartHour: 22,
+  quietEndHour: 8,
 };
 
 export function loadDueNotificationPrefs(): DueNotificationPrefs {
