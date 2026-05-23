@@ -73,11 +73,13 @@ export function useDueNotifications({
     return () => document.removeEventListener("visibilitychange", onVis);
   }, []);
 
-  // Sync push subscription once history is loaded (and whenever preDueMinutes changes).
+  // Sync push subscription once history is loaded (and whenever prefs change).
+  // Pass both preDueMinutes and smartNudgeEnabled so the server-side cron
+  // knows which notification types this user has opted into.
   useEffect(() => {
     if (!isHistoryLoaded) return;
-    void syncReminderPushSubscription(dueNotifPrefs.preDueMinutes);
-  }, [isHistoryLoaded, dueNotifPrefs.preDueMinutes]);
+    void syncReminderPushSubscription(dueNotifPrefs.preDueMinutes, dueNotifPrefs.smartNudgeEnabled);
+  }, [isHistoryLoaded, dueNotifPrefs.preDueMinutes, dueNotifPrefs.smartNudgeEnabled]);
 
   // Main due-reminder tick: fire chat bubbles + system notifications
   useEffect(() => {

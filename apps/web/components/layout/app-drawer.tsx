@@ -45,6 +45,31 @@ export function AppDrawer() {
   const pushGranted = typeof Notification !== "undefined" && Notification.permission === "granted";
   const pushDenied  = typeof Notification !== "undefined" && Notification.permission === "denied";
 
+  // ── Test notification state ───────────────────────────────────────────────
+  const [testNotifState, setTestNotifState] = useState<"idle" | "loading" | "ok" | "error">("idle");
+  const [testNotifMsg, setTestNotifMsg] = useState("");
+
+  const sendTestNotification = async () => {
+    setTestNotifState("loading");
+    setTestNotifMsg("");
+    try {
+      const res = await fetch("/api/push/test", { method: "POST" });
+      const data = (await res.json()) as { ok: boolean; error?: string; step?: string; sent?: number };
+      if (data.ok) {
+        setTestNotifState("ok");
+        setTestNotifMsg("Test notification sent! Check your notifications.");
+      } else {
+        setTestNotifState("error");
+        setTestNotifMsg(data.error ?? "Unknown error");
+      }
+    } catch {
+      setTestNotifState("error");
+      setTestNotifMsg("Network error — try again.");
+    }
+    // Reset after 8 seconds
+    setTimeout(() => { setTestNotifState("idle"); setTestNotifMsg(""); }, 8000);
+  };
+
   const open = () => {
     if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
     setMounted(true);
@@ -360,7 +385,7 @@ export function AppDrawer() {
               </div>
             </label>
             {/* Sound alerts */}
-            <label className="flex cursor-pointer items-center justify-between gap-3 px-4 py-3">
+            <label className="flex cursor-pointer items-center justify-between gap-3 border-b border-slate-100 px-4 py-3 dark:border-slate-800">
               <span className="text-sm font-medium text-slate-800 dark:text-slate-200">Sound alerts</span>
               <div className="relative shrink-0">
                 <input type="checkbox" className="sr-only"
@@ -370,6 +395,30 @@ export function AppDrawer() {
                 <div className={`absolute top-1 h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${dueNotifPrefs.soundEnabled ? "translate-x-6" : "translate-x-1"}`} />
               </div>
             </label>
+            {/* Test notification */}
+            <div className="px-4 py-3">
+              <button
+                type="button"
+                disabled={testNotifState === "loading" || !pushGranted}
+                onClick={() => void sendTestNotification()}
+                className={`w-full rounded-lg px-3 py-2 text-xs font-semibold transition active:scale-[0.97] disabled:opacity-50 ${
+                  testNotifState === "ok"
+                    ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400"
+                    : testNotifState === "error"
+                    ? "bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-400"
+                    : "bg-violet-50 text-violet-700 hover:bg-violet-100 dark:bg-violet-950/30 dark:text-violet-300 dark:hover:bg-violet-950/50"
+                }`}
+              >
+                {testNotifState === "loading" ? "Sending…" : testNotifState === "ok" ? "✓ Sent!" : testNotifState === "error" ? "✕ Failed" : "Send test notification"}
+              </button>
+              {testNotifMsg ? (
+                <p className={`mt-1.5 text-[11px] leading-snug ${testNotifState === "error" ? "text-rose-600 dark:text-rose-400" : "text-emerald-600 dark:text-emerald-400"}`}>
+                  {testNotifMsg}
+                </p>
+              ) : !pushGranted ? (
+                <p className="mt-1.5 text-[11px] text-slate-400">Enable push notifications above to test.</p>
+              ) : null}
+            </div>
           </div>
 
           {/* More notification options (full prefs panel) */}

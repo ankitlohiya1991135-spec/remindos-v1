@@ -82,9 +82,30 @@ function formatTime(ms: number): string {
   });
 }
 
-// ── GET: health check ──────────────────────────────────────────────────────────
+// ── GET: health check + diagnostics ───────────────────────────────────────────
 export async function GET() {
-  return NextResponse.json({ ok: true, ts: new Date().toISOString() });
+  const vapidConfigured = !!(
+    process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY
+  );
+  const cronSecretSet = !!process.env.CRON_SECRET;
+
+  let subscriptionCount = 0;
+  try {
+    const client = getConvexClient();
+    const subs = await client.query(api.pushSubscriptions.listAllUsers, {});
+    subscriptionCount = subs.length;
+  } catch { /* ignore */ }
+
+  return NextResponse.json({
+    ok: true,
+    ts: new Date().toISOString(),
+    diagnostics: {
+      vapidConfigured,
+      cronSecretSet,
+      subscriptionCount,
+      note: "POST /api/push/cron requires Authorization: Bearer <CRON_SECRET> header",
+    },
+  });
 }
 
 // ── POST: cron worker ──────────────────────────────────────────────────────────
