@@ -2,6 +2,7 @@ import { auth } from "@clerk/nextjs/server";
 import { api } from "@repo/db/convex/api";
 import { NextResponse } from "next/server";
 import { getConvexClient } from "../../../lib/server/convex-client";
+import { syncUserWiki } from "../../../lib/server/wiki-sync";
 
 function errorMessage(err: unknown) {
   return err instanceof Error ? err.message : String(err);
@@ -67,6 +68,8 @@ export async function POST(request: Request) {
       entityTitle: body.title.trim(),
       ...(body.domain ? { domain: body.domain } : {}),
     }).catch(() => {});
+    // Wiki ingest: rebuild wiki after task creation (fire-and-forget)
+    syncUserWiki(userId).catch(() => {});
     return NextResponse.json({ task });
   } catch (err) {
     return NextResponse.json({ error: errorMessage(err) }, { status: 500 });

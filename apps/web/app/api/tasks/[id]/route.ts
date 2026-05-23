@@ -2,6 +2,7 @@ import { auth } from "@clerk/nextjs/server";
 import { api } from "@repo/db/convex/api";
 import { NextResponse } from "next/server";
 import { getConvexClient } from "../../../../lib/server/convex-client";
+import { syncUserWiki } from "../../../../lib/server/wiki-sync";
 
 function errorMessage(err: unknown) {
   return err instanceof Error ? err.message : String(err);
@@ -88,6 +89,11 @@ export async function PATCH(
         entityTitle: String(t.title ?? ""),
         ...(taskDomain ? { domain: taskDomain } : {}),
       }).catch(() => {});
+      // Wiki ingest: rebuild wiki after task completion (fire-and-forget)
+      syncUserWiki(userId).catch(() => {});
+    } else if (body.title !== undefined || body.notes !== undefined) {
+      // Wiki ingest: rebuild wiki when task title/notes change
+      syncUserWiki(userId).catch(() => {});
     }
     return NextResponse.json({ task });
   } catch (err) {
@@ -110,6 +116,8 @@ export async function DELETE(
       taskId: parseTaskId(id),
     });
     if (!result.ok) return NextResponse.json({ error: "Not found" }, { status: 404 });
+    // Wiki ingest: rebuild wiki after task deletion (fire-and-forget)
+    syncUserWiki(userId).catch(() => {});
     return NextResponse.json({
       ok: true,
       unlinkedReminderCount:
