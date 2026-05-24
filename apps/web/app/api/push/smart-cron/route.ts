@@ -87,6 +87,8 @@ interface NudgeContext {
   nextDueTitle?: string | null;
   displayName?: string | null;
   localHour: number;      // 0-23 in user's timezone
+  streakDays: number;     // consecutive active days ending yesterday (0 = no streak)
+  hasNoPending: boolean;  // true when user has zero pending reminders/tasks
 }
 
 type Template = { title: string; body: string };
@@ -118,7 +120,7 @@ const DOMAIN_LABEL: Record<string, string> = {
 export function generateSmartNudgeMessage(ctx: NudgeContext): Template {
   const {
     daysInactive, pendingCount, overdueCount, topDomain,
-    nextDueTitle, displayName, localHour,
+    nextDueTitle, displayName, localHour, streakDays, hasNoPending,
   } = ctx;
 
   const name  = displayName ? `, ${displayName.split(" ")[0]}` : "";
@@ -126,6 +128,22 @@ export function generateSmartNudgeMessage(ctx: NudgeContext): Template {
   const days  = Math.round(daysInactive);
   const emoji = topDomain ? DOMAIN_EMOJI[topDomain] ?? "📌" : "";
   const label = topDomain ? DOMAIN_LABEL[topDomain] ?? topDomain : "";
+
+  // ── Type 7: streak milestone (fires before overdue — loyalty deserves acknowledgement) ──
+  if (streakDays >= 7) {
+    return pick<Template>([
+      { title: `🔥 ${streakDays}-day streak at risk!`, body: `You were on a roll${name}! Open the app today to keep the streak alive.` },
+      { title: "Incredible consistency! 🏆", body: `${streakDays} days in a row with MYSA — don't let it end now!` },
+      { title: `${streakDays}-day streak on the line 🎯`, body: `Come back today${name} and protect what you've built 💪` },
+    ]);
+  }
+  if (streakDays >= 3) {
+    return pick<Template>([
+      { title: `⚡ ${streakDays}-day streak at risk!`, body: `Don't break it now${name} — you were so consistent!` },
+      { title: "Streak alert 🔔", body: `${streakDays} days in a row — open the app today to keep it going!` },
+      { title: "Complete today's streak 🌟", body: `${streakDays}-day productivity streak. One tap to keep it alive!` },
+    ]);
+  }
 
   // ── overdue heavy ────────────────────────────────────────────────────────────
   if (overdueCount >= 5) {
@@ -168,6 +186,49 @@ export function generateSmartNudgeMessage(ctx: NudgeContext): Template {
       { title: "Bro, check your tasks 🙃", body: `${pendingCount} things waiting. Took 2 mins to create, takes 2 mins to check!` },
       { title: "Your streak is at risk ⚡", body: `Don't break the momentum — ${pendingCount} tasks to clear today!` },
       { title: "Productivity check 📋", body: `${pendingCount} pending. You've done it before, you can do it now!` },
+    ]);
+  }
+
+  // ── Types 1/3/5/6/8/9: AI engagement for users with no pending reminders ─────
+  // This fires for active users who have cleared their task list — keep them engaged.
+  // Also fires for re-engagement when the user has nothing pending.
+  if (hasNoPending) {
+    if (slot === "morning") {
+      return pick<Template>([
+        { title: `Good morning${name} ☀️`, body: "Need help planning your day? Just ask MYSA." },
+        { title: "MYSA is ready for today ✨", body: "What shall we tackle together? Open the app and ask anything." },
+        { title: "Start your day strong 🚀", body: "Tell MYSA your goals — get an instant action plan back." },
+        { title: "AI tip of the day 📚", body: `Try: "What should I focus on today?" — MYSA will prioritize for you.` },
+        { title: "Good morning! Want today's plan? 🌅", body: "Open MYSA and describe your day — get a clear action list instantly." },
+      ]);
+    }
+    if (slot === "afternoon") {
+      return pick<Template>([
+        { title: "Need help writing faster? ✍️", body: "MYSA can draft emails, replies, and messages in seconds — try it!" },
+        { title: "Quick productivity trick ⚡", body: "Ask MYSA to break your biggest challenge into small, clear steps." },
+        { title: "Your AI assistant is ready 🤖", body: "Turn any rough note into a structured plan — open MYSA and paste it." },
+        { title: "Afternoon check-in 💡", body: "What's on your plate? MYSA can help you prioritize and plan ahead." },
+      ]);
+    }
+    if (slot === "evening") {
+      return pick<Template>([
+        { title: `Evening wrap-up${name} 🌆`, body: "Need help summarizing your day or planning tomorrow?" },
+        { title: "Plan tomorrow tonight 🌙", body: "Ask MYSA what to tackle first tomorrow — your future self will thank you!" },
+        { title: "5 mins now = smooth tomorrow 🌇", body: "Tell MYSA what's ahead — get a clean game plan before you wind down." },
+        { title: "Need help summarizing your day? 🌆", body: "Open MYSA and describe your day — get a clean summary + next steps." },
+      ]);
+    }
+    // Generic AI engagement (Type 1, 3, 6, 8, 9 mixed)
+    return pick<Template>([
+      { title: `Hey${name}, MYSA misses you 🤖`, body: "Your AI assistant is ready whenever you are — just open the app!" },
+      { title: "One small productive step today? 🌱", body: "Even small actions compound. Open MYSA and share what's on your mind." },
+      { title: "Did you know? 💡", body: "You can create reminders just by describing them in plain English — try it!" },
+      { title: "Try today's AI prompt 🎯", body: `"What should I focus on this week?" — ask MYSA and get a smart plan instantly.` },
+      { title: "AI tip of the day 📚", body: `"Remind me to follow up with [person] next Monday" — just say it, MYSA handles the rest.` },
+      { title: "Feeling overwhelmed? 💙", body: "Let's organize things together. Open MYSA and tell it what's weighing on you." },
+      { title: "How can I help today? 🤖✨", body: "Your AI assistant is standing by. Ask anything — plans, reminders, drafts, ideas." },
+      { title: "Generate a quick to-do list ✅", body: "Tell MYSA everything on your mind — it'll turn it into a clean to-do list." },
+      { title: "Unlock more with Pro ✨", body: "Unlimited AI chats + advanced models. Upgrade and supercharge your productivity." },
     ]);
   }
 
@@ -214,13 +275,22 @@ export function generateSmartNudgeMessage(ctx: NudgeContext): Template {
     ]);
   }
 
-  // ── generic fallback ─────────────────────────────────────────────────────────
+  // ── generic fallback (mixes re-engagement + AI engagement + feature discovery) ─
   return pick<Template>([
     { title: `Hey${name}, you there? 👋`, body: `${pendingCount} tasks haven't seen you in a while!` },
     { title: "Your to-do list is lonely 🥺", body: `Come back and cross off ${pendingCount} things!` },
     { title: "Quick check-in 📋", body: `${pendingCount} pending. A minute could clear the queue ✅` },
     { title: "Just a nudge 😊", body: `${pendingCount} reminders waiting. No pressure… but also, kinda 👀` },
-    { title: "1 tap, ${pendingCount} tasks 🎯", body: `Open the app and let's knock them out together!` },
+    { title: `1 tap, ${pendingCount} tasks 🎯`, body: `Open the app and let's knock them out together!` },
+    // Type 3: AI productivity suggestions
+    { title: "Your AI assistant is waiting 🤖", body: `${pendingCount} tasks pending — want MYSA to help you prioritize them?` },
+    { title: "Work smarter, not harder ⚡", body: `Ask MYSA to organize your ${pendingCount} pending tasks by priority.` },
+    // Type 6: Feature discovery
+    { title: "Pro tip 💡", body: `You can ask MYSA to reschedule all your tasks just by describing the change.` },
+    { title: "Did you know? ✨", body: `MYSA can group your ${pendingCount} tasks by category and suggest which to do first.` },
+    // Type 8: Emotional/companion
+    { title: "We haven't seen you in a while 👀", body: `${pendingCount} things waiting. Your AI assistant misses helping you!` },
+    { title: "Feeling overwhelmed? 💙", body: `${pendingCount} tasks, but no worries — let's tackle them together, one step at a time.` },
   ]);
 }
 
@@ -251,7 +321,9 @@ export async function POST(request: Request) {
     // Build: userId → { timeZone, displayName } — take first match per user.
     const userMeta = new Map<string, { timeZone?: string; displayName?: string; quietStartHour?: number; quietEndHour?: number }>();
     for (const sub of allSubs) {
-      if (!sub.smartNudgeEnabled) continue;
+      // Opt-OUT model: only skip users who explicitly disabled smart nudges.
+      // undefined (never set) = included. false = excluded.
+      if (sub.smartNudgeEnabled === false) continue;
       if (!userMeta.has(sub.userId)) {
         userMeta.set(sub.userId, {
           timeZone: sub.timeZone,
@@ -292,12 +364,28 @@ export async function POST(request: Request) {
 
         // ── 1d. Reminder stats ───────────────────────────────────────────────────
         const stats = await client.query(api.reminders.getSmartNudgeStats, { userId });
-        if (stats.pendingCount === 0) {
-          results.skipped_empty += 1;
-          continue;
-        }
+        // Do NOT skip users with 0 pending reminders — they still get AI engagement
+        // notifications (Types 1, 3, 5, 6, 8, 9) to bring them back to the app.
 
-        // ── 1e. Build message ───────────────────────────────────────────────────
+        // ── 1e. Streak calculation from recent events ───────────────────────────
+        let streakDays = 0;
+        try {
+          const recentEvents = await client.query(api.userEvents.getRecent, { userId, limitDays: 30 });
+          const activeDays = new Set<string>();
+          for (const e of recentEvents) {
+            const d = new Date(e.createdAt);
+            activeDays.add(`${d.getUTCFullYear()}-${d.getUTCMonth()}-${d.getUTCDate()}`);
+          }
+          // Count consecutive days ending yesterday (today the user is inactive).
+          for (let i = 1; i <= 30; i++) {
+            const d = new Date(now - i * 86_400_000);
+            const key = `${d.getUTCFullYear()}-${d.getUTCMonth()}-${d.getUTCDate()}`;
+            if (!activeDays.has(key)) break;
+            streakDays++;
+          }
+        } catch { /* non-critical — default 0 */ }
+
+        // ── 1f. Build message ───────────────────────────────────────────────────
         const localHour = (() => {
           try {
             return parseInt(
@@ -315,6 +403,8 @@ export async function POST(request: Request) {
           nextDueTitle:  stats.nextDueTitle,
           displayName:   meta.displayName,
           localHour,
+          streakDays,
+          hasNoPending:  stats.pendingCount === 0,
         });
 
         // ── 1f. Send push ───────────────────────────────────────────────────────

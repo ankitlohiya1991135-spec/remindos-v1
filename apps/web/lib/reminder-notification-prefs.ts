@@ -37,7 +37,7 @@ const defaultPrefs: DueNotificationPrefs = {
   morningBriefingEnabled: true,
   morningBriefingHourUtc: 2,
   overdueNudgeEnabled: true,
-  smartNudgeEnabled: false,
+  smartNudgeEnabled: true,
   quietStartHour: 22,
   quietEndHour: 8,
 };
