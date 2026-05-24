@@ -413,14 +413,13 @@ export function dueMinuteKey(reminder: ReminderItem): string {
 }
 
 export function isDueThisMinute(dueAtIso: string, now: Date): boolean {
-  const d = new Date(dueAtIso);
-  return (
-    d.getFullYear() === now.getFullYear() &&
-    d.getMonth() === now.getMonth() &&
-    d.getDate() === now.getDate() &&
-    d.getHours() === now.getHours() &&
-    d.getMinutes() === now.getMinutes()
-  );
+  const dueMs = new Date(dueAtIso).getTime();
+  const nowMs = now.getTime();
+  // Primary: due within the next 60 s (fires as the minute starts, like the old check).
+  // Recovery: due within the last 2 minutes — catches reminders the tick missed because
+  // the browser throttled the timer (background tabs, phone sleep, etc.).
+  // The dueMinuteKey dedup in sessionStorage guarantees each reminder is shown at most once.
+  return dueMs >= nowMs - 2 * 60_000 && dueMs <= nowMs + 60_000;
 }
 
 export function isNextTwoHoursReminder(

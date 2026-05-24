@@ -140,7 +140,9 @@ export async function POST(request: Request) {
     const maxPreDueMinutes = userIds.length > 0
       ? Math.max(...userIds.map((id) => userPreDueMap.get(id) ?? DEFAULT_PRE_DUE_MINUTES))
       : DEFAULT_PRE_DUE_MINUTES;
-    const windowStart = now - 60_000;
+    // 3-minute lookback: if cron-job.org skips one cycle the reminder is still caught
+    // on the next fire without needing a perfect every-60-s schedule.
+    const windowStart = now - 3 * 60_000;
     const windowEnd = now + (maxPreDueMinutes + 1) * 60_000;
 
     for (const userId of userIds) {
@@ -157,9 +159,11 @@ export async function POST(request: Request) {
         for (const reminder of reminders) {
           const dueAt = reminder.dueAt;
 
-          // ── 1a. due_reminder: dueAt is within the current minute ─────────────
-          if (dueAt >= now - 60_000 && dueAt <= now + 60_000) {
-            const sent = await alreadySent(client, userId, "due_reminder", reminder._id, 90_000);
+          // ── 1a. due_reminder: dueAt within 3-minute lookback window ─────────
+          // 3-minute lookback means a skipped cron cycle never silently drops a
+          // notification. Dedup window is 5 min so each reminder fires at most once.
+          if (dueAt >= now - 3 * 60_000 && dueAt <= now + 60_000) {
+            const sent = await alreadySent(client, userId, "due_reminder", reminder._id, 5 * 60_000);
             if (!sent) {
               const payload = {
                 type: "due_reminder",
