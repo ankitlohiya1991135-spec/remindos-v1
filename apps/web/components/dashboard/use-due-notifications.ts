@@ -193,8 +193,19 @@ export function useDueNotifications({
     setNotifUiTick((t) => t + 1);
     if (p === "granted") {
       persistDueNotifPrefs({ enabled: true });
+      // Register the push subscription with the browser PushManager and save it
+      // to Convex so the server-side crons can deliver background notifications.
+      // This is the critical step — without it, "Enable Push" only shows the OS
+      // permission dialog but never creates an actual push subscription.
+      void syncReminderPushSubscription(
+        dueNotifPrefs.preDueMinutes,
+        dueNotifPrefs.smartNudgeEnabled,
+        dueNotifPrefs.morningBriefingHourUtc,
+        dueNotifPrefs.quietStartHour,
+        dueNotifPrefs.quietEndHour,
+      );
     }
-  }, [persistDueNotifPrefs]);
+  }, [persistDueNotifPrefs, dueNotifPrefs]);
 
   const dismissDueNotifBanner = useCallback(() => {
     try {
