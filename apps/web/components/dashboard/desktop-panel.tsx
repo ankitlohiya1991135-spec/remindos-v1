@@ -16,7 +16,6 @@ import {
   formatDisplayDateTime,
   matchesReminder,
 } from "./dashboard-utils";
-import { NotificationBell } from "../notifications/notification-bell";
 
 export interface DesktopPanelProps {
   reminders: ReminderItem[];
@@ -167,9 +166,6 @@ export function DesktopPanel({
             <span className="text-sm">✦</span>
             <span className="text-sm font-medium">Run Briefing</span>
           </button>
-          <div className="mt-1 flex items-center gap-2 rounded-lg px-2.5 py-2">
-            <NotificationBell pollIntervalMs={30_000} />
-          </div>
           {/* Hamburger — opens the full drawer menu (sign-out, import/export, admin, etc.) */}
           <button
             type="button"

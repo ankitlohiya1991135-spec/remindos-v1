@@ -94,13 +94,15 @@ export default async function RootLayout({
                     </Link>
                   </Show>
                   <Show when="signed-in">
-                    {/* Mobile header: NotificationBell (covers all notification types
-                        including admin broadcasts) + OpenRemindersButton for overdue badge.
-                        sm+ breakpoints have their own NotificationBell inside the workspace. */}
-                    <span className="inline-flex items-center gap-1.5 sm:hidden">
-                      <NotificationBell pollIntervalMs={30_000} />
+                    {/* Mobile only — reminder badge, no notification bell (phone is fine) */}
+                    <span className="inline-flex sm:hidden">
                       <OpenRemindersButton />
                     </span>
+                    {/* Web (tablet + desktop) — bell always visible in top-right header */}
+                    <span className="hidden sm:inline-flex items-center gap-2">
+                      <NotificationBell pollIntervalMs={30_000} />
+                    </span>
+                    {/* Desktop only — hamburger drawer trigger */}
                     <span className="hidden lg:inline-flex">
                       <DrawerTrigger />
                     </span>

@@ -12,7 +12,6 @@
  * Extracted from dashboard-workspace.tsx.
  */
 
-import { NotificationBell } from "../notifications/notification-bell";
 import type { ReminderListTab } from "./dashboard-workspace";
 
 export interface ChatPanelHeaderProps {
@@ -154,9 +153,6 @@ export function ChatPanelHeader({
             Menu
           </button>
         </div>
-        {/* Notification bell — tablet view (header bell is hidden at sm+) */}
-        <NotificationBell pollIntervalMs={30_000} />
-
         <button
           type="button"
           onClick={onRunBriefing}
