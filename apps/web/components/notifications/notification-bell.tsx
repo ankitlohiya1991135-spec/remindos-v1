@@ -82,6 +82,8 @@ export function NotificationBell({ pollIntervalMs = 30_000 }: NotificationBellPr
   const [unreadCount, setUnreadCount] = useState(0);
   const [loading, setLoading] = useState(false);
   const dropdownRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({});
 
   // ── Fetch ────────────────────────────────────────────────────────────────────
   const fetchNotifications = useCallback(async () => {
@@ -109,13 +111,14 @@ export function NotificationBell({ pollIntervalMs = 30_000 }: NotificationBellPr
     document.title = unreadCount > 0 ? `(${unreadCount}) ${base}` : base;
   }, [unreadCount]);
 
-  // Close on outside click
+  // Close on outside click (checks both the button and the dropdown panel)
   useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
+      const target = e.target as Node;
+      const inDropdown = dropdownRef.current?.contains(target);
+      const inButton = buttonRef.current?.contains(target);
+      if (!inDropdown && !inButton) setOpen(false);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
@@ -160,8 +163,20 @@ export function NotificationBell({ pollIntervalMs = 30_000 }: NotificationBellPr
   };
 
   const handleBellClick = () => {
+    if (!open && buttonRef.current) {
+      // Calculate fixed position so the dropdown escapes any sticky/overflow parent.
+      const rect = buttonRef.current.getBoundingClientRect();
+      const panelWidth = Math.min(340, window.innerWidth - 16);
+      const right = Math.max(8, window.innerWidth - rect.right);
+      setDropdownStyle({
+        position: "fixed",
+        top: rect.bottom + 8,
+        right,
+        width: panelWidth,
+      });
+      void fetchNotifications();
+    }
     setOpen((o) => !o);
-    if (!open) void fetchNotifications();
   };
 
   // ── Render ───────────────────────────────────────────────────────────────────
@@ -169,6 +184,7 @@ export function NotificationBell({ pollIntervalMs = 30_000 }: NotificationBellPr
     <div className="relative" ref={dropdownRef}>
       {/* Bell button */}
       <button
+        ref={buttonRef}
         onClick={handleBellClick}
         className="relative flex h-8 w-8 items-center justify-center rounded-full text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800 dark:text-slate-400 dark:hover:bg-slate-800 dark:hover:text-slate-100"
         aria-label={
@@ -187,7 +203,10 @@ export function NotificationBell({ pollIntervalMs = 30_000 }: NotificationBellPr
 
       {/* Panel */}
       {open && (
-        <div className="absolute right-0 z-50 mt-2 w-[calc(100vw-1rem)] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl sm:w-[340px] dark:border-slate-700 dark:bg-slate-900">
+        <div
+          style={dropdownStyle}
+          className="z-[9999] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900"
+        >
           {/* Header */}
           <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3 dark:border-slate-800">
             <div className="flex items-center gap-2">
