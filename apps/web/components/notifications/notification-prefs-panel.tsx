@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import {
   type DueNotificationPrefs,
   saveDueNotificationPrefs,
@@ -124,6 +125,30 @@ export function NotificationPrefsPanel({
   // Derive active sound chip: "chime" if soundEnabled, else "silent"
   const currentSound: string = prefs.soundEnabled ? "chime" : "silent";
 
+  // ── Test notification state ───────────────────────────────────────────────────
+  const [testState, setTestState] = useState<"idle" | "sending" | "ok" | "fail">("idle");
+  const [testMsg, setTestMsg] = useState<string>("");
+
+  async function sendTestNotification() {
+    setTestState("sending");
+    setTestMsg("");
+    try {
+      const res = await fetch("/api/push/test-smart", { method: "POST" });
+      const data = await res.json() as { ok: boolean; sent: number; title?: string; diagnostics?: { tip?: string } };
+      if (data.ok && data.sent > 0) {
+        setTestState("ok");
+        setTestMsg(`Sent! Check for: "${data.title ?? "smart nudge"}"`);
+      } else {
+        setTestState("fail");
+        setTestMsg(data.diagnostics?.tip ?? "Push failed — check Vercel logs");
+      }
+    } catch {
+      setTestState("fail");
+      setTestMsg("Network error — is the app deployed?");
+    }
+    setTimeout(() => { setTestState("idle"); setTestMsg(""); }, 6000);
+  }
+
   return (
     <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white dark:border-slate-700 dark:bg-slate-900">
       {/* Push permission card */}
@@ -182,7 +207,7 @@ export function NotificationPrefsPanel({
         />
         <Toggle
           label="Smart nudges ✨"
-          description="Witty reminders when you haven't opened the app in a day"
+          description="Witty AI-powered reminders when you haven't opened the app for a while"
           checked={prefs.smartNudgeEnabled}
           onChange={(v) => {
             update({ smartNudgeEnabled: v });
@@ -280,6 +305,37 @@ export function NotificationPrefsPanel({
           </div>
           <p className="mt-2 text-[11px] text-slate-400">
             Daily summary notification at this time
+          </p>
+        </div>
+      )}
+
+      {/* Test notification button — visible when push permission is granted */}
+      {permissionGranted && (
+        <div className="border-t border-slate-100 px-4 pb-4 pt-3 dark:border-slate-800">
+          <p className="mb-2 text-[10px] font-extrabold uppercase tracking-[0.18em] text-slate-400">
+            Test Push Delivery
+          </p>
+          <button
+            type="button"
+            disabled={testState === "sending"}
+            onClick={() => void sendTestNotification()}
+            className={`w-full rounded-xl border px-3 py-2 text-xs font-semibold transition ${
+              testState === "ok"
+                ? "border-emerald-400 bg-emerald-50 text-emerald-700 dark:border-emerald-700 dark:bg-emerald-900/20 dark:text-emerald-300"
+                : testState === "fail"
+                ? "border-rose-400 bg-rose-50 text-rose-700 dark:border-rose-700 dark:bg-rose-900/20 dark:text-rose-300"
+                : "border-violet-300 bg-violet-50 text-violet-700 hover:bg-violet-100 disabled:opacity-60 dark:border-violet-700 dark:bg-violet-900/20 dark:text-violet-300 dark:hover:bg-violet-900/30"
+            }`}
+          >
+            {testState === "sending" ? "Sending…" : testState === "ok" ? "✓ Sent!" : testState === "fail" ? "✗ Failed" : "Send Test Notification"}
+          </button>
+          {testMsg && (
+            <p className={`mt-1.5 text-[11px] ${testState === "fail" ? "text-rose-600 dark:text-rose-400" : "text-slate-500 dark:text-slate-400"}`}>
+              {testMsg}
+            </p>
+          )}
+          <p className="mt-1.5 text-[11px] text-slate-400 dark:text-slate-500">
+            Bypasses quiet hours & inactivity checks — use to verify your push pipeline works.
           </p>
         </div>
       )}

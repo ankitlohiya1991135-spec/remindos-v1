@@ -19,8 +19,11 @@ import { sendWebPushToUser } from "../../../../lib/server/send-web-push";
 
 // ── constants ──────────────────────────────────────────────────────────────────
 
-const INACTIVITY_THRESHOLD_MS = 24 * 60 * 60_000;  // user must be away 24 h+
-const DEDUP_WINDOW_MS          = 23 * 60 * 60_000;  // max 1 nudge per 23 h
+// How long a user must be inactive before we send a smart nudge.
+// Default 2 h — catches users who've closed the app for a couple of hours.
+// Override with SMART_NUDGE_INACTIVITY_HOURS env var (e.g. set to 24 for stricter).
+const INACTIVITY_THRESHOLD_MS = Number(process.env.SMART_NUDGE_INACTIVITY_HOURS ?? "2") * 60 * 60_000;
+const DEDUP_WINDOW_MS          = 6 * 60 * 60_000;   // max 1 nudge per 6 h (was 23 h)
 const QUIET_START_HOUR         = 22;                 // 10 PM local time
 const QUIET_END_HOUR           = 8;                  // 8  AM local time
 
@@ -314,6 +317,11 @@ export async function POST(request: Request) {
   const now = Date.now();
   const results = { sent: 0, skipped_active: 0, skipped_quiet: 0, skipped_dedup: 0, skipped_empty: 0, errors: 0 };
 
+  const vapidOk = !!(process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY);
+  if (!vapidOk) {
+    console.error("[push/smart-cron] VAPID keys missing — no push notifications will be sent. Set NEXT_PUBLIC_VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY in Vercel env vars.");
+  }
+
   try {
     // ── 1. Get all subscriptions (we filter in-memory for smartNudgeEnabled) ────
     const allSubs = await client.query(api.pushSubscriptions.listAllUsers, {});
@@ -335,6 +343,7 @@ export async function POST(request: Request) {
     }
 
     const userIds = [...userMeta.keys()];
+    console.log(`[push/smart-cron] tick — ${userIds.length} eligible users (smartNudge=true), vapidOk=${vapidOk}, inactivityThresholdH=${INACTIVITY_THRESHOLD_MS / 3_600_000}, utc=${new Date(now).toISOString()}`);
 
     for (const userId of userIds) {
       try {
@@ -343,6 +352,7 @@ export async function POST(request: Request) {
 
         // ── 1a. Quiet hours check (uses per-user window if set) ─────────────────
         if (isQuietHours(tz, meta.quietStartHour, meta.quietEndHour)) {
+          console.log(`[push/smart-cron] user=${userId} SKIPPED quiet_hours tz=${tz}`);
           results.skipped_quiet += 1;
           continue;
         }
@@ -350,14 +360,17 @@ export async function POST(request: Request) {
         // ── 1b. Inactivity check ────────────────────────────────────────────────
         const lastSeenAt = await client.query(api.userSessions.getLastSeenAt, { userId });
         const msSinceActive = lastSeenAt ? now - lastSeenAt : Infinity;
+        const hoursInactive = Math.round(msSinceActive / 3_600_000 * 10) / 10;
         if (msSinceActive < INACTIVITY_THRESHOLD_MS) {
+          console.log(`[push/smart-cron] user=${userId} SKIPPED too_active — lastSeen ${hoursInactive}h ago (threshold ${INACTIVITY_THRESHOLD_MS / 3_600_000}h)`);
           results.skipped_active += 1;
           continue;
         }
         const daysInactive = msSinceActive / 86_400_000;
 
-        // ── 1c. Dedup — max 1 nudge per 23 h ────────────────────────────────────
+        // ── 1c. Dedup — max 1 nudge per 6 h ─────────────────────────────────────
         if (await alreadySentSmartNudge(client, userId)) {
+          console.log(`[push/smart-cron] user=${userId} SKIPPED dedup — already sent within ${DEDUP_WINDOW_MS / 3_600_000}h`);
           results.skipped_dedup += 1;
           continue;
         }
@@ -426,11 +439,15 @@ export async function POST(request: Request) {
           body,
         });
 
+        console.log(`[push/smart-cron] user=${userId} SENT smart_nudge — "${title}" (inactive ${Math.round(daysInactive * 10) / 10}d, pending=${stats.pendingCount}, overdue=${stats.overdueCount})`);
         results.sent += 1;
-      } catch {
+      } catch (userErr) {
+        console.error(`[push/smart-cron] user=${userId} ERROR:`, userErr);
         results.errors += 1;
       }
     }
+
+    console.log(`[push/smart-cron] done — ${JSON.stringify(results)}`);
   } catch (err) {
     console.error("[push/smart-cron] fatal error:", err);
     return NextResponse.json({ error: "Internal error" }, { status: 500 });
