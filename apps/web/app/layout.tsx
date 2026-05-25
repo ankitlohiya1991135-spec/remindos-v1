@@ -14,6 +14,7 @@ import { InstallAppBanner } from "../components/pwa/install-app-banner";
 import { RegisterServiceWorker } from "../components/pwa/register-sw";
 import { HeartbeatPinger } from "../components/tracking/heartbeat-pinger";
 import { OpenRemindersButton } from "../components/dashboard/open-reminders-button";
+import { NotificationBell } from "../components/notifications/notification-bell";
 import { AppDrawer } from "../components/layout/app-drawer";
 import { DrawerTrigger } from "../components/layout/drawer-trigger";
 import { ThemeProvider } from "../components/theme/theme-provider";
@@ -93,8 +94,11 @@ export default async function RootLayout({
                     </Link>
                   </Show>
                   <Show when="signed-in">
-                    {/* Bell: only show on mobile — sm+ breakpoints have their own NotificationBell inside the workspace toolbar / sidebar */}
-                    <span className="inline-flex sm:hidden">
+                    {/* Mobile header: NotificationBell (covers all notification types
+                        including admin broadcasts) + OpenRemindersButton for overdue badge.
+                        sm+ breakpoints have their own NotificationBell inside the workspace. */}
+                    <span className="inline-flex items-center gap-1.5 sm:hidden">
+                      <NotificationBell pollIntervalMs={30_000} />
                       <OpenRemindersButton />
                     </span>
                     <span className="hidden lg:inline-flex">

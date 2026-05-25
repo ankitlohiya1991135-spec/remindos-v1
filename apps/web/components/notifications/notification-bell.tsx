@@ -23,6 +23,8 @@ function typeIcon(type: string) {
   if (type === "overdue_nudge") return "⚠️";
   if (type === "morning_briefing") return "☀️";
   if (type === "share_invite" || type === "share_accepted") return "🤝";
+  if (type === "admin_broadcast") return "📣";
+  if (type === "smart_nudge") return "🤖";
   return "📌";
 }
 
@@ -185,7 +187,7 @@ export function NotificationBell({ pollIntervalMs = 30_000 }: NotificationBellPr
 
       {/* Panel */}
       {open && (
-        <div className="absolute right-0 z-50 mt-2 w-[340px] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900">
+        <div className="absolute right-0 z-50 mt-2 w-[calc(100vw-1rem)] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-2xl sm:w-[340px] dark:border-slate-700 dark:bg-slate-900">
           {/* Header */}
           <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3 dark:border-slate-800">
             <div className="flex items-center gap-2">
