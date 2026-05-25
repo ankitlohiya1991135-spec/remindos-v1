@@ -123,6 +123,12 @@ export async function POST(request: Request) {
   const now = nowMs();
   const results = { due: 0, preDue: 0, overdue: 0, briefing: 0, errors: 0 };
 
+  // Check VAPID up-front so the log shows the problem immediately
+  const vapidOk = !!(process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY);
+  if (!vapidOk) {
+    console.error("[push/cron] VAPID keys missing — no push notifications will be sent. Set NEXT_PUBLIC_VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY in Vercel env vars.");
+  }
+
   try {
     // ── 1. Collect all users with active push subscriptions ───────────────────
     // Build a per-user map: userId → max(preDueMinutes) across all their devices.
@@ -135,6 +141,7 @@ export async function POST(request: Request) {
       if (minutes > current) userPreDueMap.set(sub.userId, minutes);
     }
     const userIds = [...userPreDueMap.keys()];
+    console.log(`[push/cron] tick — ${userIds.length} subscribed users, vapidOk=${vapidOk}, utc=${new Date(now).toISOString()}`);
 
     // Fetch reminders up to the widest pre-due window any user has.
     const maxPreDueMinutes = userIds.length > 0
