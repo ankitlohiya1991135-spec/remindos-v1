@@ -110,11 +110,18 @@ export async function GET() {
 
 // ── POST: cron worker ──────────────────────────────────────────────────────────
 export async function POST(request: Request) {
-  // Verify cron secret
+  // Verify cron secret. Accepts the bearer token in either:
+  //   1. Authorization header (preferred — used by Vercel cron + cron-job.org + Convex cron)
+  //   2. ?secret=<token> query string (fallback for services that can't set headers)
   const secret = process.env.CRON_SECRET;
   if (secret) {
     const authHeader = request.headers.get("authorization");
-    if (authHeader !== `Bearer ${secret}`) {
+    const url = new URL(request.url);
+    const querySecret = url.searchParams.get("secret");
+    const headerOk = authHeader === `Bearer ${secret}`;
+    const queryOk = querySecret === secret;
+    if (!headerOk && !queryOk) {
+      console.warn(`[push/cron] 401 unauthorized — auth header present=${!!authHeader}, query secret present=${!!querySecret}`);
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
   }

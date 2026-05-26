@@ -297,18 +297,53 @@ export function generateSmartNudgeMessage(ctx: NudgeContext): Template {
   ]);
 }
 
-// ── GET: health check ──────────────────────────────────────────────────────────
+// ── GET: health check + diagnostics ────────────────────────────────────────────
 export async function GET() {
-  return NextResponse.json({ ok: true, ts: new Date().toISOString() });
+  const vapidOk = !!(process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY);
+  const cronSecretSet = !!process.env.CRON_SECRET;
+  const convexUrlSet = !!(process.env.NEXT_PUBLIC_CONVEX_URL || process.env.CONVEX_URL);
+  let subscriptionCount = 0;
+  let eligibleUserCount = 0;
+  try {
+    const client = getConvexClient();
+    const subs = await client.query(api.pushSubscriptions.listAllUsers, {});
+    subscriptionCount = subs.length;
+    const eligible = new Set<string>();
+    for (const s of subs) {
+      if (s.smartNudgeEnabled !== false) eligible.add(s.userId);
+    }
+    eligibleUserCount = eligible.size;
+  } catch { /* ignore */ }
+  return NextResponse.json({
+    ok: true,
+    ts: new Date().toISOString(),
+    diagnostics: {
+      vapidConfigured: vapidOk,
+      cronSecretSet,
+      convexUrlSet,
+      subscriptionCount,
+      eligibleUserCount,
+      inactivityThresholdHours: INACTIVITY_THRESHOLD_MS / 3_600_000,
+      dedupWindowHours: DEDUP_WINDOW_MS / 3_600_000,
+      note: "POST this endpoint with `Authorization: Bearer <CRON_SECRET>` to actually run the smart-nudge sweep.",
+    },
+  });
 }
 
 // ── POST: cron worker ──────────────────────────────────────────────────────────
 export async function POST(request: Request) {
-  // Verify cron secret.
+  // Verify cron secret. Accepts the bearer token in either:
+  //   1. Authorization header (preferred — used by Vercel cron + cron-job.org + Convex cron)
+  //   2. ?secret=<token> query string (fallback for services that can't set headers)
   const secret = process.env.CRON_SECRET;
   if (secret) {
     const authHeader = request.headers.get("authorization");
-    if (authHeader !== `Bearer ${secret}`) {
+    const url = new URL(request.url);
+    const querySecret = url.searchParams.get("secret");
+    const headerOk = authHeader === `Bearer ${secret}`;
+    const queryOk = querySecret === secret;
+    if (!headerOk && !queryOk) {
+      console.warn(`[push/smart-cron] 401 unauthorized — auth header present=${!!authHeader}, query secret present=${!!querySecret}`);
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
   }
