@@ -14,6 +14,17 @@ function urlBase64ToUint8Array(base64String: string) {
   return outputArray;
 }
 
+/** Returns true when two ArrayBuffers contain identical bytes. */
+function arrayBuffersEqual(a: ArrayBuffer, b: ArrayBuffer): boolean {
+  if (a.byteLength !== b.byteLength) return false;
+  const va = new Uint8Array(a);
+  const vb = new Uint8Array(b);
+  for (let i = 0; i < va.length; i++) {
+    if (va[i] !== vb[i]) return false;
+  }
+  return true;
+}
+
 export async function syncReminderPushSubscription(
   preDueMinutes?: number,
   smartNudgeEnabled?: boolean,
@@ -29,12 +40,25 @@ export async function syncReminderPushSubscription(
     const res = await fetch("/api/push/vapid-public");
     const data = (await res.json()) as { publicKey: string | null; configured?: boolean };
     if (!data.configured || !data.publicKey) return false;
+    const currentKeyBytes = urlBase64ToUint8Array(data.publicKey);
     const reg = await navigator.serviceWorker.ready;
     let sub = await reg.pushManager.getSubscription();
+    if (sub) {
+      // Check if the existing subscription was made with the current VAPID key.
+      // If the key changed (e.g. new VAPID pair was generated) the subscription
+      // will return 401/403 from FCM and must be replaced.
+      const existingKeyBuffer = (sub.options as { applicationServerKey?: ArrayBuffer | null }).applicationServerKey;
+      const keyMismatch = !existingKeyBuffer || !arrayBuffersEqual(existingKeyBuffer, currentKeyBytes.buffer);
+      if (keyMismatch) {
+        console.warn("[push] VAPID key mismatch — unsubscribing and re-subscribing");
+        await sub.unsubscribe();
+        sub = null;
+      }
+    }
     if (!sub) {
       sub = await reg.pushManager.subscribe({
         userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(data.publicKey),
+        applicationServerKey: currentKeyBytes,
       });
     }
     const j = sub.toJSON();

@@ -456,7 +456,7 @@ export async function POST(request: Request) {
         });
 
         // ── 1f. Send push ───────────────────────────────────────────────────────
-        await sendWebPushToUser(userId, {
+        const sentCount = await sendWebPushToUser(userId, {
           type: "smart_nudge",
           title,
           body,
@@ -464,18 +464,23 @@ export async function POST(request: Request) {
           overdueCount: stats.overdueCount,
         });
 
-        await recordSmartNudge(client, userId);
-
-        // Persist in notification centre so user sees it even if they miss the push.
-        await client.mutation(api.notifications.create, {
-          userId,
-          type: "smart_nudge",
-          title,
-          body,
-        });
-
-        console.log(`[push/smart-cron] user=${userId} SENT smart_nudge — "${title}" (inactive ${Math.round(daysInactive * 10) / 10}d, pending=${stats.pendingCount}, overdue=${stats.overdueCount})`);
-        results.sent += 1;
+        // Only record dedup and persist to notification centre if at least one
+        // push was accepted by FCM. Recording dedup unconditionally would block
+        // retries for the next 6 h even when the send silently failed (e.g. all
+        // subscriptions returned 401/403 due to a VAPID key mismatch).
+        if (sentCount > 0) {
+          await recordSmartNudge(client, userId);
+          await client.mutation(api.notifications.create, {
+            userId,
+            type: "smart_nudge",
+            title,
+            body,
+          });
+          console.log(`[push/smart-cron] user=${userId} SENT smart_nudge (${sentCount}) — "${title}" (inactive ${Math.round(daysInactive * 10) / 10}d, pending=${stats.pendingCount}, overdue=${stats.overdueCount})`);
+          results.sent += 1;
+        } else {
+          console.warn(`[push/smart-cron] user=${userId} send returned 0 — dedup NOT recorded (will retry next cycle)`);
+        }
       } catch (userErr) {
         console.error(`[push/smart-cron] user=${userId} ERROR:`, userErr);
         results.errors += 1;
