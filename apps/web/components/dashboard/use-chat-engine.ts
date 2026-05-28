@@ -183,6 +183,7 @@ export function useChatEngine(params: UseChatEngineParams) {
           const data = (await res.json().catch(() => ({}))) as {
             created?: boolean;
             error?: string;
+            reminder?: { _id?: string };
           };
           if (!res.ok) {
             showShareToast(data.error ?? "Could not save the reminder. Please try again.");
@@ -190,6 +191,20 @@ export function useChatEngine(params: UseChatEngineParams) {
           }
           await refreshReminders();
           playReminderSuccessAnimation();
+          // Inject an interactive card for the newly created reminder
+          const createdId = String(data.reminder?._id ?? "");
+          if (createdId) {
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: crypto.randomUUID(),
+                role: "assistant" as const,
+                content: "",
+                createdAt: new Date().toISOString(),
+                meta: { kind: "reminder_card" as const, reminderIds: [createdId], totalListedCount: 1 },
+              },
+            ]);
+          }
         } catch {
           showShareToast("Could not save the reminder. Please try again.");
         }
@@ -279,7 +294,8 @@ export function useChatEngine(params: UseChatEngineParams) {
       const hasPayload =
         action.newTitle || action.newNotes !== undefined ||
         action.newPriority !== undefined || action.newDomain !== undefined ||
-        action.newRecurrence !== undefined || action.newLinkedTaskId !== undefined;
+        action.newRecurrence !== undefined || action.newLinkedTaskId !== undefined ||
+        action.newStatus !== undefined;
       if (!hasPayload) {
         void refreshReminders();
         return;
@@ -300,6 +316,7 @@ export function useChatEngine(params: UseChatEngineParams) {
       if (action.newPriority !== undefined) patch.priority = action.newPriority;
       if (action.newDomain !== undefined) patch.domain = action.newDomain; // null clears it
       if (action.newLinkedTaskId !== undefined) patch.linkedTaskId = action.newLinkedTaskId; // null delinks
+      if (action.newStatus !== undefined) patch.status = action.newStatus;
       // priority is REQUIRED when updating title, notes, or recurrence
       if ((patch.title !== undefined || patch.notes !== undefined || patch.recurrence !== undefined) && patch.priority === undefined) {
         patch.priority = typeof target.priority === "number" ? target.priority : 3;
@@ -316,6 +333,7 @@ export function useChatEngine(params: UseChatEngineParams) {
             ...(action.newDomain !== undefined ? { domain: (action.newDomain ?? undefined) as import("@repo/reminder").LifeDomain | undefined } : {}),
             ...(action.newRecurrence !== undefined ? { recurrence: action.newRecurrence } : {}),
             ...(action.newLinkedTaskId !== undefined ? { linkedTaskId: action.newLinkedTaskId ?? undefined } : {}),
+            ...(action.newStatus !== undefined ? { status: action.newStatus } : {}),
           };
         }),
       );
@@ -1141,15 +1159,49 @@ export function useChatEngine(params: UseChatEngineParams) {
         const data = (await response.json()) as AgentResponse;
         applyAction(data.action);
 
-        setMessages((prev) => [
-          ...prev,
+        // ── Build reminder-card meta for non-create actions ───────────────
+        // create_reminder injects its card asynchronously (after the API call)
+        // so it is excluded here. delete_reminder is also excluded — the reminder
+        // is gone so there is nothing useful to show.
+        const cardMeta = (() => {
+          const a = data.action;
+          if (a.type === "list_reminders" && a.listedIds?.length) {
+            return {
+              kind: "reminder_card" as const,
+              reminderIds: a.listedIds.slice(0, 5),
+              totalListedCount: a.listedIds.length,
+            };
+          }
+          if (
+            (a.type === "edit_reminder" ||
+              a.type === "reschedule_reminder" ||
+              a.type === "snooze_reminder" ||
+              a.type === "mark_done") &&
+            a.targetId
+          ) {
+            return { kind: "reminder_card" as const, reminderIds: [a.targetId], totalListedCount: 1 };
+          }
+          return null;
+        })();
+
+        const newMessages: ChatMessage[] = [
           {
             id: crypto.randomUUID(),
             role: "assistant",
             content: data.reply || "Done.",
             createdAt: new Date().toISOString(),
           },
-        ]);
+          ...(cardMeta
+            ? [{
+                id: crypto.randomUUID(),
+                role: "assistant" as const,
+                content: "",
+                createdAt: new Date().toISOString(),
+                meta: cardMeta,
+              }]
+            : []),
+        ];
+        setMessages((prev) => [...prev, ...newMessages]);
       } catch {
         const grounded = tryGroundedReminderAnswer(
           messageText,

@@ -20,8 +20,9 @@ import {
 import { ChatBubbleShell } from "./chat-bubble-shell";
 import { ChatPanelHeader } from "./chat-panel-header";
 import { StructuredMessage } from "./structured-message";
+import { ReminderChatCard } from "./reminder-chat-card";
 import { briefingSectionLabel, chatReplyLabel, loadingTexts } from "./dashboard-utils";
-import type { ChatMessage, PendingCreateDraft, ReminderListTab } from "./dashboard-types";
+import type { ChatMessage, AgentAction, PendingCreateDraft, ReminderListTab } from "./dashboard-types";
 import type { SnapshotCounts } from "./reminder-list-overlay";
 import type { TaskRow } from "./task-panels";
 
@@ -67,6 +68,8 @@ export interface ChatPanelProps {
   onShowCreateOverlay: () => void;
   composerTextareaRef: RefObject<HTMLTextAreaElement | null>;
   input: string;
+  /** Dispatch an AgentAction from a reminder chat card (threads through applyAction). */
+  onCardAction: (action: AgentAction) => void;
 }
 
 export function ChatPanel({
@@ -107,6 +110,7 @@ export function ChatPanel({
   onShowCreateOverlay,
   composerTextareaRef,
   input,
+  onCardAction,
 }: ChatPanelProps) {
   const chatFormRef = useRef<HTMLFormElement>(null);
   const isOnline = useOnlineStatus();
@@ -199,6 +203,35 @@ export function ChatPanel({
                 onSetInput(message.content);
                 onSetReplyTarget(null);
               };
+
+              // ── Reminder card messages — rendered as standalone cards ─────────
+              if (message.meta?.kind === "reminder_card" && message.meta.reminderIds?.length) {
+                const cardIds = message.meta.reminderIds;
+                const total = message.meta.totalListedCount ?? cardIds.length;
+                const extra = total - cardIds.length;
+                return (
+                  <div key={message.id} className="flex flex-col gap-2">
+                    {cardIds.map((rid) => (
+                      <ReminderChatCard
+                        key={rid}
+                        reminderId={rid}
+                        reminders={reminders}
+                        tasks={tasks}
+                        onAction={onCardAction}
+                      />
+                    ))}
+                    {extra > 0 && (
+                      <button
+                        type="button"
+                        onClick={onAllReminders}
+                        className="self-start rounded-full border border-violet-500/30 bg-violet-900/20 px-3 py-1.5 text-[11px] font-semibold text-violet-300 transition hover:bg-violet-900/40"
+                      >
+                        +{extra} more reminder{extra !== 1 ? "s" : ""}
+                      </button>
+                    )}
+                  </div>
+                );
+              }
 
               if (message.role === "system") {
                 return (

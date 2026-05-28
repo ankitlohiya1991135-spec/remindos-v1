@@ -1418,6 +1418,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
             onShowCreateOverlay={() => showCreateOverlay()}
             composerTextareaRef={composerTextareaRef}
             input={input}
+            onCardAction={applyAction}
           />
         </div>{/* end 3-panel container */}
       </section>

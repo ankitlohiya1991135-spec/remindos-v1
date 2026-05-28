@@ -20,7 +20,7 @@ export interface ChatReplyToRef {
 }
 
 export interface ChatMessageMeta {
-  kind?: "due_reminder" | "briefing" | "opening_summary";
+  kind?: "due_reminder" | "briefing" | "opening_summary" | "reminder_card";
   /** Which slice of the session briefing this bubble is (split messages). */
   briefingSection?: BriefingSection;
   reminderId?: string;
@@ -31,6 +31,10 @@ export interface ChatMessageMeta {
   skipPersist?: boolean;
   replyTo?: ChatReplyToRef;
   editedAt?: string;
+  /** For kind === "reminder_card": IDs of reminders to render as interactive cards (capped at 5). */
+  reminderIds?: string[];
+  /** Total count before the 5-card cap — used to show "+X more" button. */
+  totalListedCount?: number;
 }
 
 export interface ChatMessage {
@@ -78,6 +82,8 @@ export interface AgentAction {
   newDomain?: string | null;
   newRecurrence?: "none" | "daily" | "weekly" | "monthly";
   newLinkedTaskId?: string | null;
+  /** Only on edit_reminder: change the reminder's status (e.g. restore a done reminder to pending). */
+  newStatus?: "pending" | "done" | "archived";
   bulkOperation?: "mark_done" | "delete";
   bulkTargetIds?: string[];
   listedIds?: string[];
