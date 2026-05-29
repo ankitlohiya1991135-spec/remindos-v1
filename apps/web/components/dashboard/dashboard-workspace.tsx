@@ -10,6 +10,7 @@ import {
   type ReminderItem,
 } from "@repo/reminder";
 import { useUser, useClerk } from "@clerk/nextjs";
+import { canAccessAdmin, getRoleFromPublicMetadata } from "@repo/admin";
 import {
   useCallback,
   useEffect,
@@ -1473,6 +1474,11 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
           isClearingChatDisabled={isClearingChat || isLoading}
           user={user}
           onSignOut={() => void signOut(() => router.push("/sign-in"))}
+          isAdmin={canAccessAdmin(getRoleFromPublicMetadata(user?.publicMetadata))}
+          onOpenAdmin={() => {
+            closeSnapshotOverlay();
+            router.push("/admin");
+          }}
         />
       )}
 
