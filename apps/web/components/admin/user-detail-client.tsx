@@ -374,15 +374,15 @@ export function AdminUserDetailClient({ userId }: { userId: string }) {
             {activity.recentNotifications.map((row) => (
               <li
                 key={row.id}
-                className="grid gap-1 px-5 py-3 sm:grid-cols-[8rem_5rem_1fr] sm:gap-3"
+                className="grid gap-1 px-5 py-3 sm:grid-cols-[8rem_auto_1fr] sm:items-start sm:gap-3"
               >
                 <span className="text-xs text-slate-400">
                   {formatDateTime(row.createdAt)}
                 </span>
-                <span className="w-fit rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-600 dark:bg-slate-800 dark:text-slate-300">
+                <span className="w-fit whitespace-nowrap rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-slate-600 dark:bg-slate-800 dark:text-slate-300">
                   {row.type}
                 </span>
-                <div>
+                <div className="min-w-0">
                   <p className="text-sm font-medium text-slate-900 dark:text-slate-100">
                     {row.title}
                     {!row.read && (
