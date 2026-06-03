@@ -26,6 +26,16 @@ const DEFAULT_PRE_DUE_MINUTES = Number(process.env.PRE_DUE_MINUTES ?? "15");
  */
 const OVERDUE_LOOKBACK_MS = Number(process.env.OVERDUE_LOOKBACK_HOURS ?? "720") * 60 * 60_000;
 
+/**
+ * How often the consolidated "N overdue" nudge may fire. 12h = ~twice a day —
+ * a calm digest, not hourly nagging (clarity over clutter).
+ * Override with OVERDUE_NUDGE_HOURS.
+ */
+const OVERDUE_NUDGE_DEDUP_MS = Number(process.env.OVERDUE_NUDGE_HOURS ?? "12") * 60 * 60_000;
+
+/** Evening wind-down digest hour (UTC). Default 14 ≈ 7:30 PM IST. */
+const EVENING_BRIEFING_HOUR_UTC = Number(process.env.EVENING_BRIEFING_HOUR_UTC ?? "14");
+
 // ── helpers ────────────────────────────────────────────────────────────────────
 
 function nowMs() { return Date.now(); }
@@ -234,7 +244,7 @@ export async function POST(request: Request) {
         });
 
         if (overdueReminders.length > 0) {
-          const sent = await alreadySent(client, userId, "overdue_nudge", undefined, 60 * 60_000);
+          const sent = await alreadySent(client, userId, "overdue_nudge", undefined, OVERDUE_NUDGE_DEDUP_MS);
           if (!sent) {
             const titles = overdueReminders.slice(0, 3).map((r) => r.title).join(", ");
             const extra = overdueReminders.length > 3 ? ` +${overdueReminders.length - 3} more` : "";
@@ -284,6 +294,47 @@ export async function POST(request: Request) {
               await saveNotification(client, userId, "morning_briefing",
                 `Good morning — ${count} reminder${count !== 1 ? "s" : ""} today`,
                 `${titles}${extra}`);
+              results.briefing += 1;
+            }
+          }
+        }
+
+        // ── 1e. evening_briefing: once per day — gentle wind-down digest ──────
+        // "What's still open today + what's coming tomorrow." Clarity, not nag.
+        if (utcHour === EVENING_BRIEFING_HOUR_UTC && utcMinute < 2) {
+          const sent = await alreadySent(client, userId, "evening_briefing", undefined, 23 * 60 * 60_000);
+          if (!sent) {
+            // Still-open earlier today (pending, due in the last ~16h up to now)
+            const stillOpen = await client.query(api.reminders.listForCron, {
+              userId,
+              statusFilter: "pending",
+              dueAtFrom: now - 16 * 60 * 60_000,
+              dueAtTo: now,
+            });
+            // Tomorrow preview (pending, due in the next 24h)
+            const tomorrow = await client.query(api.reminders.listForCron, {
+              userId,
+              statusFilter: "pending",
+              dueAtFrom: now,
+              dueAtTo: now + 24 * 60 * 60_000,
+            });
+            const openCount = stillOpen.length;
+            const tmrwCount = tomorrow.length;
+            if (openCount > 0 || tmrwCount > 0) {
+              const parts: string[] = [];
+              if (openCount > 0) parts.push(`${openCount} still open today`);
+              if (tmrwCount > 0) parts.push(`${tmrwCount} coming tomorrow`);
+              const body = `Evening check-in — ${parts.join(" · ")}.`;
+              const payload = {
+                type: "evening_briefing",
+                openCount,
+                tmrwCount,
+                body,
+              };
+              await sendWebPushToUser(userId, payload);
+              await recordSent(client, userId, "evening_briefing", undefined);
+              await saveNotification(client, userId, "evening_briefing",
+                "Evening check-in", body);
               results.briefing += 1;
             }
           }

@@ -131,6 +131,18 @@ self.addEventListener("push", (event) => {
     return;
   }
 
+  // ── Evening wind-down digest ─────────────────────────────────────────────────
+  if (type === "evening_briefing") {
+    const title = "Evening check-in";
+    const body = payload.body || "Here's what's still open and what's coming tomorrow.";
+    showNotif(event, "🌙 " + title, body,
+      "evening-briefing",
+      { type: "evening_briefing" },
+      [{ action: "open", title: "Review" }]
+    );
+    return;
+  }
+
   // ── Smart engagement nudge (Zomato-style) ────────────────────────────────────
   if (type === "smart_nudge") {
     const title = payload.title || "Hey, you there? 👋";

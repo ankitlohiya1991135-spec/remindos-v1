@@ -23,7 +23,7 @@ import { sendWebPushToUser } from "../../../../lib/server/send-web-push";
 // Default 2 h — catches users who've closed the app for a couple of hours.
 // Override with SMART_NUDGE_INACTIVITY_HOURS env var (e.g. set to 24 for stricter).
 const INACTIVITY_THRESHOLD_MS = Number(process.env.SMART_NUDGE_INACTIVITY_HOURS ?? "2") * 60 * 60_000;
-const DEDUP_WINDOW_MS          = 2.5 * 60 * 60_000; // ~1 nudge per 2.5 h → up to ~5/day in waking hours (was 6 h)
+const DEDUP_WINDOW_MS          = 12 * 60 * 60_000;  // at most ~1 gentle nudge per 12 h — clarity over clutter
 const QUIET_START_HOUR         = 22;                 // 10 PM local time
 const QUIET_END_HOUR           = 8;                  // 8  AM local time
 
