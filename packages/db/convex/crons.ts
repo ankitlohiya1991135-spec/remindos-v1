@@ -25,11 +25,12 @@ crons.interval(
 );
 
 // ── Smart engagement nudges ────────────────────────────────────────────────
-// Every 2 hours. The route has a 6-hour dedup window per user, so users
-// get at most one nudge per ~6 h regardless of how often this fires.
+// Every hour. The route has a ~2.5-hour dedup window per user, so users
+// get up to ~5 nudges/day in waking hours — but only when they've been
+// inactive for 2h+ and outside quiet hours (10 PM–8 AM).
 crons.interval(
-  "trigger smart cron every 2 hours",
-  { hours: 2 },
+  "trigger smart cron every hour",
+  { hours: 1 },
   internal.pushCron.triggerVercelCron,
   { path: "/api/push/smart-cron" },
 );

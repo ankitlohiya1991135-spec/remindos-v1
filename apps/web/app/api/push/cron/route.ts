@@ -18,6 +18,14 @@ import { sendWebPushToUser } from "../../../../lib/server/send-web-push";
 /** Global fallback — used when a subscription has no per-user preference stored. */
 const DEFAULT_PRE_DUE_MINUTES = Number(process.env.PRE_DUE_MINUTES ?? "15");
 
+/**
+ * How far back the overdue nudge looks. Previously capped at 24h, which meant
+ * reminders that aged past a day went silent. Default 30 days so long-overdue
+ * reminders keep nudging (still once per hour via the 60-min dedup window).
+ * Override with OVERDUE_LOOKBACK_HOURS.
+ */
+const OVERDUE_LOOKBACK_MS = Number(process.env.OVERDUE_LOOKBACK_HOURS ?? "720") * 60 * 60_000;
+
 // ── helpers ────────────────────────────────────────────────────────────────────
 
 function nowMs() { return Date.now(); }
@@ -221,8 +229,8 @@ export async function POST(request: Request) {
         const overdueReminders = await client.query(api.reminders.listForCron, {
           userId,
           statusFilter: "pending",
-          dueAtFrom: now - 24 * 60 * 60_000,
-          dueAtTo: now - 60 * 60_000,   // at least 1h overdue
+          dueAtFrom: now - OVERDUE_LOOKBACK_MS,  // was 24h — now 30 days so aged reminders keep nudging
+          dueAtTo: now - 60 * 60_000,            // at least 1h overdue
         });
 
         if (overdueReminders.length > 0) {
