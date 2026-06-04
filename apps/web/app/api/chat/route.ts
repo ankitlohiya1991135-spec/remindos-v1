@@ -946,6 +946,27 @@ function extractTargetFromReschedule(message: string): string {
 const PRONOUN_TARGETS = new Set(["it", "that", "this", "them", "those", "one"]);
 
 /**
+ * Words that are extraction artifacts / filler — never a real reminder title.
+ * If a target-extraction (e.g. extractTargetFromReschedule) reduces to ONLY
+ * these, the user was really referring to context ("change its time …",
+ * "move it to …"), so we should resolve from conversation history rather than
+ * trying to match a bogus title or falling through to the LLM (which guesses).
+ */
+const TARGET_FILLER_WORDS = new Set([
+  "its", "it", "the", "a", "an", "my", "to", "for", "of", "on",
+  "time", "date", "due", "schedule", "this", "that", "them", "those", "one",
+  "reminder", "reminders", "task", "tasks",
+]);
+
+/** True when the extracted target contains at least one real (non-filler) word. */
+function targetHasMeaningfulContent(rawTarget: string): boolean {
+  return rawTarget
+    .toLowerCase()
+    .split(/\s+/)
+    .some((tok) => tok.length >= 3 && !TARGET_FILLER_WORDS.has(tok));
+}
+
+/**
  * Phase 1C — Pronoun resolution.
  * When the user says "reschedule it" / "delete that" / etc., try to identify
  * the reminder being referred to from the most-recent assistant message.
@@ -1502,9 +1523,22 @@ function findTargetReminder(reminders: ReminderItem[], targetId?: string, target
     if (byId) return byId;
   }
   if (targetTitle) {
-    return reminders.find((r) =>
-      r.title.toLowerCase().includes(targetTitle.toLowerCase())
-    );
+    const t = targetTitle.toLowerCase();
+    // Exact title match wins — prevents a shorter title that is a prefix of a
+    // longer one (e.g. "Hupendra work" vs "Hupendra work share project link")
+    // from being grabbed arbitrarily by the first substring hit.
+    const exact = reminders.find((r) => r.title.toLowerCase() === t);
+    if (exact) return exact;
+    // Prefer a UNIQUE substring match; if the fragment matches several titles,
+    // pick the closest by length so the most-specific reminder wins rather than
+    // whichever happens to be first in the array.
+    const subMatches = reminders.filter((r) => r.title.toLowerCase().includes(t));
+    if (subMatches.length === 1) return subMatches[0];
+    if (subMatches.length > 1) {
+      return [...subMatches].sort(
+        (a, b) => Math.abs(a.title.length - t.length) - Math.abs(b.title.length - t.length),
+      )[0];
+    }
   }
   return undefined;
 }
@@ -2314,7 +2348,14 @@ export async function POST(request: Request) {
 
     const ordinalTarget = resolveByOrdinal(message, reminders, body.recentListedIds);
     const rawTarget = extractTargetFromReschedule(message);
-    const isPronoun = !rawTarget || rawTarget.length < 2 || PRONOUN_TARGETS.has(rawTarget.toLowerCase());
+    // A target is a context reference (resolve from history) when it's empty, a
+    // bare pronoun, OR a filler-only fragment like "its time" — an extraction
+    // artifact that must NOT be mistaken for a real reminder title.
+    const isPronoun =
+      !rawTarget ||
+      rawTarget.length < 2 ||
+      PRONOUN_TARGETS.has(rawTarget.toLowerCase()) ||
+      !targetHasMeaningfulContent(rawTarget);
     let target: ReminderItem | undefined = ordinalTarget ?? undefined;
 
     if (!target && !isPronoun) {
