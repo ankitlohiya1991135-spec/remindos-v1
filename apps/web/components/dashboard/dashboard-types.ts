@@ -35,6 +35,18 @@ export interface ChatMessageMeta {
   reminderIds?: string[];
   /** Total count before the 5-card cap — used to show "+X more" button. */
   totalListedCount?: number;
+  /** For an operation preview: which mode the card should open in (prefilled).
+   *  Undefined = default mode (Done/Delete/Snooze buttons). */
+  cardMode?: "reschedule" | "edit";
+  /** Prefilled values for the editable card when opened from a chat operation. */
+  cardPrefill?: {
+    dueAt?: string;
+    title?: string;
+    notes?: string;
+    priority?: number;
+    domain?: string | null;
+    recurrence?: "none" | "daily" | "weekly" | "monthly";
+  };
 }
 
 export interface ChatMessage {
@@ -84,6 +96,10 @@ export interface AgentAction {
   newLinkedTaskId?: string | null;
   /** Only on edit_reminder: change the reminder's status (e.g. restore a done reminder to pending). */
   newStatus?: "pending" | "done" | "archived";
+  /** When true, the client must NOT execute this action. Instead it renders a
+   *  prefilled editable card (micro front-end) and waits for the user to Save.
+   *  Used to keep all chat mutations human-in-the-loop. */
+  preview?: boolean;
   bulkOperation?: "mark_done" | "delete";
   bulkTargetIds?: string[];
   listedIds?: string[];

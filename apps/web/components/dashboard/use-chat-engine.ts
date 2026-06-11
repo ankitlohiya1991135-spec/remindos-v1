@@ -132,6 +132,12 @@ export function useChatEngine(params: UseChatEngineParams) {
   }
 
   function applyAction(action: AgentAction) {
+    // Operation PREVIEWS are never executed by the system. The client renders a
+    // prefilled editable card (micro front-end) and the user commits via Save —
+    // keeping every chat mutation human-in-the-loop. The card's Save dispatches a
+    // NON-preview action back through applyAction, which then executes normally.
+    if (action.preview) return;
+
     // Clear stale pending state for every action type except pending_confirm (which sets it)
     // This prevents a stale "yes" from firing a previously abandoned confirmation.
     if (action.type !== "pending_confirm") {
@@ -1173,13 +1179,43 @@ export function useChatEngine(params: UseChatEngineParams) {
             };
           }
           if (
+            a.targetId &&
             (a.type === "edit_reminder" ||
               a.type === "reschedule_reminder" ||
               a.type === "snooze_reminder" ||
-              a.type === "mark_done") &&
-            a.targetId
+              a.type === "mark_done" ||
+              a.type === "delete_reminder")
           ) {
-            return { kind: "reminder_card" as const, reminderIds: [a.targetId], totalListedCount: 1 };
+            const base = { kind: "reminder_card" as const, reminderIds: [a.targetId], totalListedCount: 1 };
+            // Non-preview (legacy) actions just show a live card. Preview actions
+            // open the card prefilled in the right mode so the user only taps Save.
+            if (!a.preview) return base;
+            if (a.type === "reschedule_reminder" && a.dueAt) {
+              return { ...base, cardMode: "reschedule" as const, cardPrefill: { dueAt: a.dueAt } };
+            }
+            if (a.type === "snooze_reminder" && typeof a.delayMinutes === "number") {
+              return {
+                ...base,
+                cardMode: "reschedule" as const,
+                cardPrefill: { dueAt: new Date(Date.now() + a.delayMinutes * 60_000).toISOString() },
+              };
+            }
+            if (a.type === "edit_reminder") {
+              return {
+                ...base,
+                cardMode: "edit" as const,
+                cardPrefill: {
+                  ...(a.newTitle !== undefined ? { title: a.newTitle } : {}),
+                  ...(a.newNotes !== undefined ? { notes: a.newNotes } : {}),
+                  ...(a.newPriority !== undefined ? { priority: a.newPriority } : {}),
+                  ...(a.newDomain !== undefined ? { domain: a.newDomain } : {}),
+                  ...(a.newRecurrence !== undefined ? { recurrence: a.newRecurrence } : {}),
+                },
+              };
+            }
+            // mark_done / delete_reminder → default mode; the card's own
+            // Done / Delete buttons are the micro front-end for those.
+            return base;
           }
           return null;
         })();

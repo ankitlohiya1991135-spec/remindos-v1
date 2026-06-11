@@ -93,6 +93,19 @@ export interface ReminderChatCardProps {
   reminders: ReminderItem[];
   tasks: TaskRow[];
   onAction: (action: AgentAction) => void;
+  /** Open the card directly in this mode — used when the card is a chat
+   *  operation preview (the system parsed an intent; the user confirms via Save). */
+  initialMode?: "default" | "reschedule" | "edit";
+  /** Prefilled values for reschedule/edit when opened as an operation preview.
+   *  Only the changed fields are set; the rest fall back to the reminder. */
+  prefill?: {
+    dueAt?: string;
+    title?: string;
+    notes?: string;
+    priority?: number;
+    domain?: string | null;
+    recurrence?: string;
+  };
 }
 
 type CardMode = "default" | "reschedule" | "edit";
@@ -102,23 +115,29 @@ export function ReminderChatCard({
   reminders,
   tasks,
   onAction,
+  initialMode,
+  prefill,
 }: ReminderChatCardProps) {
   const reminder = reminders.find((r) => r.id === reminderId);
-  const [mode, setMode] = useState<CardMode>("default");
+  const [mode, setMode] = useState<CardMode>(initialMode ?? "default");
   const [deleteConfirm, setDeleteConfirm] = useState(false);
 
-  // ── Reschedule state ────────────────────────────────────────────────────
+  // ── Reschedule state (prefill wins over the reminder's current dueAt) ─────
   const [rescheduleValue, setRescheduleValue] = useState(() =>
-    reminder ? toDatetimeLocal(reminder.dueAt) : "",
+    prefill?.dueAt
+      ? toDatetimeLocal(prefill.dueAt)
+      : reminder
+        ? toDatetimeLocal(reminder.dueAt)
+        : "",
   );
 
-  // ── Edit state ──────────────────────────────────────────────────────────
-  const [editTitle, setEditTitle]           = useState(reminder?.title ?? "");
-  const [editNotes, setEditNotes]           = useState(reminder?.notes ?? "");
-  const [editPriority, setEditPriority]     = useState(reminder?.priority ?? 3);
-  const [editDomain, setEditDomain]         = useState<string>(reminder?.domain ?? "");
+  // ── Edit state (prefill merges over the reminder's current values) ────────
+  const [editTitle, setEditTitle]           = useState(prefill?.title ?? reminder?.title ?? "");
+  const [editNotes, setEditNotes]           = useState(prefill?.notes ?? reminder?.notes ?? "");
+  const [editPriority, setEditPriority]     = useState(prefill?.priority ?? reminder?.priority ?? 3);
+  const [editDomain, setEditDomain]         = useState<string>((prefill?.domain ?? reminder?.domain) ?? "");
   const [editRecurrence, setEditRecurrence] = useState<string>(
-    reminder?.recurrence ?? "none",
+    prefill?.recurrence ?? reminder?.recurrence ?? "none",
   );
 
   const linkedTask = useMemo(

@@ -209,6 +209,10 @@ export function ChatPanel({
                 const cardIds = message.meta.reminderIds;
                 const total = message.meta.totalListedCount ?? cardIds.length;
                 const extra = total - cardIds.length;
+                // Operation previews carry a mode + prefill so the card opens
+                // ready to edit/reschedule; list cards leave these undefined.
+                const cardMode = message.meta.cardMode;
+                const cardPrefill = message.meta.cardPrefill;
                 return (
                   <div key={message.id} className="flex flex-col gap-2">
                     {cardIds.map((rid) => (
@@ -218,6 +222,8 @@ export function ChatPanel({
                         reminders={reminders}
                         tasks={tasks}
                         onAction={onCardAction}
+                        initialMode={cardMode}
+                        prefill={cardPrefill}
                       />
                     ))}
                     {extra > 0 && (

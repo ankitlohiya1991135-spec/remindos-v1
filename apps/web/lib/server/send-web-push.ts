@@ -1,6 +1,7 @@
 import webpush from "web-push";
 import { api } from "@repo/db/convex/api";
 import { getConvexClient } from "./convex-client";
+import { safeNotification, listViolations } from "./notifications/validate";
 
 let configured = false;
 
@@ -32,7 +33,25 @@ export async function sendWebPushToUser(userId: string, payload: Record<string, 
     console.warn(`[push] No push subscriptions found for user ${userId}. User needs to enable push in app settings.`);
     return 0;
   }
-  const body = JSON.stringify(payload);
+  // ── Anti-surveillance gate ──────────────────────────────────────────────────
+  // Every outbound notification passes through the forbidden-pattern filter.
+  // Guilt / shame / streak-threat / FOMO copy is replaced with a gentle, safe
+  // fallback before it can ever reach a device. This is a hard backstop.
+  const rawTitle = typeof payload.title === "string" ? payload.title : undefined;
+  const rawBody = typeof payload.body === "string" ? payload.body : undefined;
+  const safe = safeNotification(rawTitle, rawBody);
+  if (safe.title !== rawTitle || safe.body !== rawBody) {
+    console.warn(
+      `[push] Copy blocked by anti-surveillance filter for user ${userId} ` +
+      `type=${payload.type ?? "unknown"} violations=${listViolations([rawTitle, rawBody].filter(Boolean).join(" ")).join(",")}`,
+    );
+  }
+  const finalPayload: Record<string, unknown> = {
+    ...payload,
+    ...(safe.title !== undefined ? { title: safe.title } : {}),
+    ...(safe.body !== undefined ? { body: safe.body } : {}),
+  };
+  const body = JSON.stringify(finalPayload);
   let sent = 0;
   for (const s of subs) {
     try {

@@ -21,6 +21,7 @@ import {
 } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { StarRating, priorityStarsLabel } from "./star-rating";
+import { pickWinCopy, isLongPending, type WinCopy } from "./win-copy";
 import { StructuredMessage } from "./structured-message";
 import {
   TaskFormOverlay,
@@ -169,6 +170,9 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   const [pendingTimeSuggestion, setPendingTimeSuggestion] = useState<PendingTimeSuggestion | null>(null);
   const [showReminderSuccess, setShowReminderSuccess] = useState(false);
   const [reminderSuccessInfo, setReminderSuccessInfo] = useState<{ title: string; time: string } | null>(null);
+  // Win Celebration — gentle in-app dopamine moment when a reminder is completed.
+  const [winCopy, setWinCopy] = useState<WinCopy | null>(null);
+  const winTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [tasks, setTasks] = useState<TaskRow[]>([]);
   const [tasksLoaded, setTasksLoaded] = useState(false);
   const [followUpQuestions, setFollowUpQuestions] = useState<FollowUpQuestion[]>([]);
@@ -431,6 +435,13 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       optimisticUpdateReminder((prev) =>
         prev.map((r) => r.id === reminder.id ? { ...r, status: "done" as const } : r),
       );
+      // Win Celebration — a gentle dopamine moment; extra warmth for long-pending clears.
+      if (winTimerRef.current) clearTimeout(winTimerRef.current);
+      setWinCopy(pickWinCopy({ longPending: isLongPending(reminder.createdAt) }));
+      winTimerRef.current = setTimeout(() => {
+        setWinCopy(null);
+        winTimerRef.current = null;
+      }, 2800);
     } else {
       optimisticUpdateReminder((prev) => prev.filter((r) => r.id !== reminder.id));
     }
@@ -1719,6 +1730,23 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
                 {reminderSuccessInfo.title} · {reminderSuccessInfo.time}
               </p>
             )}
+          </div>
+        </div>
+      ) : null}
+
+      {winCopy ? (
+        <div className="pointer-events-none fixed inset-0 z-[66] flex flex-col items-center justify-center px-6">
+          <div className="flex max-w-xs flex-col items-center gap-3 rounded-3xl bg-white/95 px-7 py-6 text-center shadow-2xl ring-1 ring-emerald-200 backdrop-blur dark:bg-slate-900/95 dark:ring-emerald-500/30">
+            <div className="relative">
+              <span className="absolute inset-0 rounded-full bg-emerald-400/30 animate-ping" />
+              <div className="relative flex h-16 w-16 items-center justify-center rounded-full bg-gradient-to-br from-emerald-400 to-teal-500 shadow-lg shadow-emerald-500/40">
+                <svg viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" className="h-8 w-8"><path d="m5 12 4 4 10-10" /></svg>
+              </div>
+            </div>
+            <p className="text-[19px] font-extrabold leading-tight text-slate-900 dark:text-slate-50">{winCopy.line}</p>
+            {winCopy.sub ? (
+              <p className="text-[13px] leading-relaxed text-slate-500 dark:text-slate-400">{winCopy.sub}</p>
+            ) : null}
           </div>
         </div>
       ) : null}

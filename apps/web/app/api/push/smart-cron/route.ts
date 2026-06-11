@@ -1,13 +1,13 @@
 /**
- * /api/push/smart-cron — Zomato-style smart engagement nudges.
+ * /api/push/smart-cron — gentle, ADHD-friendly engagement nudges.
  *
- * Called every 2 hours by a separate cron-job.org entry.
- * Sends a witty, personalised push to users who:
+ * Called every 2 hours by the Convex cron. Sends a warm, low-pressure,
+ * personalised push ("fragrant garden, not iron cage") to users who:
  *   1. Have opted in to smart nudges (smartNudgeEnabled = true on their subscription)
- *   2. Have NOT opened the app in the past 24 h
+ *   2. Have NOT opened the app in the past 2 h (inactivity gate)
  *   3. Have at least one pending reminder
  *   4. Are NOT in quiet hours (10 PM – 8 AM local time)
- *   5. Haven't already received a smart nudge in the last 23 h (dedup)
+ *   5. Haven't already received a smart nudge in the last 12 h (dedup)
  *
  * Max 1 smart nudge per user per day — notification fatigue is real.
  */
@@ -117,183 +117,113 @@ const DOMAIN_LABEL: Record<string, string> = {
 };
 
 /**
- * Picks a Zomato-style witty notification from context-appropriate pools.
- * Priority: overdue pile-up → long inactivity → domain focus → time-of-day → generic.
+ * Picks a gentle, supportive notification from context-appropriate pools.
+ * Celebrates streaks (never threatens them), reframes overdue without shame,
+ * and never guilt-trips. All copy also passes the anti-surveillance filter.
  */
 export function generateSmartNudgeMessage(ctx: NudgeContext): Template {
   const {
-    daysInactive, pendingCount, overdueCount, topDomain,
+    pendingCount, overdueCount, topDomain,
     nextDueTitle, displayName, localHour, streakDays, hasNoPending,
   } = ctx;
 
-  const name  = displayName ? `, ${displayName.split(" ")[0]}` : "";
+  const name  = displayName ? ` ${displayName.split(" ")[0]}` : "";
   const slot  = localTimeSlot(localHour);
-  const days  = Math.round(daysInactive);
-  const emoji = topDomain ? DOMAIN_EMOJI[topDomain] ?? "📌" : "";
+  const emoji = topDomain ? DOMAIN_EMOJI[topDomain] ?? "🌱" : "🌱";
   const label = topDomain ? DOMAIN_LABEL[topDomain] ?? topDomain : "";
+  const n     = (c: number) => `${c} thing${c !== 1 ? "s" : ""}`;
 
-  // ── Type 7: streak milestone (fires before overdue — loyalty deserves acknowledgement) ──
+  // ── Streak — CELEBRATE, never threaten ──
   if (streakDays >= 7) {
     return pick<Template>([
-      { title: `🔥 ${streakDays}-day streak at risk!`, body: `You were on a roll${name}! Open the app today to keep the streak alive.` },
-      { title: "Incredible consistency! 🏆", body: `${streakDays} days in a row with MYSA — don't let it end now!` },
-      { title: `${streakDays}-day streak on the line 🎯`, body: `Come back today${name} and protect what you've built 💪` },
+      { title: `${streakDays} days in a row 🌱`, body: `that's real momentum${name}. however today goes, you've already built something.` },
+      { title: "look at you go 🔥", body: `${streakDays} days showing up. for an adhd brain that's genuinely big. proud of you.` },
+      { title: "quiet little streak 🌟", body: `${streakDays} days in. no pressure to keep it — just noticing you've been kind to yourself.` },
     ]);
   }
   if (streakDays >= 3) {
     return pick<Template>([
-      { title: `⚡ ${streakDays}-day streak at risk!`, body: `Don't break it now${name} — you were so consistent!` },
-      { title: "Streak alert 🔔", body: `${streakDays} days in a row — open the app today to keep it going!` },
-      { title: "Complete today's streak 🌟", body: `${streakDays}-day productivity streak. One tap to keep it alive!` },
+      { title: `${streakDays} days, nice 🌱`, body: `you've shown up a few days running${name}. that counts for a lot.` },
+      { title: "momentum's a real thing 🌿", body: `${streakDays} days in a row. whatever happens next, this was good.` },
     ]);
   }
 
-  // ── overdue heavy ────────────────────────────────────────────────────────────
+  // ── Overdue — gentle, no panic, no shame ──
   if (overdueCount >= 5) {
     return pick<Template>([
-      { title: `🚨 SOS${name}`, body: `${overdueCount} overdue reminders are screaming for attention. Maybe now? 🙈` },
-      { title: "Houston, we have a problem 🛸", body: `${overdueCount} overdue tasks and counting. Time to face the music!` },
-      { title: "Your tasks filed a complaint 📣", body: `${overdueCount} overdue. Your future self is judging you 😬` },
-      { title: "Code red 🔴", body: `${overdueCount} overdue reminders. But honestly… today's a great day to clear them!` },
+      { title: "the list got long 🌿", body: "a bunch of things slipped past their time. that's okay — just pick one, the rest can wait." },
+      { title: `breathe${name} 😌`, body: `${overdueCount} things are past due, but you're not behind — the list is just long. one thing is enough.` },
+      { title: "no rush 🤍", body: "some reminders drifted past. whenever you're ready, start with whichever feels easiest." },
     ]);
   }
-
   if (overdueCount >= 2) {
     return pick<Template>([
-      { title: `⏰ Hey${name}, come back!`, body: `${overdueCount} reminders are overdue. ${pendingCount - overdueCount} more waiting!` },
-      { title: "Your tasks miss you 🥺", body: `${overdueCount} overdue + ${pendingCount - overdueCount} upcoming. Still totally saveable!` },
+      { title: "a couple things slipped 🌱", body: `${overdueCount} past their time — no stress. pick one whenever the moment feels right.` },
+      { title: "still totally fine 😌", body: "a few reminders are waiting past due. they're not going anywhere — start small." },
     ]);
   }
 
-  // ── long inactivity (3+ days) ────────────────────────────────────────────────
-  if (daysInactive >= 5) {
-    return pick<Template>([
-      { title: `Day ${days} without the app 👻`, body: `Your ${pendingCount} tasks are still there, patiently waiting...` },
-      { title: `Long time no see${name} 🙁`, body: `${pendingCount} tasks collecting dust. Come back, we miss you!` },
-      { title: "Plot twist 📱", body: `The app still works. ${pendingCount} things need your 2 minutes 😅` },
-      { title: "Missing person alert 🔍", body: `It's been ${days} days${name}. Your tasks are putting up posters 😂` },
-    ]);
-  }
-
-  if (daysInactive >= 3) {
-    return pick<Template>([
-      { title: `Still here${name} 👋`, body: `${pendingCount} tasks haven't moved since you left. Miss us?` },
-      { title: "Your goals called 📞", body: `They said: come back, ${pendingCount} things still need your attention 💪` },
-      { title: "3 days, zero tasks done 📊", body: `But it's never too late${name}. ${pendingCount} pending and ready for you!` },
-    ]);
-  }
-
-  if (daysInactive >= 2) {
-    return pick<Template>([
-      { title: `Missed you yesterday${name} 👀`, body: `${pendingCount} reminders are getting lonely without you!` },
-      { title: "Bro, check your tasks 🙃", body: `${pendingCount} things waiting. Took 2 mins to create, takes 2 mins to check!` },
-      { title: "Your streak is at risk ⚡", body: `Don't break the momentum — ${pendingCount} tasks to clear today!` },
-      { title: "Productivity check 📋", body: `${pendingCount} pending. You've done it before, you can do it now!` },
-    ]);
-  }
-
-  // ── Types 1/3/5/6/8/9: AI engagement for users with no pending reminders ─────
-  // This fires for active users who have cleared their task list — keep them engaged.
-  // Also fires for re-engagement when the user has nothing pending.
+  // ── No pending — chill / gentle ──
   if (hasNoPending) {
     if (slot === "morning") {
       return pick<Template>([
-        { title: `Good morning${name} ☀️`, body: "Need help planning your day? Just ask MYSA." },
-        { title: "MYSA is ready for today ✨", body: "What shall we tackle together? Open the app and ask anything." },
-        { title: "Start your day strong 🚀", body: "Tell MYSA your goals — get an instant action plan back." },
-        { title: "AI tip of the day 📚", body: `Try: "What should I focus on today?" — MYSA will prioritize for you.` },
-        { title: "Good morning! Want today's plan? 🌅", body: "Open MYSA and describe your day — get a clear action list instantly." },
-      ]);
-    }
-    if (slot === "afternoon") {
-      return pick<Template>([
-        { title: "Need help writing faster? ✍️", body: "MYSA can draft emails, replies, and messages in seconds — try it!" },
-        { title: "Quick productivity trick ⚡", body: "Ask MYSA to break your biggest challenge into small, clear steps." },
-        { title: "Your AI assistant is ready 🤖", body: "Turn any rough note into a structured plan — open MYSA and paste it." },
-        { title: "Afternoon check-in 💡", body: "What's on your plate? MYSA can help you prioritize and plan ahead." },
+        { title: `morning${name} 🌅`, body: "nothing pressing right now. if something's on your mind, i can help you sort it." },
+        { title: "clear slate ☀️", body: "nothing pending today. enjoy it — i'm here if you want to plan anything." },
       ]);
     }
     if (slot === "evening") {
       return pick<Template>([
-        { title: `Evening wrap-up${name} 🌆`, body: "Need help summarizing your day or planning tomorrow?" },
-        { title: "Plan tomorrow tonight 🌙", body: "Ask MYSA what to tackle first tomorrow — your future self will thank you!" },
-        { title: "5 mins now = smooth tomorrow 🌇", body: "Tell MYSA what's ahead — get a clean game plan before you wind down." },
-        { title: "Need help summarizing your day? 🌆", body: "Open MYSA and describe your day — get a clean summary + next steps." },
+        { title: `evening${name} 🌙`, body: "all clear for now. rest easy — tomorrow can wait until tomorrow." },
+        { title: "nice and quiet 🌿", body: "nothing on the list. if you want, jot down tomorrow's one thing and let it go." },
       ]);
     }
-    // Generic AI engagement (Type 1, 3, 6, 8, 9 mixed)
     return pick<Template>([
-      { title: `Hey${name}, MYSA misses you 🤖`, body: "Your AI assistant is ready whenever you are — just open the app!" },
-      { title: "One small productive step today? 🌱", body: "Even small actions compound. Open MYSA and share what's on your mind." },
-      { title: "Did you know? 💡", body: "You can create reminders just by describing them in plain English — try it!" },
-      { title: "Try today's AI prompt 🎯", body: `"What should I focus on this week?" — ask MYSA and get a smart plan instantly.` },
-      { title: "AI tip of the day 📚", body: `"Remind me to follow up with [person] next Monday" — just say it, MYSA handles the rest.` },
-      { title: "Feeling overwhelmed? 💙", body: "Let's organize things together. Open MYSA and tell it what's weighing on you." },
-      { title: "How can I help today? 🤖✨", body: "Your AI assistant is standing by. Ask anything — plans, reminders, drafts, ideas." },
-      { title: "Generate a quick to-do list ✅", body: "Tell MYSA everything on your mind — it'll turn it into a clean to-do list." },
-      { title: "Unlock more with Pro ✨", body: "Unlimited AI chats + advanced models. Upgrade and supercharge your productivity." },
+      { title: "all clear 🤍", body: `nothing pending right now${name}. i'm here whenever you need to capture something.` },
+      { title: "breathing room 🌱", body: "your list is empty. no pressure to fill it — just here if you need me." },
     ]);
   }
 
-  // ── domain focus (if there's a clear top domain) ─────────────────────────────
-  if (topDomain && label) {
-    return pick<Template>([
-      { title: `${emoji} Your ${label} game`, body: `${pendingCount} tasks pending. You were SO close to a clean slate!` },
-      { title: `${emoji} ${label.charAt(0).toUpperCase() + label.slice(1)} check-in`, body: `${pendingCount} things to tick off. The ${label} version of you agrees!` },
-      { title: `Remember the plan?${name}`, body: `Your ${label} goals: ${pendingCount} tasks strong. Let's go! ${emoji}` },
-    ]);
-  }
-
-  // ── next due personalisation ─────────────────────────────────────────────────
+  // ── Next due — gentle heads-up ──
   if (nextDueTitle) {
     return pick<Template>([
-      { title: "⏳ Coming up soon", body: `"${nextDueTitle}" is on the horizon. Don't let it sneak up!` },
-      { title: "Heads up! 👆", body: `"${nextDueTitle}" needs your attention + ${pendingCount - 1} more.` },
+      { title: "gentle heads-up 🌿", body: `"${nextDueTitle}" is coming up. no rush — just putting it on your radar.` },
+      { title: "coming up soon 😌", body: `"${nextDueTitle}" is on the horizon whenever you're ready for it.` },
     ]);
   }
 
-  // ── time-of-day contextual ────────────────────────────────────────────────────
+  // ── Domain focus — light, supportive ──
+  if (topDomain && label) {
+    return pick<Template>([
+      { title: `${emoji} a little ${label} nudge`, body: `${n(pendingCount)} waiting whenever you've got the energy.` },
+      { title: `${emoji} no rush on ${label}`, body: `your ${label} list is here when you want it${name}. one small step counts.` },
+    ]);
+  }
+
+  // ── Time-of-day — warm, low-pressure ──
   if (slot === "morning") {
     return pick<Template>([
-      { title: `Rise and grind${name} ☀️`, body: `${pendingCount} tasks, ${slot} energy. Crush them before lunch!` },
-      { title: "Good morning! 🌅", body: `Starting strong? You've got ${pendingCount} things to tackle today!` },
-      { title: "Morning fuel ☕", body: `Before the chai gets cold — ${pendingCount} quick tasks are waiting!` },
-      { title: "Monday mindset activated 💡", body: `${pendingCount} tasks. New ${slot}, new wins. Let's go!` },
+      { title: `morning${name} 🌱`, body: "if you only do one thing today, that's enough. pick whichever feels lightest." },
+      { title: "easy start ☀️", body: `${n(pendingCount)} when you're ready — but just starting one is a win.` },
     ]);
   }
-
   if (slot === "afternoon") {
     return pick<Template>([
-      { title: "Afternoon slump? 😴", body: `${pendingCount} tasks as your perfect pick-me-up. You'll feel great after! 💪` },
-      { title: "2 PM energy check 🔋", body: `Still ${pendingCount} tasks on the list. Now's the perfect window!` },
-      { title: "Post-lunch productivity 🍽️", body: `${pendingCount} tasks. Afternoon focus hits different 🎯` },
+      { title: "afternoon check-in 🌿", body: "if there's energy for one small thing, great. if not, that's okay too." },
+      { title: "no pressure 😌", body: `${n(pendingCount)} pending whenever it feels right. one tiny step is plenty.` },
     ]);
   }
-
   if (slot === "evening") {
     return pick<Template>([
-      { title: `Evening wrap-up 🌆`, body: `${pendingCount} tasks before you log off for the day?` },
-      { title: `End the day strong${name} 💯`, body: `${pendingCount} tasks. Clear them tonight, sleep better tomorrow!` },
-      { title: "Golden hour 🌇", body: `${pendingCount} reminders left. End your day with a big ✅!` },
+      { title: `winding down${name} 🌙`, body: "whatever didn't happen today is fine — it'll keep. you did enough." },
+      { title: "soft evening 🌿", body: "one quick thing if you feel like it, otherwise rest. both are good choices." },
     ]);
   }
 
-  // ── generic fallback (mixes re-engagement + AI engagement + feature discovery) ─
+  // ── Gentle fallback ──
   return pick<Template>([
-    { title: `Hey${name}, you there? 👋`, body: `${pendingCount} tasks haven't seen you in a while!` },
-    { title: "Your to-do list is lonely 🥺", body: `Come back and cross off ${pendingCount} things!` },
-    { title: "Quick check-in 📋", body: `${pendingCount} pending. A minute could clear the queue ✅` },
-    { title: "Just a nudge 😊", body: `${pendingCount} reminders waiting. No pressure… but also, kinda 👀` },
-    { title: `1 tap, ${pendingCount} tasks 🎯`, body: `Open the app and let's knock them out together!` },
-    // Type 3: AI productivity suggestions
-    { title: "Your AI assistant is waiting 🤖", body: `${pendingCount} tasks pending — want MYSA to help you prioritize them?` },
-    { title: "Work smarter, not harder ⚡", body: `Ask MYSA to organize your ${pendingCount} pending tasks by priority.` },
-    // Type 6: Feature discovery
-    { title: "Pro tip 💡", body: `You can ask MYSA to reschedule all your tasks just by describing the change.` },
-    { title: "Did you know? ✨", body: `MYSA can group your ${pendingCount} tasks by category and suggest which to do first.` },
-    // Type 8: Emotional/companion
-    { title: "We haven't seen you in a while 👀", body: `${pendingCount} things waiting. Your AI assistant misses helping you!` },
-    { title: "Feeling overwhelmed? 💙", body: `${pendingCount} tasks, but no worries — let's tackle them together, one step at a time.` },
+    { title: "here whenever you're ready 🌱", body: `${n(pendingCount)} waiting — no rush, no pressure.` },
+    { title: "soft check-in 🤍", body: `your reminders are here when you want them${name}. start with the easiest one.` },
+    { title: "one small step 🌿", body: "nothing pressing. if you want to knock out one thing, i'm right here." },
   ]);
 }
 

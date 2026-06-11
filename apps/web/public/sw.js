@@ -133,8 +133,8 @@ self.addEventListener("push", (event) => {
 
   // ── Evening wind-down digest ─────────────────────────────────────────────────
   if (type === "evening_briefing") {
-    const title = "Evening check-in";
-    const body = payload.body || "Here's what's still open and what's coming tomorrow.";
+    const title = "you did enough today";
+    const body = payload.body || "whatever didn't happen will keep. rest easy tonight.";
     showNotif(event, "🌙 " + title, body,
       "evening-briefing",
       { type: "evening_briefing" },

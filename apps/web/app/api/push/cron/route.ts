@@ -321,10 +321,12 @@ export async function POST(request: Request) {
             const openCount = stillOpen.length;
             const tmrwCount = tomorrow.length;
             if (openCount > 0 || tmrwCount > 0) {
-              const parts: string[] = [];
-              if (openCount > 0) parts.push(`${openCount} still open today`);
-              if (tmrwCount > 0) parts.push(`${tmrwCount} coming tomorrow`);
-              const body = `Evening check-in — ${parts.join(" · ")}.`;
+              // ── Evening Soft Close — gentle, never a guilt list ──
+              // Reframe unfinished work without shame; the point is permission to rest.
+              const thing = (c: number) => `${c} thing${c !== 1 ? "s" : ""}`;
+              const body = openCount > 0
+                ? `you got through today 🌙 the ${thing(openCount)} that didn't happen aren't going anywhere — tomorrow's there for them. rest.`
+                : `that's today done 🌙 nothing left hanging${tmrwCount > 0 ? `, just ${thing(tmrwCount)} gently waiting for tomorrow` : ""}. getting through an ordinary day counts — rest easy.`;
               const payload = {
                 type: "evening_briefing",
                 openCount,
@@ -334,7 +336,7 @@ export async function POST(request: Request) {
               await sendWebPushToUser(userId, payload);
               await recordSent(client, userId, "evening_briefing", undefined);
               await saveNotification(client, userId, "evening_briefing",
-                "Evening check-in", body);
+                "you did enough today 🌙", body);
               results.briefing += 1;
             }
           }
