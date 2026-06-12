@@ -17,6 +17,7 @@ import {
 import type { TaskRow } from "./task-panels";
 import type {
   ChatMessage,
+  ChatMessageMeta,
   AgentAction,
   AgentResponse,
   PendingCreateDraft,
@@ -754,96 +755,49 @@ export function useChatEngine(params: UseChatEngineParams) {
           // then resolve based on op type.
           const disambigSnapshot = pendingDisambig;
           setPendingDisambig(null);
-          const { op } = disambigSnapshot;
 
-          if (op === "mark_done" || op === "delete") {
-            // Needs "are you sure?" confirmation before executing
-            const actionVerb = op === "mark_done" ? "mark as done" : "delete";
-            setPendingConfirmAction({
-              type: op === "mark_done" ? "mark_done" : "delete_reminder",
-              targetId: match.id,
-              targetTitle: match.title,
-            });
-            setMessages((prev) => [
-              ...prev,
-              {
-                id: crypto.randomUUID(),
-                role: "assistant",
-                content: `Are you sure you want to ${actionVerb} "${match.title}"? Reply **yes** to confirm.`,
-                createdAt: new Date().toISOString(),
-              },
-            ]);
-          } else if (op === "reschedule") {
-            // Execute directly — reschedule doesn't need a "are you sure?" step
-            const newDueAt = disambigSnapshot.pendingDueAt;
-            void refreshAfterReminderMutation(
-              fetch(`/api/reminders/${match.id}`, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ dueAt: new Date(newDueAt).getTime() }),
-              }),
-            ).catch(() => showShareToast("Could not reschedule reminder. Try again."));
-            setMessages((prev) => [
-              ...prev,
-              {
-                id: crypto.randomUUID(),
-                role: "assistant",
-                content: `Rescheduled "${match.title}" to ${new Date(newDueAt).toLocaleString()}.`,
-                createdAt: new Date().toISOString(),
-              },
-            ]);
-          } else if (op === "edit") {
-            // Needs confirmation before applying (consistent with normal edit flow)
-            const { pendingField, pendingValue } = disambigSnapshot;
-            const previewValue = pendingValue.length > 40 ? `${pendingValue.slice(0, 40)}…` : pendingValue;
-            // Map pendingField → the correct action key
-            let editPayload: Partial<typeof pendingConfirmAction> = {};
-            if (pendingField === "title") editPayload = { newTitle: pendingValue };
-            else if (pendingField === "notes") editPayload = { newNotes: pendingValue };
-            else if (pendingField === "priority") editPayload = { newPriority: parseInt(pendingValue, 10) || 3 };
-            else if (pendingField === "domain") editPayload = { newDomain: pendingValue || null };
-            else if (pendingField === "recurrence") editPayload = { newRecurrence: (pendingValue as "none" | "daily" | "weekly" | "monthly") || "none" };
-            else if (pendingField === "linkedTaskId") editPayload = { newLinkedTaskId: pendingValue || null };
-            setPendingConfirmAction({
-              type: "edit_reminder",
-              targetId: match.id,
-              targetTitle: match.title,
-              ...editPayload,
-            });
-            setMessages((prev) => [
-              ...prev,
-              {
-                id: crypto.randomUUID(),
-                role: "assistant",
-                content: `Update "${match.title}" — change ${pendingField} to "${previewValue}"? Reply **yes** to confirm.`,
-                createdAt: new Date().toISOString(),
-              },
-            ]);
-          } else if (op === "snooze") {
-            // Execute directly — snooze doesn't need a "are you sure?" step
-            const { pendingDelayMinutes } = disambigSnapshot;
-            const newDueAt = Date.now() + pendingDelayMinutes * 60_000;
-            const label =
-              pendingDelayMinutes >= 60
-                ? `${Math.round(pendingDelayMinutes / 60)} hour${Math.round(pendingDelayMinutes / 60) !== 1 ? "s" : ""}`
-                : `${pendingDelayMinutes} minute${pendingDelayMinutes !== 1 ? "s" : ""}`;
-            void refreshAfterReminderMutation(
-              fetch(`/api/reminders/${match.id}`, {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ dueAt: newDueAt }),
-              }),
-            ).catch(() => showShareToast("Could not snooze reminder. Try again."));
-            setMessages((prev) => [
-              ...prev,
-              {
-                id: crypto.randomUUID(),
-                role: "assistant",
-                content: `Snoozed "${match.title}" — I'll remind you again in ${label}.`,
-                createdAt: new Date().toISOString(),
-              },
-            ]);
-          }
+          // The system NEVER auto-applies the change — even after the user picks
+          // which reminder they meant. Show the matched reminder as a PREFILLED
+          // card (micro front-end); the user commits via Save. Nothing mutates here.
+          const cardMeta: ChatMessageMeta = (() => {
+            const base = { kind: "reminder_card" as const, reminderIds: [match.id], totalListedCount: 1 };
+            if (disambigSnapshot.op === "reschedule") {
+              return { ...base, cardMode: "reschedule" as const, cardPrefill: { dueAt: disambigSnapshot.pendingDueAt } };
+            }
+            if (disambigSnapshot.op === "snooze") {
+              const dueAt = new Date(Date.now() + disambigSnapshot.pendingDelayMinutes * 60_000).toISOString();
+              return { ...base, cardMode: "reschedule" as const, cardPrefill: { dueAt } };
+            }
+            if (disambigSnapshot.op === "edit") {
+              const { pendingField, pendingValue } = disambigSnapshot;
+              const cp: NonNullable<ChatMessageMeta["cardPrefill"]> = {};
+              if (pendingField === "title") cp.title = pendingValue;
+              else if (pendingField === "notes") cp.notes = pendingValue;
+              else if (pendingField === "priority") cp.priority = parseInt(pendingValue, 10) || 3;
+              else if (pendingField === "domain") cp.domain = pendingValue || null;
+              else if (pendingField === "recurrence") cp.recurrence = (pendingValue as "none" | "daily" | "weekly" | "monthly") || "none";
+              return { ...base, cardMode: "edit" as const, cardPrefill: cp };
+            }
+            // mark_done / delete → default card (its own Done / Delete buttons).
+            return base;
+          })();
+
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: crypto.randomUUID(),
+              role: "assistant",
+              content: `here's "${match.title}" — review and save (nothing's changed yet).`,
+              createdAt: new Date().toISOString(),
+            },
+            {
+              id: crypto.randomUUID(),
+              role: "assistant" as const,
+              content: "",
+              createdAt: new Date().toISOString(),
+              meta: cardMeta,
+            },
+          ]);
           return;
         }
 

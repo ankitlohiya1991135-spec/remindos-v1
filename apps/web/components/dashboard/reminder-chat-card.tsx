@@ -426,19 +426,19 @@ export function ReminderChatCard({
             onChange={(e) => setRescheduleValue(e.target.value)}
             className="w-full rounded-xl border border-white/15 bg-white/5 px-3 py-2 text-[12px] text-white/80 outline-none focus:border-violet-500/50"
           />
-          <div className="flex gap-1.5">
+          <div className="flex flex-wrap gap-1.5">
             <button
               type="button"
               onClick={dispatchReschedule}
               disabled={!rescheduleValue}
-              className="rounded-full bg-violet-600 px-3 py-1 text-[10px] font-bold text-white transition hover:bg-violet-500 disabled:opacity-40"
+              className="rounded-full bg-violet-600 px-4 py-1.5 text-[11px] font-bold text-white transition hover:bg-violet-500 disabled:opacity-40"
             >
-              Set time
+              Save
             </button>
             <button
               type="button"
               onClick={() => setMode("default")}
-              className="rounded-full border border-white/15 px-3 py-1 text-[10px] font-bold text-white/50 transition hover:bg-white/10"
+              className="rounded-full border border-white/15 px-4 py-1.5 text-[11px] font-bold text-white/50 transition hover:bg-white/10"
             >
               Cancel
             </button>
@@ -540,18 +540,18 @@ export function ReminderChatCard({
           </div>
 
           {/* Save / Cancel */}
-          <div className="flex gap-1.5 pt-0.5">
+          <div className="flex flex-wrap gap-1.5 pt-0.5">
             <button
               type="button"
               onClick={dispatchEdit}
-              className="rounded-full bg-violet-600 px-3 py-1 text-[10px] font-bold text-white transition hover:bg-violet-500"
+              className="rounded-full bg-violet-600 px-4 py-1.5 text-[11px] font-bold text-white transition hover:bg-violet-500"
             >
               Save changes
             </button>
             <button
               type="button"
               onClick={() => setMode("default")}
-              className="rounded-full border border-white/15 px-3 py-1 text-[10px] font-bold text-white/50 transition hover:bg-white/10"
+              className="rounded-full border border-white/15 px-4 py-1.5 text-[11px] font-bold text-white/50 transition hover:bg-white/10"
             >
               Cancel
             </button>

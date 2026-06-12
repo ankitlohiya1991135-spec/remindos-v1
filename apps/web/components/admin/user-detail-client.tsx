@@ -354,6 +354,49 @@ export function AdminUserDetailClient({ userId }: { userId: string }) {
         </section>
       )}
 
+      {/* Notification CTR — is messaging helping this user? */}
+      {activity.notificationCtr && activity.notificationCtr.sent > 0 && (() => {
+        const ctr = activity.notificationCtr!;
+        const rate = ctr.sent > 0 ? Math.round((ctr.clicked / ctr.sent) * 100) : 0;
+        const tone =
+          rate >= 30 ? "text-emerald-600 dark:text-emerald-400" :
+          rate >= 10 ? "text-amber-600 dark:text-amber-400" :
+          "text-rose-600 dark:text-rose-400";
+        return (
+          <section className="rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">
+            <header className="flex items-center justify-between border-b border-slate-100 px-5 py-3 dark:border-slate-800">
+              <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">Notification CTR</h3>
+              <span className="text-xs text-slate-400">are notifications helping?</span>
+            </header>
+            <div className="flex flex-wrap items-end gap-6 px-5 py-4">
+              <div>
+                <p className={`text-3xl font-extrabold ${tone}`}>{rate}%</p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  {ctr.clicked} clicked of {ctr.sent} sent
+                </p>
+              </div>
+              <div className="min-w-0 flex-1">
+                <p className="mb-1.5 text-[10px] font-bold uppercase tracking-wide text-slate-400">By type</p>
+                <ul className="flex flex-col gap-1">
+                  {ctr.byType.map((t) => {
+                    const r = t.sent > 0 ? Math.round((t.clicked / t.sent) * 100) : 0;
+                    return (
+                      <li key={t.type} className="flex items-center gap-2 text-xs">
+                        <span className="w-32 shrink-0 truncate font-mono text-[11px] text-slate-500 dark:text-slate-400">{t.type}</span>
+                        <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-slate-100 dark:bg-slate-800">
+                          <span className="block h-full rounded-full bg-violet-500" style={{ width: `${r}%` }} />
+                        </span>
+                        <span className="w-20 shrink-0 text-right text-slate-500 dark:text-slate-400">{t.clicked}/{t.sent} · {r}%</span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </div>
+            </div>
+          </section>
+        );
+      })()}
+
       {/* Recent notifications */}
       {activity.recentNotifications && (
         <section className="rounded-2xl border border-slate-200 bg-white dark:border-slate-800 dark:bg-slate-900">

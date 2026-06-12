@@ -110,8 +110,16 @@ export interface AdminUserActivity {
     title: string;
     body: string;
     read: boolean;
+    /** When the user clicked the push notification (for CTR). */
+    clickedAt?: number;
     createdAt: number;
   }>;
+  /** Notification click-through-rate — is messaging actually helping this user? */
+  notificationCtr?: {
+    sent: number;
+    clicked: number;
+    byType: Array<{ type: string; sent: number; clicked: number }>;
+  };
   /** Recent reminders summary. */
   recentReminders?: Array<{
     id: string;

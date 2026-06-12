@@ -237,8 +237,13 @@ export const userActivityDetail = query({
           title: string;
           body: string;
           read: boolean;
+          clickedAt?: number;
           createdAt: number;
         }>
+      | undefined;
+    // CTR (click-through rate): are notifications actually helping this user?
+    let notificationCtr:
+      | { sent: number; clicked: number; byType: Array<{ type: string; sent: number; clicked: number }> }
       | undefined;
     let recentReminders:
       | Array<{
@@ -264,8 +269,29 @@ export const userActivityDetail = query({
           title: n.title,
           body: n.body,
           read: n.read,
+          ...(n.clickedAt ? { clickedAt: n.clickedAt } : {}),
           createdAt: n.createdAt,
         }));
+      // Aggregate CTR — overall and per notification type.
+      const byType = new Map<string, { sent: number; clicked: number }>();
+      let sent = 0;
+      let clicked = 0;
+      for (const n of notifs) {
+        sent += 1;
+        const c = n.clickedAt ? 1 : 0;
+        clicked += c;
+        const entry = byType.get(n.type) ?? { sent: 0, clicked: 0 };
+        entry.sent += 1;
+        entry.clicked += c;
+        byType.set(n.type, entry);
+      }
+      notificationCtr = {
+        sent,
+        clicked,
+        byType: [...byType.entries()]
+          .map(([type, v]) => ({ type, sent: v.sent, clicked: v.clicked }))
+          .sort((a, b) => b.sent - a.sent),
+      };
     }
 
     if (args.includeReminders) {
@@ -329,6 +355,7 @@ export const userActivityDetail = query({
       tokenEstimate,
       sessionStats,
       ...(recentNotifications ? { recentNotifications } : {}),
+      ...(notificationCtr ? { notificationCtr } : {}),
       ...(recentReminders ? { recentReminders } : {}),
     };
   },

@@ -93,6 +93,9 @@ const notifications = defineTable({
   body: v.string(),          // full notification text
   reminderId: v.optional(v.string()),
   read: v.boolean(),
+  /** When the user CLICKED the push notification (for click-through-rate / CTR).
+   *  Absent = sent but not clicked. */
+  clickedAt: v.optional(v.number()),
   createdAt: v.number(),
 })
   .index("by_user_created", ["userId", "createdAt"])

@@ -23,6 +23,37 @@ export const create = mutation({
   },
 });
 
+/**
+ * Record a CLICK on a push notification (for CTR). The push payload only carries
+ * the notification `type` (+ optional reminderId), so we attribute the click to
+ * the most recent matching, not-yet-clicked notification in the last 24h.
+ * Also marks it read. Returns true if a row was attributed.
+ */
+export const markClickedByType = mutation({
+  args: {
+    userId: v.string(),
+    type: v.string(),
+    reminderId: v.optional(v.string()),
+  },
+  handler: async (ctx, { userId, type, reminderId }) => {
+    const since = Date.now() - 24 * 60 * 60 * 1000;
+    const recent = await ctx.db
+      .query("notifications")
+      .withIndex("by_user_created", (q) => q.eq("userId", userId).gte("createdAt", since))
+      .order("desc")
+      .take(60);
+    const match = recent.find(
+      (n) =>
+        n.type === type &&
+        !n.clickedAt &&
+        (!reminderId || n.reminderId === reminderId),
+    );
+    if (!match) return false;
+    await ctx.db.patch(match._id, { clickedAt: Date.now(), read: true });
+    return true;
+  },
+});
+
 /** List the most recent N notifications for a user (newest first). */
 export const listForUser = query({
   args: { userId: v.string(), limit: v.optional(v.number()) },

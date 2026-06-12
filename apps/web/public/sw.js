@@ -167,6 +167,21 @@ self.addEventListener("notificationclick", (event) => {
   const action = event.action || "open";
   notification.close();
 
+  // ── CTR tracking ──────────────────────────────────────────────────────────
+  // Report that this notification was clicked, so admins can see whether
+  // notifications actually help users (click-through rate). Fire-and-forget;
+  // same-origin so the Clerk session cookie authenticates the request.
+  if (data.type) {
+    event.waitUntil(
+      fetch("/api/track/notification-click", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ type: data.type, reminderId: data.reminderId || null }),
+      }).catch(() => {}),
+    );
+  }
+
   // Share invite actions
   if (data.type === "share_invite") {
     const batchKey = data.batchKey || "";
