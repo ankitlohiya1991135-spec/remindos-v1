@@ -918,12 +918,39 @@ export function findRemindersByName(query: string, reminders: ReminderItem[]): R
     .filter((w) => w.length >= 3 && !QUERY_STOPWORDS.has(w));
   if (words.length === 0) return [];
   const patterns = words.map((w) => new RegExp(`\\b${escapeRegExp(w)}\\b`));
+  // Search ALL statuses — a reminder the user names ("my CLI reminder") may be
+  // overdue or already done; we should still surface it. Active (pending) first.
   return reminders
-    .filter((r) => r.status === "pending")
     .filter((r) => {
       const hay = `${r.title} ${r.notes ?? ""}`.toLowerCase();
       return patterns.some((re) => re.test(hay));
-    });
+    })
+    .sort((a, b) => (a.status === "pending" ? 0 : 1) - (b.status === "pending" ? 0 : 1));
+}
+
+/**
+ * Answer a "specific reminder by name" query ("give me my CLI reminder") with a
+ * detail line (one match) or a short list (several). Returns null when the query
+ * names nothing specific or is an explicit scope/topic LIST request — so callers
+ * fall through to the normal list/LLM paths. Shared by the chat route (before the
+ * generic time-bucket list) and tryGroundedReminderAnswer so the rule lives once.
+ */
+export function answerNamedReminderQuery(
+  message: string,
+  reminders: ReminderItem[],
+  now = new Date(),
+  options?: ReminderDisplayOptions,
+): string | null {
+  if (isExplicitListQuery(message)) return null;
+  const named = findRemindersByName(message, reminders);
+  if (named.length === 0) return null;
+  if (named.length === 1 && named[0]) {
+    return describeReminderForChat(named[0], now, options);
+  }
+  return [
+    `Here are the ${named.length} reminders matching that:`,
+    ...named.slice(0, 5).map((r, i) => `${i + 1}. ${describeReminderForChat(r, now, options)}`),
+  ].join("\n");
 }
 
 /**
@@ -961,22 +988,11 @@ export function tryGroundedReminderAnswer(
 
   if (isCompoundReminderQuestion(message) && intent !== "planning_query") return null;
 
-  // Specific-reminder query: the message names a particular reminder ("give me my
-  // hupendra reminder"). Answer about it — INCLUDING overdue ones — before the
-  // generic time-bucket list, which would otherwise reply "nothing scheduled
-  // ahead" for a reminder that is overdue. Skipped for explicit list/topic queries.
-  if (!isExplicitListQuery(message)) {
-    const named = findRemindersByName(message, reminders);
-    if (named.length === 1 && named[0]) {
-      return describeReminderForChat(named[0], now, options);
-    }
-    if (named.length > 1) {
-      return [
-        `Here ${named.length === 1 ? "is" : "are"} the ${named.length} reminder${named.length !== 1 ? "s" : ""} matching that:`,
-        ...named.slice(0, 5).map((r, i) => `${i + 1}. ${describeReminderForChat(r, now, options)}`),
-      ].join("\n");
-    }
-  }
+  // Specific-reminder query ("give me my hupendra reminder") → answer about it
+  // before the generic time-bucket list. (Also enforced earlier in the route so
+  // it isn't shadowed by inferListScopeFromMessage; kept here for the fallback path.)
+  const namedAnswer = answerNamedReminderQuery(message, reminders, now, options);
+  if (namedAnswer) return namedAnswer;
 
   const listScope = inferListScopeFromMessage(message);
   if (listScope) {

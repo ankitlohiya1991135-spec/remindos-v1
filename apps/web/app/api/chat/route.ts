@@ -1,5 +1,5 @@
 import { auth } from "@clerk/nextjs/server";
-import { buildLifeOsContextBlock, buildListRemindersReply, classifyReminderIntent, filterToday, findReminderByFuzzyMatch, findRemindersByName, inferListScopeFromMessage, isCompoundReminderQuestion, looksLikeCreateIntent, filterRemindersByListScope, describeReminderForChat, rankTasks, tryGroundedReminderAnswer, type LifeDomain, type ReminderItem, type TaskItem } from "@repo/reminder";
+import { buildLifeOsContextBlock, buildListRemindersReply, classifyReminderIntent, filterToday, findReminderByFuzzyMatch, findRemindersByName, answerNamedReminderQuery, inferListScopeFromMessage, isCompoundReminderQuestion, looksLikeCreateIntent, filterRemindersByListScope, describeReminderForChat, rankTasks, tryGroundedReminderAnswer, type LifeDomain, type ReminderItem, type TaskItem } from "@repo/reminder";
 import { api } from "@repo/db/convex/api";
 import { NextResponse } from "next/server";
 import { getConvexClient } from "../../../lib/server/convex-client";
@@ -644,6 +644,23 @@ export async function POST(request: Request) {
     }
   }
 
+  // ── Specific-reminder query (must beat the generic list path) ───────────────
+  // "give me my CLI reminders" names a specific reminder. Answer about it — across
+  // ALL statuses (it may be overdue or done) — BEFORE inferListScopeFromMessage,
+  // which would otherwise classify it as a "future" list and wrongly report
+  // "nothing scheduled ahead". Skipped for explicit scope/topic list requests.
+  if (!isCompoundReminderQuestion(message)) {
+    const namedAnswer = answerNamedReminderQuery(message, reminders, new Date(), displayOptions);
+    if (namedAnswer) {
+      const listedIds = findRemindersByName(message, reminders).slice(0, 5).map((r) => r.id);
+      void saveMessageServerSide(userId, "user", effectiveMessage);
+      void saveMessageServerSide(userId, "assistant", namedAnswer);
+      return NextResponse.json(
+        { reply: namedAnswer, action: { type: "list_reminders", listedIds } } satisfies ReminderAgentResponse,
+      );
+    }
+  }
+
   const listScopeFromMessage = inferListScopeFromMessage(message);
   if (listScopeFromMessage && !isCompoundReminderQuestion(message)) {
     let reply: string;
@@ -707,7 +724,7 @@ export async function POST(request: Request) {
         const matched = findRemindersByName(kwExtract, reminders).slice(0, 5);
         const listedIds = matched.map((r) => r.id);
         const reply = matched.length === 0
-          ? `No pending reminders found related to "${kwExtract}".`
+          ? `No reminders found related to "${kwExtract}".`
           : `Here are the reminders related to "${kwExtract}":\n${matched.map((r, i) => `${i + 1}. ${describeReminderForChat(r, new Date(), displayOptions)}`).join("\n")}`;
         void saveMessageServerSide(userId, "user", effectiveMessage);
         void saveMessageServerSide(userId, "assistant", reply);
