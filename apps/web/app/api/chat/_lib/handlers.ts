@@ -209,18 +209,12 @@ export async function tryReschedule(ctx: ChatContext): Promise<ReminderAgentResp
   const { userId, message, effectiveMessage, reminders, timeZone, history, body } = ctx;
   // ─── Reschedule fast path ─────────────────────────────────────────────────
   if (looksLikeRescheduleIntent(message)) {
-    const newDueAt = parseDateTimeFromInput(message, timeZone);
+    const parsed = parseDateTimeFromInput(message, timeZone);
+    const validDueAt = parsed && isValidFutureIsoDate(parsed) ? parsed : undefined;
 
-    if (!newDueAt || !isValidFutureIsoDate(newDueAt)) {
-      const r: ReminderAgentResponse = {
-        reply: "What time should I reschedule it to?",
-        action: { type: "clarify" },
-      };
-      void saveMessageServerSide(userId, "user", message);
-      void saveMessageServerSide(userId, "assistant", r.reply);
-      return r;
-    }
-
+    // Resolve WHICH reminder first, so an under-specified change ("change my
+    // doctor reminder time to this") still opens the card for the user to set the
+    // time — instead of a dead-end text prompt.
     const ordinalTarget = resolveByOrdinal(message, reminders, body.recentListedIds);
     const rawTarget = extractTargetFromReschedule(message);
     // A target is a context reference (resolve from history) when it's empty, a
@@ -238,11 +232,13 @@ export async function tryReschedule(ctx: ChatContext): Promise<ReminderAgentResp
         (r) => r.status === "pending" && titleIncludesTarget(r.title, rawTarget),
       );
       if (matches.length === 1) target = matches[0];
-      if (matches.length > 1) {
+      // Ambiguous → ask which one (only when we have a concrete time to carry
+      // forward; otherwise fall through to the generic clarify below).
+      if (matches.length > 1 && validDueAt) {
         const sample = matches.slice(0, 2).map((r) => `"${r.title}" at ${formatDueInUserZone(r.dueAt, timeZone)}`);
         const r: ReminderAgentResponse = {
           reply: `Which one do you mean — ${sample.join(" or ")}?`,
-          action: { type: "clarify", pendingOp: "reschedule", candidateIds: matches.map((m) => m.id), pendingDueAt: newDueAt },
+          action: { type: "clarify", pendingOp: "reschedule", candidateIds: matches.map((m) => m.id), pendingDueAt: validDueAt },
         };
         void saveMessageServerSide(userId, "user", effectiveMessage);
         void saveMessageServerSide(userId, "assistant", r.reply);
@@ -250,24 +246,40 @@ export async function tryReschedule(ctx: ChatContext): Promise<ReminderAgentResp
       }
     }
 
-    // Phase 1C: resolve pronoun ("reschedule it to tomorrow") from last assistant message
+    // Pronoun ("reschedule it to tomorrow") → resolve from the last assistant turn.
     if (!target && isPronoun) {
       target = resolveTargetFromHistory(history, reminders.filter((r) => r.status === "pending"));
     }
 
     if (target) {
-      // The system never commits the change. It resolves the target + parsed new
-      // time, then hands the user a PREFILLED reschedule card. The user taps Save
-      // to commit — keeping the mutation human-in-the-loop (no silent wrong writes).
+      // Modification of a specific reminder → show the reschedule CARD. Prefill the
+      // new time when we parsed one; otherwise the card opens at the reminder's
+      // current time for the user to pick. The system never commits — Save does.
       const r: ReminderAgentResponse = {
-        reply: `here's "${target.title}" — review the new time (${formatDueInUserZone(newDueAt, timeZone)}) and tap save.`,
-        action: { type: "reschedule_reminder", targetId: target.id, targetTitle: target.title, dueAt: newDueAt, preview: true },
+        reply: validDueAt
+          ? `here's "${target.title}" — review the new time (${formatDueInUserZone(validDueAt, timeZone)}) and tap save.`
+          : `here's "${target.title}" — pick the new time on the card and tap save.`,
+        action: {
+          type: "reschedule_reminder",
+          targetId: target.id,
+          targetTitle: target.title,
+          ...(validDueAt ? { dueAt: validDueAt } : {}),
+          preview: true,
+        },
       };
       void saveMessageServerSide(userId, "user", effectiveMessage);
       void saveMessageServerSide(userId, "assistant", r.reply);
       return r;
     }
-    // Target not resolved — fall through to LLM
+
+    // No specific reminder could be identified — ask which one.
+    const r: ReminderAgentResponse = {
+      reply: "Which reminder should I reschedule?",
+      action: { type: "clarify" },
+    };
+    void saveMessageServerSide(userId, "user", message);
+    void saveMessageServerSide(userId, "assistant", r.reply);
+    return r;
   }
 
   return null;

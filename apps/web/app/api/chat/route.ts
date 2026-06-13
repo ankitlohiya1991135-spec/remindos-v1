@@ -1,5 +1,5 @@
 import { auth } from "@clerk/nextjs/server";
-import { buildLifeOsContextBlock, buildListRemindersReply, classifyReminderIntent, filterToday, findReminderByFuzzyMatch, inferListScopeFromMessage, isCompoundReminderQuestion, looksLikeCreateIntent, looksLikeMarkDoneIntent, looksLikeDeleteIntent, looksLikeBulkIntent, looksLikeSnoozeIntent, looksLikeEditIntent, looksLikeRescheduleIntent, filterRemindersByListScope, describeReminderForChat, rankTasks, tryGroundedReminderAnswer, type LifeDomain, type ReminderItem, type TaskItem } from "@repo/reminder";
+import { buildLifeOsContextBlock, buildListRemindersReply, classifyReminderIntent, filterToday, findReminderByFuzzyMatch, findRemindersByName, inferListScopeFromMessage, isCompoundReminderQuestion, looksLikeCreateIntent, filterRemindersByListScope, describeReminderForChat, rankTasks, tryGroundedReminderAnswer, type LifeDomain, type ReminderItem, type TaskItem } from "@repo/reminder";
 import { api } from "@repo/db/convex/api";
 import { NextResponse } from "next/server";
 import { getConvexClient } from "../../../lib/server/convex-client";
@@ -15,7 +15,7 @@ import { hasExplicitTime, hasTodayHint, hasTomorrowHint, hasDayAfterTomorrowHint
 import { formatDueInUserZone, mapAgentScopeToListScope, fallbackDeterministicReply } from "./_lib/format";
 import { safeAgentResponse } from "./_lib/nim";
 import { parseLifeDomain, loadRemindersForChat, loadTasksForChat, loadUserWiki, filterRemindersForLLM, saveMessageServerSide, looksLikeConfirmation, findTargetReminder, normalizeClientTimeZone, suggestDomainTime, loadProfileForSuggestion } from "./_lib/data";
-import { extractTitleFromCreateInput, extractPriorityFromInput, extractDomainFromInput, extractRecurrenceFromInput, titleIncludesTarget, extractTargetFromMarkDone, extractTargetFromDelete, extractTargetFromReschedule, targetHasMeaningfulContent, resolveTargetFromHistory, extractSnoozeDelayMinutes, extractTargetFromSnooze, extractEditField, extractNewValueFromEdit, extractTargetFromEdit, extractPriorityFromEdit, extractDomainFromEdit, extractRecurrenceFromEdit, extractTaskLinkIntent, extractBulkOperation, extractBulkTargets, resolveByOrdinal, taskGate, looksLikeCreateTaskIntent, looksLikeListTasksIntent, looksLikeMarkTaskDoneIntent, looksLikeDeleteTaskIntent, looksLikeEditTaskIntent, extractTargetFromTaskMessage, extractTargetFromTaskEdit, extractEditTaskField, extractTitleFromTaskInput, PRONOUN_TARGETS } from "./_lib/extract";
+import { extractTitleFromCreateInput, extractPriorityFromInput, extractDomainFromInput, extractRecurrenceFromInput, titleIncludesTarget, resolveTargetFromHistory, extractNewValueFromEdit, extractPriorityFromEdit, extractDomainFromEdit, taskGate, looksLikeCreateTaskIntent, looksLikeListTasksIntent, looksLikeMarkTaskDoneIntent, looksLikeDeleteTaskIntent, looksLikeEditTaskIntent, extractTargetFromTaskMessage, extractTargetFromTaskEdit, extractEditTaskField, extractTitleFromTaskInput } from "./_lib/extract";
 import { tryBulk, tryMarkDone, tryDelete, tryReschedule, tryEdit, trySnoozeRecovery, trySnooze, type ChatContext } from "./_lib/handlers";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -574,7 +574,6 @@ export async function POST(request: Request) {
     return NextResponse.json(response);
   }
 
-
   // ─── Reminder fast-path handlers (run in order; first match wins) ──────────
   {
     const ctx: ChatContext = { userId, message, effectiveMessage, reminders, tasks, timeZone, history, body };
@@ -616,6 +615,32 @@ export async function POST(request: Request) {
       void saveMessageServerSide(userId, "user", effectiveMessage);
       void saveMessageServerSide(userId, "assistant", reply);
       return NextResponse.json({ reply, action: { type: "list_reminders", listedIds } } satisfies ReminderAgentResponse);
+    }
+  }
+
+  // ── Context-aware follow-up (no swipe required) ─────────────────────────────
+  // A pronoun-style detail question — "what's the date/time of this reminder?",
+  // "when is it?", "tell me about that one" — refers to the reminder discussed in
+  // the PREVIOUS turn. Resolve it from recent chat history (reusing the same
+  // resolver the operation flow uses) so the user never has to swipe-to-reply,
+  // and answer about THAT reminder (incl. overdue) instead of a generic list.
+  // Runs before list-scope so it isn't swallowed by the "future" catch-all.
+  if (
+    !isCompoundReminderQuestion(message) &&
+    /\b(this|that|it|its)\b/i.test(message) &&
+    /\b(date|time|when|due|detail|details|info|about|status)\b/i.test(message)
+  ) {
+    const ctxTarget = resolveTargetFromHistory(
+      history,
+      reminders.filter((r) => r.status === "pending"),
+    );
+    if (ctxTarget) {
+      const reply = describeReminderForChat(ctxTarget, new Date(), displayOptions);
+      void saveMessageServerSide(userId, "user", effectiveMessage);
+      void saveMessageServerSide(userId, "assistant", reply);
+      return NextResponse.json(
+        { reply, action: { type: "list_reminders", listedIds: [ctxTarget.id] } } satisfies ReminderAgentResponse,
+      );
     }
   }
 
@@ -675,16 +700,11 @@ export async function POST(request: Request) {
   if (/\brelated\s+to\b/i.test(message) && !isCompoundReminderQuestion(message)) {
     const kwExtract = message.match(/\brelated\s+to\s+(.+?)(?:\?|$)/i)?.[1]?.trim();
     if (kwExtract && kwExtract.length >= 2) {
-      const kwLower = kwExtract.toLowerCase();
-      // Use individual words (≥3 chars) from the keyword phrase as match tokens
-      const STOP_WORDS = new Set(["reminder", "reminders", "task", "tasks", "today", "tomorrow",
-        "with", "that", "this", "from", "have", "what", "tell", "show", "any"]);
-      const kwTokens = kwLower.split(/\s+/).filter((t) => t.length >= 3 && !STOP_WORDS.has(t));
-      if (kwTokens.length > 0) {
-        const matched = reminders
-          .filter((r) => r.status === "pending" &&
-            kwTokens.some((tok) => r.title.toLowerCase().includes(tok)))
-          .slice(0, 5);
+      // Use the shared word-boundary matcher so "car" matches the word "car" and
+      // never "care"/"scarce" (the old `.includes()` produced those false hits).
+      // Searches titles + notes across pending reminders (incl. overdue).
+      {
+        const matched = findRemindersByName(kwExtract, reminders).slice(0, 5);
         const listedIds = matched.map((r) => r.id);
         const reply = matched.length === 0
           ? `No pending reminders found related to "${kwExtract}".`

@@ -1144,8 +1144,15 @@ export function useChatEngine(params: UseChatEngineParams) {
             // Non-preview (legacy) actions just show a live card. Preview actions
             // open the card prefilled in the right mode so the user only taps Save.
             if (!a.preview) return base;
-            if (a.type === "reschedule_reminder" && a.dueAt) {
-              return { ...base, cardMode: "reschedule" as const, cardPrefill: { dueAt: a.dueAt } };
+            if (a.type === "reschedule_reminder") {
+              // Open the reschedule card. Prefill the new time when the message
+              // specified one; otherwise the card opens at the reminder's current
+              // time for the user to pick.
+              return {
+                ...base,
+                cardMode: "reschedule" as const,
+                ...(a.dueAt ? { cardPrefill: { dueAt: a.dueAt } } : {}),
+              };
             }
             if (a.type === "snooze_reminder" && typeof a.delayMinutes === "number") {
               return {

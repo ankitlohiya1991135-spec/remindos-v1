@@ -481,7 +481,14 @@ export function describeReminderForChat(
             ? "later"
             : "";
 
-  let line = `${reminder.title} — ${when}`;
+  // Title fallback: some reminders were created without a real title and stored
+  // as the generic "Reminder". Show a cleaned first line of their notes instead,
+  // so the user sees something meaningful rather than a bare "Reminder".
+  const rawTitle = reminder.title.trim();
+  const notesUsedAsTitle = rawTitle.toLowerCase() === "reminder" && !!reminder.notes?.trim();
+  const displayTitle = notesUsedAsTitle ? cleanNotesText(reminder.notes!, 60) : rawTitle;
+
+  let line = `${displayTitle} — ${when}`;
   if (bucketLabel) line += ` (${bucketLabel})`;
   if (reminder.domain) {
     line += ` · ${reminder.domain}`;
@@ -499,10 +506,23 @@ export function describeReminderForChat(
   if (reminder.recurrence && reminder.recurrence !== "none") {
     line += `. Repeats ${reminder.recurrence}`;
   }
-  if (reminder.notes?.trim()) {
-    line += `. Notes: ${reminder.notes.trim()}`;
+  // Notes: collapse newlines so multi-line / numbered-list notes don't get
+  // re-rendered as a broken nested list in the chat (the "1,2,3,2,3" bug).
+  // Skip when the notes are already serving as the display title.
+  if (reminder.notes?.trim() && !notesUsedAsTitle) {
+    line += `. Notes: ${cleanNotesText(reminder.notes, 140)}`;
   }
   return line;
+}
+
+/**
+ * Flatten reminder notes for inline chat display: collapse all whitespace/newlines
+ * to single spaces (so a multi-line numbered list never renders as markdown list
+ * items), trim, and truncate to `maxLen` characters.
+ */
+function cleanNotesText(notes: string, maxLen: number): string {
+  const flat = notes.replace(/\s+/g, " ").trim();
+  return flat.length > maxLen ? `${flat.slice(0, maxLen).trimEnd()}…` : flat;
 }
 
 export function buildListRemindersReply(
@@ -865,6 +885,62 @@ export function findReminderByFuzzyMatch(
 }
 
 /**
+ * Query stopwords — words that must never drive a specific-reminder name match.
+ */
+const QUERY_STOPWORDS = new Set([
+  "give", "show", "tell", "list", "find", "get", "want", "need", "have", "has", "had",
+  "the", "this", "that", "these", "those", "there", "here", "what", "which", "when",
+  "where", "how", "many", "much", "any", "some", "all", "every", "about", "related",
+  "regarding", "for", "from", "with", "into", "onto", "and", "but", "reminder",
+  "reminders", "task", "tasks", "please", "me", "my", "mine", "your", "you", "do",
+  "does", "did", "are", "was", "were", "due", "date", "time", "details", "detail",
+  "info", "status", "upcoming", "overdue", "missed", "today", "tomorrow", "tonight",
+  "pending", "done", "completed", "later", "next",
+]);
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Find PENDING reminders the user is referring to by NAME — matching meaningful
+ * query words against reminder titles + notes on WORD boundaries, so "car" matches
+ * the word "car" and never "care"/"scarce". Overdue reminders are status "pending"
+ * so they're included. Returns [] when the query names nothing specific.
+ *
+ * Shared by the specific-reminder detail path and the "related to X" keyword search
+ * so the matching rules (and their precision) live in exactly one place.
+ */
+export function findRemindersByName(query: string, reminders: ReminderItem[]): ReminderItem[] {
+  const words = query
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((w) => w.length >= 3 && !QUERY_STOPWORDS.has(w));
+  if (words.length === 0) return [];
+  const patterns = words.map((w) => new RegExp(`\\b${escapeRegExp(w)}\\b`));
+  return reminders
+    .filter((r) => r.status === "pending")
+    .filter((r) => {
+      const hay = `${r.title} ${r.notes ?? ""}`.toLowerCase();
+      return patterns.some((re) => re.test(hay));
+    });
+}
+
+/**
+ * True when a message is an explicit scope/topic/bulk LIST request (not an ask
+ * about one specific reminder) — so the specific-reminder path doesn't hijack
+ * "all my reminders", "health reminders", "what's overdue", etc.
+ */
+function isExplicitListQuery(message: string): boolean {
+  const n = message.toLowerCase();
+  return (
+    /\b(all|everything|full list|every reminder)\b/.test(n) ||
+    /\b(overdue|missed|today|tonight|tomorrow|upcoming|later|pending|done|completed)\b/.test(n) ||
+    /\b(health|fitness|gym|finance|financial|money|career|work|job|hobby|hobbies|fun|study|coding|personal)\b/.test(n)
+  );
+}
+
+/**
  * Fast grounded answers without an LLM (list + simple detail). Returns null if unclear.
  */
 export function tryGroundedReminderAnswer(
@@ -884,6 +960,23 @@ export function tryGroundedReminderAnswer(
   }
 
   if (isCompoundReminderQuestion(message) && intent !== "planning_query") return null;
+
+  // Specific-reminder query: the message names a particular reminder ("give me my
+  // hupendra reminder"). Answer about it — INCLUDING overdue ones — before the
+  // generic time-bucket list, which would otherwise reply "nothing scheduled
+  // ahead" for a reminder that is overdue. Skipped for explicit list/topic queries.
+  if (!isExplicitListQuery(message)) {
+    const named = findRemindersByName(message, reminders);
+    if (named.length === 1 && named[0]) {
+      return describeReminderForChat(named[0], now, options);
+    }
+    if (named.length > 1) {
+      return [
+        `Here ${named.length === 1 ? "is" : "are"} the ${named.length} reminder${named.length !== 1 ? "s" : ""} matching that:`,
+        ...named.slice(0, 5).map((r, i) => `${i + 1}. ${describeReminderForChat(r, now, options)}`),
+      ].join("\n");
+    }
+  }
 
   const listScope = inferListScopeFromMessage(message);
   if (listScope) {
