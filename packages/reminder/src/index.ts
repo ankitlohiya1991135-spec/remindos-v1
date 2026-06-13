@@ -590,7 +590,13 @@ export function inferListScopeFromMessage(message: string): ReminderListScope | 
     return null;
   }
 
-  if (/\b(overdue|missed)\b/.test(n) && /\b(reminder|reminders)\b/.test(n)) return "missed";
+  // "overdue"/"missed" → missed list. Don't require the literal word "reminder":
+  // in a reminder app, "what's overdue" / "anything missed" obviously mean reminders.
+  if (
+    /\b(overdue|missed)\b/.test(n) &&
+    (/\b(reminder|reminders|due|scheduled)\b/.test(n) ||
+      /\b(what|whats|what'?s|anything|any|show|list|see|view|got)\b/.test(n))
+  ) return "missed";
   // Done/completed reminders — must be checked before the generic "tomorrow" path
   if (
     /\b(done|completed?|finished|checked\s*off|marked\s*done)\b/.test(n)
@@ -615,10 +621,18 @@ export function inferListScopeFromMessage(message: string): ReminderListScope | 
 
   if (
     /\b(upcoming|coming up|ahead|scheduled next|what'?s next|what do i have (coming|next))\b/.test(n)
-    && /\b(reminder|reminders|appointment|meeting|call)\b/i.test(n)
+    && (/\b(reminder|reminders|appointment|meeting|call)\b/i.test(n) ||
+      /\b(what|whats|what'?s|anything|any|show|list|see|view|got)\b/.test(n))
   ) {
     return "future";
   }
+
+  // Bare "all/everything (my) reminders" — common query with no list verb.
+  if (
+    /\b(all|every|everything)\b/.test(n)
+    && /\breminders?\b/.test(n)
+    && !/\b(today|tonight|tomorrow|overdue|missed|done|completed|later)\b/.test(n)
+  ) return "all_pending";
 
   if (
     /\b(what|which|show|list|tell me|give me|how many)\b/.test(n)
@@ -630,7 +644,12 @@ export function inferListScopeFromMessage(message: string): ReminderListScope | 
     if (/\b(missed|overdue)\b/.test(n)) return "missed";
     if (/\b(done|completed?|finished|checked\s*off)\b/.test(n)) return "done";
     if (/\b(later|after tomorrow)\b/.test(n)) return "later";
-    return "future";
+    // Default for a generic "show/list/how many reminders" → ALL pending,
+    // sorted oldest-due-first. Using "future" here silently hid overdue
+    // reminders and reported "nothing scheduled ahead" for users whose
+    // reminders are all overdue. Explicit "upcoming/next/ahead" still maps to
+    // "future" via the dedicated branch above.
+    return "all_pending";
   }
 
   return null;
