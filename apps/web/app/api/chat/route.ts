@@ -652,6 +652,22 @@ export async function POST(request: Request) {
     }
   }
 
+  // ── Count query → precise deterministic count (incl. overdue) ───────────────
+  // "how many reminders do i have", "reminder count" — answer with a number rather
+  // than bouncing to the LLM. Runs before the list path so it isn't turned into a list.
+  if (/\b(how many|number of|count of|count)\b/i.test(message) && /\breminders?\b/i.test(message)) {
+    const pending = reminders.filter((r) => r.status !== "done");
+    const overdue = pending.filter((r) => new Date(r.dueAt).getTime() < Date.now()).length;
+    const reply = pending.length === 0
+      ? "You have no pending reminders."
+      : `You have ${pending.length} pending reminder${pending.length !== 1 ? "s" : ""}${overdue ? `, ${overdue} of them overdue` : ""}.`;
+    void saveMessageServerSide(userId, "user", effectiveMessage);
+    void saveMessageServerSide(userId, "assistant", reply);
+    return NextResponse.json(
+      { reply, action: { type: "list_reminders", listedIds: pending.slice(0, 5).map((r) => r.id) } } satisfies ReminderAgentResponse,
+    );
+  }
+
   // ── Specific-reminder query (must beat the generic list path) ───────────────
   // "give me my CLI reminders" names a specific reminder. Answer about it — across
   // ALL statuses (it may be overdue or done) — BEFORE inferListScopeFromMessage,

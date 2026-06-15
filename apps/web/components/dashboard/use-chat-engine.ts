@@ -72,6 +72,8 @@ export interface UseChatEngineParams {
    *  On API failure the caller should invoke refreshReminders() to re-sync from the server. */
   optimisticUpdateReminder: (updater: (prev: ReminderItem[]) => ReminderItem[]) => void;
   playReminderSuccessAnimation: (info?: { title: string; time: string }) => void;
+  /** Fire a Win Celebration when a reminder is completed from chat / a chat card. */
+  onReminderCompleted?: (reminder: ReminderItem) => void;
   refreshAfterReminderMutation: (promise: Promise<Response>) => Promise<void>;
   showShareToast: (msg: string) => void;
 }
@@ -109,6 +111,7 @@ export function useChatEngine(params: UseChatEngineParams) {
     refreshTasks,
     optimisticUpdateReminder,
     playReminderSuccessAnimation,
+    onReminderCompleted,
     refreshAfterReminderMutation,
     showShareToast,
   } = params;
@@ -234,6 +237,8 @@ export function useChatEngine(params: UseChatEngineParams) {
       optimisticUpdateReminder((prev) =>
         prev.map((r) => r.id === target.id ? { ...r, status: "done" as const } : r),
       );
+      // Win Celebration — same dopamine moment as completing from the list.
+      onReminderCompleted?.(target);
       void refreshAfterReminderMutation(
         fetch(`/api/reminders/${target.id}`, {
           method: "PATCH",

@@ -423,6 +423,17 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
   }, [refreshReminders, optimisticUpdateReminder, showShareToast]);
 
   /** Queue a Done or Delete with a 5-second undo window. */
+  /** Win Celebration — a gentle dopamine moment on completion (any path);
+   *  extra warmth for long-pending clears. */
+  const celebrateCompletion = useCallback((reminder: ReminderItem) => {
+    if (winTimerRef.current) clearTimeout(winTimerRef.current);
+    setWinCopy(pickWinCopy({ longPending: isLongPending(reminder.createdAt) }));
+    winTimerRef.current = setTimeout(() => {
+      setWinCopy(null);
+      winTimerRef.current = null;
+    }, 2800);
+  }, []);
+
   const triggerUndoAction = useCallback((type: "done" | "delete", reminder: ReminderItem) => {
     // If there is already a queued action, commit it immediately before replacing
     if (pendingUndoRef.current && undoTimerRef.current) {
@@ -435,13 +446,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
       optimisticUpdateReminder((prev) =>
         prev.map((r) => r.id === reminder.id ? { ...r, status: "done" as const } : r),
       );
-      // Win Celebration — a gentle dopamine moment; extra warmth for long-pending clears.
-      if (winTimerRef.current) clearTimeout(winTimerRef.current);
-      setWinCopy(pickWinCopy({ longPending: isLongPending(reminder.createdAt) }));
-      winTimerRef.current = setTimeout(() => {
-        setWinCopy(null);
-        winTimerRef.current = null;
-      }, 2800);
+      celebrateCompletion(reminder);
     } else {
       optimisticUpdateReminder((prev) => prev.filter((r) => r.id !== reminder.id));
     }
@@ -456,7 +461,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
         void commitPendingUndo(pending);
       }
     }, 5000);
-  }, [commitPendingUndo, optimisticUpdateReminder]);
+  }, [commitPendingUndo, optimisticUpdateReminder, celebrateCompletion]);
 
   /** Cancel the pending undo action and restore the reminder. */
   const cancelUndoAction = useCallback(() => {
@@ -901,6 +906,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
     refreshTasks,
     optimisticUpdateReminder,
     playReminderSuccessAnimation,
+    onReminderCompleted: celebrateCompletion,
     refreshAfterReminderMutation,
     showShareToast,
   });
