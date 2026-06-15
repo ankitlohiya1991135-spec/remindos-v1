@@ -405,6 +405,13 @@ export function looksLikeRescheduleIntent(message: string): boolean {
   if (/\bshift\b.{0,60}\b(to|from)\b/.test(n) && /\b(today|tomorrow|tonight|at\s+\d)\b/.test(n)) return true;
   // "set X for [new time]" — only when a reminder is targeted (not "set a reminder")
   if (/\bset\s+it\s+(for|to)\b/.test(n)) return true;
+  // "change/move/push X to <time>" — the most common phrasing, with NO literal
+  // "time"/"date" word ("change my doctor reminder to 3pm", "move gym to friday").
+  // Requires a time-like token after "to" so it isn't confused with a title edit.
+  if (
+    /\b(change|update|move|shift|push|reschedule|set)\b.{0,50}\bto\b/.test(n) &&
+    /\b(\d{1,2}\s*:\s*\d{2}|\d{1,2}\s*(am|pm)|o'?clock|noon|midnight|today|tonight|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|next\s+\w+|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b/.test(n)
+  ) return true;
   return false;
 }
 
@@ -602,10 +609,11 @@ export function inferListScopeFromMessage(message: string): ReminderListScope | 
     /\b(done|completed?|finished|checked\s*off|marked\s*done)\b/.test(n)
     && /\b(reminder|reminders)\b/.test(n)
   ) return "done";
-  if (/\btomorrow\b/.test(n) && /\b(reminder|reminders|due|scheduled)\b/.test(n)) return "tomorrow";
+  const queryCue = /\b(what|whats|what'?s|anything|any|show|list|see|view|got|have|do i)\b/.test(n);
+  if (/\btomorrow\b/.test(n) && (/\b(reminder|reminders|due|scheduled)\b/.test(n) || queryCue)) return "tomorrow";
   if (
     /\b(today|tonight)\b/.test(n)
-    && /\b(reminder|reminders|due|scheduled)\b/.test(n)
+    && (/\b(reminder|reminders|due|scheduled)\b/.test(n) || queryCue)
     && !/\bupcoming\b/.test(n)
   ) {
     return "today";
@@ -937,13 +945,22 @@ export function findRemindersByName(query: string, reminders: ReminderItem[]): R
     .filter((w) => w.length >= 3 && !QUERY_STOPWORDS.has(w));
   if (words.length === 0) return [];
   const patterns = words.map((w) => new RegExp(`\\b${escapeRegExp(w)}\\b`));
-  // Search ALL statuses — a reminder the user names ("my CLI reminder") may be
-  // overdue or already done; we should still surface it. Active (pending) first.
-  return reminders
-    .filter((r) => {
+  // Score each reminder by HOW MANY query words it contains, then keep only the
+  // strongest matches. So "doctor appointment" returns the doctor reminder (2
+  // words) and not every "…appointment" (1 word). Searches all statuses (a named
+  // reminder may be overdue/done); active (pending) shown first.
+  const scored = reminders
+    .map((r) => {
       const hay = `${r.title} ${r.notes ?? ""}`.toLowerCase();
-      return patterns.some((re) => re.test(hay));
+      const count = patterns.reduce((c, re) => c + (re.test(hay) ? 1 : 0), 0);
+      return { r, count };
     })
+    .filter((x) => x.count > 0);
+  if (scored.length === 0) return [];
+  const maxCount = Math.max(...scored.map((x) => x.count));
+  return scored
+    .filter((x) => x.count === maxCount)
+    .map((x) => x.r)
     .sort((a, b) => (a.status === "pending" ? 0 : 1) - (b.status === "pending" ? 0 : 1));
 }
 
@@ -1043,6 +1060,14 @@ export function tryGroundedReminderAnswer(
       lines.push(`Free slot: ${analysis.freeSlots[0]}`);
     }
     return lines.join("\n") || "You have no pending reminders to plan right now.";
+  }
+
+  // General "list reminders" intent with no specific scope/detail resolved → show
+  // all pending (oldest-due first). Catches the many natural phrasings the regex
+  // scope rules miss ("do i have any reminders", "my reminders", "what's pending",
+  // "what's on my list") instead of bouncing them to the LLM.
+  if (intent === "list_reminders") {
+    return buildListRemindersReply(reminders, "all_pending", now, 5, options);
   }
   return null;
 }

@@ -17,6 +17,7 @@ import { safeAgentResponse } from "./_lib/nim";
 import { parseLifeDomain, loadRemindersForChat, loadTasksForChat, loadUserWiki, filterRemindersForLLM, saveMessageServerSide, looksLikeConfirmation, findTargetReminder, normalizeClientTimeZone, suggestDomainTime, loadProfileForSuggestion } from "./_lib/data";
 import { extractTitleFromCreateInput, extractPriorityFromInput, extractDomainFromInput, extractRecurrenceFromInput, titleIncludesTarget, resolveTargetFromHistory, extractNewValueFromEdit, extractPriorityFromEdit, extractDomainFromEdit, taskGate, looksLikeCreateTaskIntent, looksLikeListTasksIntent, looksLikeMarkTaskDoneIntent, looksLikeDeleteTaskIntent, looksLikeEditTaskIntent, extractTargetFromTaskMessage, extractTargetFromTaskEdit, extractEditTaskField, extractTitleFromTaskInput } from "./_lib/extract";
 import { tryBulk, tryMarkDone, tryDelete, tryReschedule, tryEdit, trySnoozeRecovery, trySnooze, type ChatContext } from "./_lib/handlers";
+import { classifyPrompt } from "./_lib/classify";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -574,8 +575,15 @@ export async function POST(request: Request) {
     return NextResponse.json(response);
   }
 
-  // ─── Reminder fast-path handlers (run in order; first match wins) ──────────
-  {
+  // ─── Single intent classification (card vs answer) ─────────────────────────
+  // One reliable decision instead of a dozen overlapping regex checks. With the
+  // LLM flag off (default) this equals the deterministic intent (same predicates
+  // the handlers use) → zero behaviour change. With CLASSIFY_WITH_LLM on, the LLM
+  // disambiguates, and an "info" question can never trip a mutation card.
+  const promptCategory = await classifyPrompt(message);
+
+  // ─── Reminder mutation handlers → micro-front-end card (only when "mutate") ──
+  if (promptCategory === "mutate") {
     const ctx: ChatContext = { userId, message, effectiveMessage, reminders, tasks, timeZone, history, body };
     for (const handler of [tryBulk, tryMarkDone, tryDelete, tryReschedule, tryEdit, trySnoozeRecovery, trySnooze]) {
       const r = await handler(ctx);
