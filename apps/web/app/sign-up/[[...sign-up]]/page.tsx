@@ -6,9 +6,9 @@ export default function SignUpPage() {
   return (
     <div data-testid="sign-up-page">
       <AuthShell
-        badge="Create account"
-        title="Build a calmer system for tasks, reminders, and daily follow-through."
-        description="Start with a workspace that keeps reminders, linked tasks, shared planning, and daily briefings in one place instead of scattering them across tools."
+        badge="The Personal Operating System"
+        title="Your entire life. One dashboard."
+        description="Goals, habits, health, finances, and AI-powered insights — organized into a single, calm operating system for your future self."
         alternateHref="/sign-in"
         alternateLabel="Sign in"
       >

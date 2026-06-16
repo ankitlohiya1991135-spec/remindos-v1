@@ -6,9 +6,9 @@ export default function SignInPage() {
   return (
     <div data-testid="sign-in-page">
       <AuthShell
-        badge="Sign in"
-        title="Pick up your reminders without losing context."
-        description="Return to your workspace, review what is overdue, and continue the chat-first planning flow without digging through multiple screens."
+        badge="Welcome back"
+        title="Pick up right where you left off."
+        description="Return to your calm dashboard — your goals, habits, reminders, and AI insights are exactly where you left them."
         alternateHref="/sign-up"
         alternateLabel="Create account"
       >

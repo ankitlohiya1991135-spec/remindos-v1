@@ -11,10 +11,22 @@ interface AuthShellProps {
 }
 
 const valuePoints = [
-  "Chat-first planning for reminders, tasks, and shared follow-ups.",
-  "A lighter workspace that keeps long lists scrollable instead of crowded.",
-  "Fast access to daily briefing, overdue work, and linked task flows.",
+  "Goals, habits, health, and finances in one calm dashboard.",
+  "AI-powered insights that surface what actually moves you.",
+  "Gentle, supportive reminders — never naggy, never overwhelming.",
 ];
+
+function Check() {
+  return (
+    <svg viewBox="0 0 20 20" className="mt-0.5 h-4 w-4 shrink-0 text-blue-600" fill="currentColor" aria-hidden>
+      <path
+        fillRule="evenodd"
+        d="M16.7 5.3a1 1 0 0 1 0 1.4l-7.5 7.5a1 1 0 0 1-1.4 0l-3.5-3.5a1 1 0 1 1 1.4-1.4l2.8 2.8 6.8-6.8a1 1 0 0 1 1.4 0Z"
+        clipRule="evenodd"
+      />
+    </svg>
+  );
+}
 
 export function AuthShell({
   badge,
@@ -25,56 +37,53 @@ export function AuthShell({
   children,
 }: AuthShellProps) {
   return (
-    <main className="relative isolate min-h-[calc(100svh-64px)] overflow-hidden px-4 py-[max(2rem,env(safe-area-inset-top))] sm:px-6 lg:px-10">
-      <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[28rem] bg-[radial-gradient(circle_at_top_left,rgba(109,94,252,0.18),transparent_44%),radial-gradient(circle_at_top_right,rgba(105,210,181,0.18),transparent_34%),linear-gradient(180deg,rgba(255,255,255,0.86),rgba(248,248,246,0))]" />
-      <div className="mx-auto grid min-h-full w-full max-w-[88rem] gap-6 pb-[max(2rem,env(safe-area-inset-bottom))] lg:grid-cols-[minmax(0,1.05fr)_minmax(22rem,30rem)] lg:items-center">
-        <section className="rounded-[2rem] border border-white/70 bg-white/80 p-6 shadow-[0_30px_80px_-45px_rgba(15,23,42,0.35)] backdrop-blur sm:p-8 lg:p-10">
-          <span className="inline-flex rounded-full border border-violet-200 bg-violet-50 px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.24em] text-violet-700">
-            {badge}
+    <main className="relative isolate min-h-[calc(100svh-64px)] overflow-hidden bg-[#f7f9ff] px-4 py-[max(2rem,env(safe-area-inset-top))] text-slate-900 dark:bg-slate-950 dark:text-slate-100 sm:px-6 lg:px-10">
+      <div className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[32rem] bg-[radial-gradient(circle_at_50%_-10%,rgba(37,99,235,0.16),transparent_55%)]" />
+      <div className="mx-auto grid min-h-full w-full max-w-6xl gap-8 pb-[max(2rem,env(safe-area-inset-bottom))] lg:grid-cols-[minmax(0,1.05fr)_minmax(22rem,28rem)] lg:items-center">
+        {/* Left — brand story */}
+        <section className="lg:pr-6">
+          <span className="inline-flex items-center gap-2 rounded-full border border-blue-200 bg-blue-50 px-3.5 py-1.5 text-xs font-semibold text-blue-700 dark:border-blue-500/30 dark:bg-blue-500/10 dark:text-blue-300">
+            ✦ {badge}
           </span>
-          <h1 className="mt-5 max-w-2xl text-3xl font-semibold tracking-tight text-slate-950 sm:text-4xl lg:text-[3.35rem] lg:leading-[1.02]">
+          <h1 className="mt-6 max-w-xl text-3xl font-bold leading-[1.1] tracking-tight sm:text-4xl lg:text-5xl">
             {title}
           </h1>
-          <p className="mt-4 max-w-2xl text-base leading-7 text-slate-600 sm:text-lg">
+          <p className="mt-5 max-w-lg text-base leading-7 text-slate-600 dark:text-slate-300">
             {description}
           </p>
-          <div className="mt-8 grid gap-3 sm:grid-cols-3">
-            {valuePoints.map((point, index) => (
-              <article
-                key={point}
-                className="rounded-[1.5rem] border border-slate-200/80 bg-slate-50/90 p-4 shadow-sm"
-              >
-                <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-slate-400">
-                  0{index + 1}
-                </p>
-                <p className="mt-3 text-sm leading-6 text-slate-700">{point}</p>
-              </article>
+          <ul className="mt-8 space-y-3">
+            {valuePoints.map((point) => (
+              <li key={point} className="flex items-start gap-2.5 text-sm text-slate-700 dark:text-slate-200">
+                <Check />
+                {point}
+              </li>
             ))}
-          </div>
+          </ul>
         </section>
 
-        <section className="relative overflow-hidden rounded-[2rem] border border-slate-200/80 bg-white/92 p-4 shadow-[0_30px_80px_-45px_rgba(15,23,42,0.45)] backdrop-blur sm:p-6">
-          <div className="absolute inset-x-6 top-0 h-28 rounded-b-[2rem] bg-[linear-gradient(180deg,rgba(109,94,252,0.12),rgba(255,255,255,0))]" />
-          <div className="relative rounded-[1.5rem] border border-slate-200 bg-white p-5 shadow-[0_18px_40px_-30px_rgba(15,23,42,0.4)]">
-            <div className="mb-5 flex items-center justify-between gap-3">
+        {/* Right — auth card */}
+        <section className="relative overflow-hidden rounded-3xl border border-slate-200 bg-white p-5 shadow-[0_40px_80px_-50px_rgba(37,99,235,0.5)] dark:border-slate-700 dark:bg-slate-900 sm:p-7">
+          <div className="mb-5 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-600 text-sm font-bold text-white">
+                R
+              </span>
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-400">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-slate-400">
                   Account access
                 </p>
-                <p className="mt-1 text-lg font-semibold text-slate-950">
-                  RemindOS workspace
-                </p>
+                <p className="text-sm font-semibold text-slate-900 dark:text-slate-100">RemindOS workspace</p>
               </div>
-              <Link
-                href={alternateHref}
-                className="rounded-full border border-slate-200 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
-              >
-                {alternateLabel}
-              </Link>
             </div>
-            <div className="[&_.cl-rootBox]:w-full [&_.cl-card]:shadow-none [&_.cl-footerAction]:justify-center [&_.cl-footerActionLink]:font-semibold [&_.cl-header]:hidden [&_.cl-socialButtonsBlockButton]:shadow-none">
-              {children}
-            </div>
+            <Link
+              href={alternateHref}
+              className="rounded-full border border-slate-300 px-3.5 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+            >
+              {alternateLabel}
+            </Link>
+          </div>
+          <div className="[&_.cl-card]:shadow-none [&_.cl-footerAction]:justify-center [&_.cl-footerActionLink]:font-semibold [&_.cl-header]:hidden [&_.cl-rootBox]:w-full [&_.cl-socialButtonsBlockButton]:shadow-none">
+            {children}
           </div>
         </section>
       </div>

@@ -60,7 +60,7 @@ export default async function RootLayout({
                   href="/"
                   className="flex min-w-0 flex-1 items-center gap-3 text-slate-900 dark:text-slate-100"
                 >
-                  <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[linear-gradient(135deg,#7c3aed_0%,#06b6d4_100%)] shadow-[0_12px_30px_-18px_rgba(124,58,237,0.9)]">
+                  <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-[linear-gradient(135deg,#2563eb_0%,#4f46e5_100%)] shadow-[0_12px_30px_-18px_rgba(37,99,235,0.9)]">
                     <Image src="/logo-remindos.svg" alt="RemindOS logo" width={20} height={20} />
                   </span>
                   <span className="flex min-w-0 flex-col leading-tight sm:flex-row sm:items-baseline sm:gap-2">
@@ -88,7 +88,7 @@ export default async function RootLayout({
                     <Link
                       href="/sign-up"
                       data-testid="header-sign-up"
-                      className="rounded-full bg-violet-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-violet-500"
+                      className="rounded-full bg-blue-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-blue-500"
                     >
                       Get started
                     </Link>

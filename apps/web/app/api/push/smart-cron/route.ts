@@ -16,6 +16,13 @@ import { NextResponse } from "next/server";
 import { api } from "@repo/db/convex/api";
 import { getConvexClient } from "../../../../lib/server/convex-client";
 import { sendWebPushToUser } from "../../../../lib/server/send-web-push";
+import {
+  determineTier,
+  generateNotification,
+  type Tier,
+  type CopyContext,
+  type NotificationType,
+} from "../../../../lib/server/notifications/engine";
 
 // ── constants ──────────────────────────────────────────────────────────────────
 
@@ -88,10 +95,13 @@ interface NudgeContext {
   overdueCount: number;
   topDomain?: string | null;
   nextDueTitle?: string | null;
+  nextDueAt?: number | null;   // epoch ms of soonest upcoming reminder (for time anchoring)
   displayName?: string | null;
   localHour: number;      // 0-23 in user's timezone
   streakDays: number;     // consecutive active days ending yesterday (0 = no streak)
   hasNoPending: boolean;  // true when user has zero pending reminders/tasks
+  tier?: Tier;            // data-richness tier (1=cold start … 3=rich). Defaults to 1 (safest).
+  doneToday?: number;     // completions today (for evening soft-close copy)
 }
 
 type Template = { title: string; body: string };
@@ -108,32 +118,10 @@ function localTimeSlot(h: number): "morning" | "afternoon" | "evening" | "night"
   return "night";
 }
 
-const DOMAIN_EMOJI: Record<string, string> = {
-  health: "🏃", finance: "💸", career: "💼", hobby: "🎨", fun: "🎮",
-};
-const DOMAIN_LABEL: Record<string, string> = {
-  health: "fitness", finance: "finances", career: "career",
-  hobby: "hobbies", fun: "fun stuff",
-};
-
-/**
- * Picks a gentle, supportive notification from context-appropriate pools.
- * Celebrates streaks (never threatens them), reframes overdue without shame,
- * and never guilt-trips. All copy also passes the anti-surveillance filter.
- */
-export function generateSmartNudgeMessage(ctx: NudgeContext): Template {
-  const {
-    pendingCount, overdueCount, topDomain,
-    nextDueTitle, displayName, localHour, streakDays, hasNoPending,
-  } = ctx;
-
-  const name  = displayName ? ` ${displayName.split(" ")[0]}` : "";
-  const slot  = localTimeSlot(localHour);
-  const emoji = topDomain ? DOMAIN_EMOJI[topDomain] ?? "🌱" : "🌱";
-  const label = topDomain ? DOMAIN_LABEL[topDomain] ?? topDomain : "";
-  const n     = (c: number) => `${c} thing${c !== 1 ? "s" : ""}`;
-
-  // ── Streak — CELEBRATE, never threaten ──
+// Streak celebration is not one of the six trigger types — it's a standalone
+// "noticing you've been kind to yourself" moment. CELEBRATE, never threaten.
+function streakCopy(streakDays: number, displayName?: string | null): Template {
+  const name = displayName ? ` ${displayName.split(" ")[0]}` : "";
   if (streakDays >= 7) {
     return pick<Template>([
       { title: `${streakDays} days in a row 🌱`, body: `that's real momentum${name}. however today goes, you've already built something.` },
@@ -141,90 +129,78 @@ export function generateSmartNudgeMessage(ctx: NudgeContext): Template {
       { title: "quiet little streak 🌟", body: `${streakDays} days in. no pressure to keep it — just noticing you've been kind to yourself.` },
     ]);
   }
-  if (streakDays >= 3) {
-    return pick<Template>([
-      { title: `${streakDays} days, nice 🌱`, body: `you've shown up a few days running${name}. that counts for a lot.` },
-      { title: "momentum's a real thing 🌿", body: `${streakDays} days in a row. whatever happens next, this was good.` },
-    ]);
-  }
+  return pick<Template>([
+    { title: `${streakDays} days, nice 🌱`, body: `you've shown up a few days running${name}. that counts for a lot.` },
+    { title: "momentum's a real thing 🌿", body: `${streakDays} days in a row. whatever happens next, this was good.` },
+  ]);
+}
 
-  // ── Overdue — gentle, no panic, no shame ──
-  if (overdueCount >= 5) {
-    return pick<Template>([
-      { title: "the list got long 🌿", body: "a bunch of things slipped past their time. that's okay — just pick one, the rest can wait." },
-      { title: `breathe${name} 😌`, body: `${overdueCount} things are past due, but you're not behind — the list is just long. one thing is enough.` },
-      { title: "no rush 🤍", body: "some reminders drifted past. whenever you're ready, start with whichever feels easiest." },
-    ]);
-  }
-  if (overdueCount >= 2) {
-    return pick<Template>([
-      { title: "a couple things slipped 🌱", body: `${overdueCount} past their time — no stress. pick one whenever the moment feels right.` },
-      { title: "still totally fine 😌", body: "a few reminders are waiting past due. they're not going anywhere — start small." },
-    ]);
-  }
-
-  // ── No pending — chill / gentle ──
-  if (hasNoPending) {
-    if (slot === "morning") {
-      return pick<Template>([
-        { title: `morning${name} 🌅`, body: "nothing pressing right now. if something's on your mind, i can help you sort it." },
-        { title: "clear slate ☀️", body: "nothing pending today. enjoy it — i'm here if you want to plan anything." },
-      ]);
-    }
-    if (slot === "evening") {
-      return pick<Template>([
-        { title: `evening${name} 🌙`, body: "all clear for now. rest easy — tomorrow can wait until tomorrow." },
-        { title: "nice and quiet 🌿", body: "nothing on the list. if you want, jot down tomorrow's one thing and let it go." },
-      ]);
-    }
-    return pick<Template>([
-      { title: "all clear 🤍", body: `nothing pending right now${name}. i'm here whenever you need to capture something.` },
-      { title: "breathing room 🌱", body: "your list is empty. no pressure to fill it — just here if you need me." },
-    ]);
-  }
-
-  // ── Next due — gentle heads-up ──
-  if (nextDueTitle) {
-    return pick<Template>([
-      { title: "gentle heads-up 🌿", body: `"${nextDueTitle}" is coming up. no rush — just putting it on your radar.` },
-      { title: "coming up soon 😌", body: `"${nextDueTitle}" is on the horizon whenever you're ready for it.` },
-    ]);
-  }
-
-  // ── Domain focus — light, supportive ──
-  if (topDomain && label) {
-    return pick<Template>([
-      { title: `${emoji} a little ${label} nudge`, body: `${n(pendingCount)} waiting whenever you've got the energy.` },
-      { title: `${emoji} no rush on ${label}`, body: `your ${label} list is here when you want it${name}. one small step counts.` },
-    ]);
-  }
-
-  // ── Time-of-day — warm, low-pressure ──
+// Empty-state copy — the user has nothing pending. Warm, no pressure to fill it.
+function allClearCopy(slot: ReturnType<typeof localTimeSlot>, displayName?: string | null): Template {
+  const name = displayName ? ` ${displayName.split(" ")[0]}` : "";
   if (slot === "morning") {
     return pick<Template>([
-      { title: `morning${name} 🌱`, body: "if you only do one thing today, that's enough. pick whichever feels lightest." },
-      { title: "easy start ☀️", body: `${n(pendingCount)} when you're ready — but just starting one is a win.` },
+      { title: `morning${name} 🌅`, body: "nothing pressing right now. if something's on your mind, i can help you sort it." },
+      { title: "clear slate ☀️", body: "nothing pending today. enjoy it — i'm here if you want to plan anything." },
     ]);
   }
-  if (slot === "afternoon") {
+  if (slot === "evening" || slot === "night") {
     return pick<Template>([
-      { title: "afternoon check-in 🌿", body: "if there's energy for one small thing, great. if not, that's okay too." },
-      { title: "no pressure 😌", body: `${n(pendingCount)} pending whenever it feels right. one tiny step is plenty.` },
+      { title: `evening${name} 🌙`, body: "all clear for now. rest easy — tomorrow can wait until tomorrow." },
+      { title: "nice and quiet 🌿", body: "nothing on the list. if you want, jot down tomorrow's one thing and let it go." },
     ]);
   }
-  if (slot === "evening") {
-    return pick<Template>([
-      { title: `winding down${name} 🌙`, body: "whatever didn't happen today is fine — it'll keep. you did enough." },
-      { title: "soft evening 🌿", body: "one quick thing if you feel like it, otherwise rest. both are good choices." },
-    ]);
-  }
-
-  // ── Gentle fallback ──
   return pick<Template>([
-    { title: "here whenever you're ready 🌱", body: `${n(pendingCount)} waiting — no rush, no pressure.` },
-    { title: "soft check-in 🤍", body: `your reminders are here when you want them${name}. start with the easiest one.` },
-    { title: "one small step 🌿", body: "nothing pressing. if you want to knock out one thing, i'm right here." },
+    { title: "all clear 🤍", body: `nothing pending right now${name}. i'm here whenever you need to capture something.` },
+    { title: "breathing room 🌱", body: "your list is empty. no pressure to fill it — just here if you need me." },
   ]);
+}
+
+/**
+ * Build a gentle, tier-aware engagement nudge.
+ *
+ * Streaks and the empty state are handled inline (they aren't one of the six
+ * trigger types). Everything task-driven is delegated to the shared engine,
+ * which scales personalization to the user's data-richness tier and runs every
+ * string through the anti-surveillance validator — so a cold-start user never
+ * gets a fabricated "this has been pending 3 days" claim.
+ */
+export function generateSmartNudgeMessage(ctx: NudgeContext): Template {
+  const tier: Tier = ctx.tier ?? 1;
+  const slot = localTimeSlot(ctx.localHour);
+  const now = Date.now();
+  const minutesUntilDue =
+    ctx.nextDueAt && ctx.nextDueAt > now ? Math.round((ctx.nextDueAt - now) / 60_000) : null;
+
+  // 1. Celebrate a real streak (tier 2+ only — needs genuine history).
+  if (tier >= 2 && ctx.streakDays >= 3) return streakCopy(ctx.streakDays, ctx.displayName);
+
+  // 2. Nothing pending → warm empty-state.
+  if (ctx.hasNoPending) return allClearCopy(slot, ctx.displayName);
+
+  const copyCtx: CopyContext = {
+    tier,
+    displayName: ctx.displayName,
+    focusTaskTitle: ctx.nextDueTitle ?? null,
+    nextDueTitle: ctx.nextDueTitle ?? null,
+    minutesUntilDue,
+    pendingCount: ctx.pendingCount,
+    overdueCount: ctx.overdueCount,
+    doneToday: ctx.doneToday ?? 0,
+    streakDays: ctx.streakDays,
+  };
+
+  // 3. A genuinely heavy overdue load → Overwhelm Rescue (tier 2+, rare).
+  if (tier >= 2 && ctx.overdueCount >= 5) return generateNotification("overwhelm_rescue", copyCtx);
+
+  // 4. Otherwise map the moment to one of the six types.
+  let type: NotificationType;
+  if (slot === "morning") type = "morning_launch";
+  else if (slot === "evening" || slot === "night") type = "evening_soft_close";
+  else if (minutesUntilDue != null && minutesUntilDue <= 180) type = "time_anchor";
+  else type = "just_start";
+
+  return generateNotification(type, copyCtx);
 }
 
 // ── GET: health check + diagnostics ────────────────────────────────────────────
@@ -345,23 +321,43 @@ export async function POST(request: Request) {
         // Do NOT skip users with 0 pending reminders — they still get AI engagement
         // notifications (Types 1, 3, 5, 6, 8, 9) to bring them back to the app.
 
-        // ── 1e. Streak calculation from recent events ───────────────────────────
+        // ── 1e. Streak + data-richness tier from recent events ──────────────────
+        // We only have a 30-day event window, so every derived signal is a
+        // CONSERVATIVE lower bound — which is exactly the safe direction for
+        // tiering (under-estimating data keeps personalization from running
+        // ahead of what we can actually support; see engine.determineTier).
         let streakDays = 0;
+        let tier: Tier = 1;
+        let doneToday = 0;
         try {
           const recentEvents = await client.query(api.userEvents.getRecent, { userId, limitDays: 30 });
+          const dayKey = (ms: number) => {
+            const d = new Date(ms);
+            return `${d.getUTCFullYear()}-${d.getUTCMonth()}-${d.getUTCDate()}`;
+          };
           const activeDays = new Set<string>();
+          let earliest = now;
+          let completions = 0;
+          const todayKey = dayKey(now);
           for (const e of recentEvents) {
-            const d = new Date(e.createdAt);
-            activeDays.add(`${d.getUTCFullYear()}-${d.getUTCMonth()}-${d.getUTCDate()}`);
+            activeDays.add(dayKey(e.createdAt));
+            if (e.createdAt < earliest) earliest = e.createdAt;
+            if (e.eventType === "reminder_completed" || e.eventType === "task_completed") {
+              completions++;
+              if (dayKey(e.createdAt) === todayKey) doneToday++;
+            }
           }
           // Count consecutive days ending yesterday (today the user is inactive).
           for (let i = 1; i <= 30; i++) {
-            const d = new Date(now - i * 86_400_000);
-            const key = `${d.getUTCFullYear()}-${d.getUTCMonth()}-${d.getUTCDate()}`;
-            if (!activeDays.has(key)) break;
+            if (!activeDays.has(dayKey(now - i * 86_400_000))) break;
             streakDays++;
           }
-        } catch { /* non-critical — default 0 */ }
+          tier = determineTier({
+            accountAgeDays: Math.floor((now - earliest) / 86_400_000),
+            activeDaysCount: activeDays.size,
+            totalCompletions: completions,
+          });
+        } catch { /* non-critical — defaults: streak 0, tier 1 (safest) */ }
 
         // ── 1f. Build message ───────────────────────────────────────────────────
         const localHour = (() => {
@@ -379,10 +375,13 @@ export async function POST(request: Request) {
           overdueCount:  stats.overdueCount,
           topDomain:     stats.topDomain,
           nextDueTitle:  stats.nextDueTitle,
+          nextDueAt:     stats.nextDueAt,
           displayName:   meta.displayName,
           localHour,
           streakDays,
           hasNoPending:  stats.pendingCount === 0,
+          tier,
+          doneToday,
         });
 
         // ── 1f. Send push ───────────────────────────────────────────────────────
