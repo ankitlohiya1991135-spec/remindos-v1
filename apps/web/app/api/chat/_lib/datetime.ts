@@ -143,38 +143,82 @@ export const MONTH_MAP: Record<string, number> = {
   october: 10, oct: 10, november: 11, nov: 11, december: 12, dec: 12,
 };
 
-/** "next Friday", "this Monday", "on Thursday" → calendar date in user's timezone */
-export function parseWeekdayTarget(input: string, timeZone?: string): string | null {
-  const n = input.toLowerCase();
-  for (let i = 0; i < WEEKDAY_NAMES.length; i++) {
-    const day = WEEKDAY_NAMES[i]!;
-    const isNext = new RegExp(`\\b(next|coming)\\s+${day}\\b`).test(n);
-    const isThis = new RegExp(`\\bthis\\s+${day}\\b`).test(n);
-    const isOn   = new RegExp(`\\bon\\s+${day}\\b`).test(n);
-    const isPlain = new RegExp(`\\b${day}\\b`).test(n);
-    if (!isNext && !isThis && !isOn && !isPlain) continue;
+// Common abbreviations + frequent misspellings → weekday index (0 = Sunday).
+// A curated alias map keeps matching deterministic and false-positive-free; the
+// Optimal-String-Alignment fallback in findWeekday() then catches any single-typo
+// variant we didn't enumerate (e.g. an adjacent transposition like "thrusday").
+export const WEEKDAY_ALIASES: Record<string, number> = {
+  sun: 0, sunday: 0, suday: 0, sundey: 0, sundy: 0,
+  mon: 1, monday: 1, munday: 1, monaday: 1, mondey: 1, mondy: 1,
+  tue: 2, tues: 2, tuesday: 2, tuesaday: 2, tuesfay: 2, tusday: 2, teusday: 2, tuseday: 2, tuesdy: 2,
+  wed: 3, weds: 3, wednesday: 3, wensday: 3, wednsday: 3, wedneday: 3, wendsday: 3, wenesday: 3, wednesdy: 3,
+  thu: 4, thur: 4, thurs: 4, thursday: 4, thrusday: 4, thursaday: 4, thusday: 4, thurday: 4, thrsday: 4, thursdy: 4, thursdey: 4,
+  fri: 5, friday: 5, fryday: 5, friaday: 5, fridey: 5, fridy: 5,
+  sat: 6, saturday: 6, saterday: 6, satuday: 6, satrday: 6, saturdy: 6, saturaday: 6,
+};
 
-    const time = parseTimeFromInput(input);
-    if (!time) return null;
-
-    const now = new Date();
-    const today = getCalendarDateInTimeZone(now, timeZone);
-    const todayUtc = new Date(Date.UTC(today.year, today.month - 1, today.day));
-    const currentWeekday = todayUtc.getUTCDay();
-
-    let daysUntil = i - currentWeekday;
-    if (isNext) {
-      // "next X" = at least 1 day away; if same day, go to next week
-      if (daysUntil <= 0) daysUntil += 7;
-    } else {
-      // "this X" / plain "X" = next upcoming occurrence (never today itself)
-      if (daysUntil <= 0) daysUntil += 7;
+/** Optimal String Alignment distance — Levenshtein + adjacent transposition (the #1 typo class). */
+function osaDistance(a: string, b: string): number {
+  const m = a.length, n = b.length;
+  const d: number[][] = Array.from({ length: m + 1 }, () => new Array<number>(n + 1).fill(0));
+  for (let i = 0; i <= m; i++) d[i]![0] = i;
+  for (let j = 0; j <= n; j++) d[0]![j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      d[i]![j] = Math.min(d[i - 1]![j]! + 1, d[i]![j - 1]! + 1, d[i - 1]![j - 1]! + cost);
+      if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) {
+        d[i]![j] = Math.min(d[i]![j]!, d[i - 2]![j - 2]! + 1);
+      }
     }
+  }
+  return d[m]![n]!;
+}
 
-    const targetDay = addDaysToCalendarDate(today, daysUntil);
-    return calendarDateTimeToIso(targetDay, time, timeZone);
+/**
+ * Find a weekday mentioned anywhere in free text. Tries the exact alias map first
+ * (deterministic, no false positives), then — when `fuzzy` — a single-edit OSA
+ * match against the full weekday names (length-guarded to ≥6 chars so it can't
+ * swallow short words). Returns the weekday index (0–6) and the matched token.
+ */
+export function findWeekday(text: string, fuzzy = true): { index: number; token: string } | null {
+  const tokens = text.toLowerCase().match(/[a-z]+/g);
+  if (!tokens) return null;
+  for (const tok of tokens) {
+    if (tok in WEEKDAY_ALIASES) return { index: WEEKDAY_ALIASES[tok]!, token: tok };
+  }
+  if (fuzzy) {
+    for (const tok of tokens) {
+      if (tok.length < 6) continue;
+      for (let i = 0; i < WEEKDAY_NAMES.length; i++) {
+        if (osaDistance(tok, WEEKDAY_NAMES[i]!) <= 1) return { index: i, token: tok };
+      }
+    }
   }
   return null;
+}
+
+/** "next Friday", "this Monday", "on Thursday", "every thrusday" → calendar date in user's timezone */
+export function parseWeekdayTarget(input: string, timeZone?: string): string | null {
+  const match = findWeekday(input);
+  if (!match) return null;
+
+  const time = parseTimeFromInput(input);
+  if (!time) return null;
+
+  const now = new Date();
+  const today = getCalendarDateInTimeZone(now, timeZone);
+  const todayUtc = new Date(Date.UTC(today.year, today.month - 1, today.day));
+  const currentWeekday = todayUtc.getUTCDay();
+
+  // Resolve to the next upcoming occurrence of that weekday (never today). This is
+  // the right behaviour for "on thursday" / "this thursday" / "next thursday" and
+  // for the first fire of a recurring "every thursday" alike.
+  let daysUntil = match.index - currentWeekday;
+  if (daysUntil <= 0) daysUntil += 7;
+
+  const targetDay = addDaysToCalendarDate(today, daysUntil);
+  return calendarDateTimeToIso(targetDay, time, timeZone);
 }
 
 /** "in 2 hours", "in 30 minutes", "in 3 days" → ISO string */

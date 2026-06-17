@@ -1,4 +1,5 @@
 import { filterToday, getReminderBucket, type LifeDomain, type ReminderItem } from "@repo/reminder";
+import { findWeekday } from "./datetime";
 
 export function extractTitleFromCreateInput(input: string) {
   let working = input.trim();
@@ -79,14 +80,25 @@ export function extractTitleFromCreateInput(input: string) {
     .replace(/\s+/g, " ")
     .trim();
 
+  // The keyword strip above only removes correctly-spelled weekday names. Catch a
+  // leftover misspelled/abbreviated weekday (e.g. "thrusday", "thurs") so it doesn't
+  // end up in the title. Alias-only match (no fuzzy) so we never eat a real title word.
+  const leftoverWeekday = findWeekday(normalized, false);
+  const titled = leftoverWeekday
+    ? normalized
+        .replace(new RegExp(`\\b(?:every|each|on|this|next|coming)?\\s*${leftoverWeekday.token}\\b`, "i"), " ")
+        .replace(/\s+/g, " ")
+        .trim()
+    : normalized;
+
   // Guard: if prefix-stripping failed and the result still reads like an intent command
   // (e.g. "so create the reminder", "go ahead and add reminder"), return undefined
   // so the fast-path uses the DEFAULT title and the LLM can handle context properly.
-  if (/\b(create|add|set|make|schedule)\b.{0,40}\b(reminder|reminders)\b/i.test(normalized)) {
+  if (/\b(create|add|set|make|schedule)\b.{0,40}\b(reminder|reminders)\b/i.test(titled)) {
     return undefined;
   }
 
-  return normalized || undefined;
+  return titled || undefined;
 }
 
 // ─── FLAW-2: extract metadata from natural language for deterministic create ──
@@ -112,9 +124,11 @@ export function extractDomainFromInput(input: string): LifeDomain | undefined {
 
 export function extractRecurrenceFromInput(input: string): "daily" | "weekly" | "monthly" | undefined {
   const n = input.toLowerCase();
-  if (/\b(every\s*day|daily)\b/.test(n)) return "daily";
-  if (/\b(every\s*week|weekly)\b/.test(n)) return "weekly";
-  if (/\b(every\s*month|monthly)\b/.test(n)) return "monthly";
+  if (/\b(every\s*day|everyday|daily|each\s*day)\b/.test(n)) return "daily";
+  if (/\b(every\s*week|weekly|each\s*week)\b/.test(n)) return "weekly";
+  if (/\b(every\s*month|monthly|each\s*month)\b/.test(n)) return "monthly";
+  // "every thursday" / "every thrusday" / "each friday" → recurs weekly on that day.
+  if (/\b(every|each)\b/.test(n) && findWeekday(n)) return "weekly";
   return undefined;
 }
 

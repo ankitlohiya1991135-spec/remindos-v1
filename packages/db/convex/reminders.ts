@@ -224,6 +224,32 @@ export const create = mutation({
   },
 });
 
+/**
+ * Compute the next due timestamp for a recurring reminder. Steps forward by the
+ * recurrence period until the result is in the future, so a long-overdue weekly
+ * reminder still lands on its next upcoming slot rather than another past one.
+ */
+function advanceDueAt(
+  dueAt: number,
+  recurrence: "daily" | "weekly" | "monthly",
+  now: number,
+): number {
+  const step = (ts: number): number => {
+    if (recurrence === "daily") return ts + 86_400_000;
+    if (recurrence === "weekly") return ts + 7 * 86_400_000;
+    const d = new Date(ts);
+    d.setUTCMonth(d.getUTCMonth() + 1);
+    return d.getTime();
+  };
+  let next = step(dueAt);
+  let guard = 0;
+  while (next <= now && guard < 1000) {
+    next = step(next);
+    guard++;
+  }
+  return next;
+}
+
 export const update = mutation({
   args: {
     userId: v.string(),
@@ -280,6 +306,31 @@ export const update = mutation({
       domain: nextDomain,
       updatedAt: Date.now(),
     });
+
+    // ── Recurrence: completing a recurring reminder spawns its next occurrence ──
+    // Done is kept as history; a fresh pending copy is scheduled one period ahead.
+    // Only the owner rolls the series forward (participants act on shared copies).
+    const becameDone = args.status === "done" && current.status !== "done";
+    const recurrence = current.recurrence ?? "none";
+    if (becameDone && recurrence !== "none" && access.role === "owner") {
+      const now = Date.now();
+      const nextDueAt = advanceDueAt(current.dueAt, recurrence, now);
+      await ctx.db.insert("reminders", {
+        userId: current.userId,
+        title: current.title,
+        notes: current.notes,
+        dueAt: nextDueAt,
+        status: "pending",
+        recurrence,
+        priority: current.priority,
+        urgency: current.urgency,
+        tags: current.tags,
+        linkedTaskId: nextLinked,
+        domain: nextDomain,
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
 
     return await ctx.db.get(args.reminderId);
   },
