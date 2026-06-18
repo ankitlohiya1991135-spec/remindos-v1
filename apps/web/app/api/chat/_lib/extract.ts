@@ -58,6 +58,19 @@ export function extractTitleFromCreateInput(input: string) {
     // "next priority for payment" or "budget plan for next month".
     .replace(/^(for|about)\s+/i, "")
     .replace(/\b(called|named|titled|के लिए|साठी)\b/gi, " ")
+    // Full date expressions FIRST — strip month+day as one unit so the day number
+    // doesn't survive when the month word alone is removed below ("by jun 20" must
+    // not leave a stray "20" in the title).
+    .replace(/\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec|january|february|march|april|june|july|august|september|october|november|december)\.?\s+\d{1,2}(?:st|nd|rd|th)?\b/gi, " ")
+    .replace(/\b\d{1,2}(?:st|nd|rd|th)?\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec|january|february|march|april|june|july|august|september|october|november|december)\b/gi, " ")
+    .replace(/\b\d{1,2}[\/\-]\d{1,2}(?:[\/\-]\d{2,4})?\b/g, " ")
+    // Bare ordinal day-of-month: "on the 20th", "by the 1st", "the 5th".
+    .replace(/\b(?:on\s+|by\s+)?the\s+\d{1,2}(?:st|nd|rd|th)\b/gi, " ")
+    .replace(/\b\d{1,2}(?:st|nd|rd|th)\b/gi, " ")
+    // "by Saturday of this week", "next month", "this weekend" — only when a
+    // qualifier precedes the period word, so legit titles like "month end review"
+    // (no leading by/of/this/next) are preserved.
+    .replace(/\b(?:by\s+|of\s+|end\s+of\s+|this\s+|next\s+|coming\s+|the\s+)+(?:week|month|year|weekend)\b/gi, " ")
     // Strip date/time keywords that are never part of the reminder *title*.
     // NOTE: morning|afternoon|evening|night are intentionally kept here because they
     // ARE valid parts of a title (e.g. "morning standup", "evening walk").
@@ -73,6 +86,8 @@ export function extractTitleFromCreateInput(input: string) {
       /\b(today|tomorrow|tomorow|tommarow|tmrw|day after tomorrow|after tomorrow|आज|कल|उद्या|परसों|परवा|at|on|by|noon|midnight|every|in|बजे|वाजता|वाजले|सुबह|सकाळी|दोपहर|दुपारी|शाम|सायंकाळी|रात|sunday|monday|tuesday|wednesday|thursday|friday|saturday|january|february|march|april|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)\b/gi,
       " "
     )
+    // Bare "at N" / "at N:MM" clock references ("pick up kids at 4").
+    .replace(/\bat\s+\d{1,2}(?::\d{2})?\b/gi, " ")
     .replace(/\bin\s+\d+\s*(hour|hr|minute|min|day|week)s?\b/gi, " ")
     .replace(/\b\d+\s*(hour|hr|minute|min|day|week)s?\b/gi, " ")
     .replace(/\b\d{1,2}(?:[:.]\d{2})?\s?([ap]\.?m\.?)\b/gi, " ")
@@ -84,12 +99,21 @@ export function extractTitleFromCreateInput(input: string) {
   // leftover misspelled/abbreviated weekday (e.g. "thrusday", "thurs") so it doesn't
   // end up in the title. Alias-only match (no fuzzy) so we never eat a real title word.
   const leftoverWeekday = findWeekday(normalized, false);
-  const titled = leftoverWeekday
+  let titled = leftoverWeekday
     ? normalized
         .replace(new RegExp(`\\b(?:every|each|on|this|next|coming)?\\s*${leftoverWeekday.token}\\b`, "i"), " ")
         .replace(/\s+/g, " ")
         .trim()
     : normalized;
+
+  // Final cleanup: drop a dangling trailing connector word and any stray
+  // punctuation left behind by stripping ("call santosh ." → "call santosh",
+  // "pay the loan by" → "pay the loan").
+  titled = titled
+    .replace(/\s*\b(by|on|at|of|for|to)\s*$/i, "")
+    .replace(/^[\s.,;:!?–—-]+|[\s.,;:!?–—-]+$/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 
   // Guard: if prefix-stripping failed and the result still reads like an intent command
   // (e.g. "so create the reminder", "go ahead and add reminder"), return undefined

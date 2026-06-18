@@ -278,6 +278,77 @@ export function parseAbsoluteDate(input: string, timeZone?: string): string | nu
   return null;
 }
 
+/**
+ * Resolve an explicit CALENDAR DATE from text — weekday ("saturday"), month+day
+ * ("jun 20", "20 june"), or numeric ("6/20") — ignoring any time. Returns the
+ * {year, month, day} or null if no date is present.
+ *
+ * This exists so a "date but no time" message ("pay the loan by jun 20") keeps
+ * the user's date and only the *time* gets suggested — instead of the whole date
+ * being discarded and defaulted to tomorrow.
+ */
+export function parseCalendarDateFromInput(
+  input: string,
+  timeZone?: string,
+): { year: number; month: number; day: number } | null {
+  const today = getCalendarDateInTimeZone(new Date(), timeZone);
+
+  // 1. Weekday (typo-tolerant) → next upcoming occurrence.
+  const wd = findWeekday(input);
+  if (wd) {
+    const todayUtc = new Date(Date.UTC(today.year, today.month - 1, today.day));
+    let daysUntil = wd.index - todayUtc.getUTCDay();
+    if (daysUntil <= 0) daysUntil += 7;
+    return addDaysToCalendarDate(today, daysUntil);
+  }
+
+  const n = input.toLowerCase();
+  const rollYear = (monthNum: number, dayNum: number) => {
+    let year = today.year;
+    // If that month/day has already passed this year, assume next year.
+    if (Date.UTC(year, monthNum - 1, dayNum) < Date.UTC(today.year, today.month - 1, today.day)) {
+      year++;
+    }
+    return { year, month: monthNum, day: dayNum };
+  };
+
+  // 2. Named month + day ("jun 20", "june 20th", "20 jun").
+  for (const [monthName, monthNum] of Object.entries(MONTH_MAP)) {
+    if (monthName === "may" && !/\bmay\s+\d/.test(n) && !/\b\d.*\bmay\b/.test(n)) continue;
+    const m1 = new RegExp(`\\b${monthName}\\.?\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b`).exec(n);
+    const m2 = m1 ? null : new RegExp(`\\b(\\d{1,2})(?:st|nd|rd|th)?\\s+${monthName}\\b`).exec(n);
+    const dayStr = m1?.[1] ?? m2?.[1];
+    if (!dayStr) continue;
+    const dayNum = parseInt(dayStr, 10);
+    if (dayNum < 1 || dayNum > 31) continue;
+    return rollYear(monthNum, dayNum);
+  }
+
+  // 3. Numeric MM/DD or MM-DD.
+  const numMatch = n.match(/\b(1[0-2]|0?[1-9])[\/\-](3[01]|[12]\d|0?[1-9])(?!\d)\b/);
+  if (numMatch) {
+    return rollYear(parseInt(numMatch[1]!, 10), parseInt(numMatch[2]!, 10));
+  }
+
+  // 4. Bare ordinal day-of-month ("the 20th", "on the 1st", "by the 5th") → that
+  //    day this month, or next month if it has already passed.
+  const ord = n.match(/\b(?:on\s+|by\s+)?(?:the\s+)?(\d{1,2})(?:st|nd|rd|th)\b/);
+  if (ord) {
+    const dayNum = parseInt(ord[1]!, 10);
+    if (dayNum >= 1 && dayNum <= 31) {
+      let year = today.year;
+      let month = today.month;
+      if (dayNum < today.day) {
+        month++;
+        if (month > 12) { month = 1; year++; }
+      }
+      return { year, month, day: dayNum };
+    }
+  }
+
+  return null;
+}
+
 export function parseDateTimeFromInput(input: string, timeZone?: string) {
   const now = new Date();
   let day = getCalendarDateInTimeZone(now, timeZone);

@@ -1430,6 +1430,7 @@ export function DashboardWorkspace({ userId }: WorkspaceProps) {
             onSetFollowUpQuestions={setFollowUpQuestions}
             onChatSubmit={handleChatSubmit}
             pendingCreateDraft={pendingCreateDraft}
+            pendingTimeSuggestion={pendingTimeSuggestion}
             quickSubmitTextRef={quickSubmitTextRef}
             editingMessageId={editingMessageId}
             replyTarget={replyTarget}

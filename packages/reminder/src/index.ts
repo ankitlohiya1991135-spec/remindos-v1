@@ -309,6 +309,53 @@ export function looksLikeCreateIntent(message: string): boolean {
   return false;
 }
 
+/**
+ * Detects NATURAL reminder phrasings that don't use an explicit trigger word
+ * ("remind me" / "set a reminder"). Real users type "gym tomorrow 6am", "call
+ * dentist at 3pm", "team meeting monday 10am", "pay rent on the 20th" — and
+ * expect a reminder. The signal: an actionable message carrying a concrete
+ * date / time / recurrence cue, that is NOT a question, a list/lookup, or a
+ * mutation of an existing reminder.
+ *
+ * Bias is intentionally toward creating: in a reminder app a missed create is a
+ * worse failure than an extra card the user can dismiss. Genuinely ambiguous
+ * messages (no date cue at all) are left for the LLM path.
+ */
+export function looksLikeImplicitCreate(message: string): boolean {
+  const n = message.toLowerCase().trim();
+  if (n.length < 3) return false;
+
+  // Questions / lookups / lists are never a create.
+  if (/^(did|have|do|does|is|are|was|were|can|could|would|will|should|when|where|why|how|what|which|who|show|list|tell me|give me|find|search|look up|any)\b/.test(n)) return false;
+  if (/\?\s*$/.test(n)) return false;
+
+  // Conversational / past-tense openers are not reminders.
+  if (/^(i had|i went|i was|i did|we had|we went|it was|that was|thanks|thank you|hi|hello|hey|yo|good (morning|night|evening|afternoon)|lol|haha|ok|okay|yes|no|sure)\b/.test(n)) return false;
+
+  // Never hijack a mutation of an existing reminder.
+  if (
+    looksLikeRescheduleIntent(message) ||
+    looksLikeEditIntent(message) ||
+    looksLikeDeleteIntent(message) ||
+    looksLikeMarkDoneIntent(message) ||
+    looksLikeSnoozeIntent(message) ||
+    looksLikeBulkIntent(message)
+  ) return false;
+
+  // Require a concrete date / time / recurrence cue.
+  const hasClockTime = /\b(\d{1,2}\s*:\s*\d{2}|\d{1,2}\s*(a\.?m\.?|p\.?m\.?)|at\s+\d{1,2}\b|noon|midnight|o'?clock)\b/.test(n);
+  const hasRelativeDay = /\b(today|tonight|tomorrow|tomorow|tommarow|tmrw|day after tomorrow|this\s+(morning|afternoon|evening|week|weekend)|next\s+(week|month|monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b/.test(n);
+  const hasWeekday = /\b(monday|tuesday|wednesday|thursday|friday|saturday|sunday|mon|tue|tues|wed|weds|thu|thur|thurs|fri|sat|sun)\b/.test(n);
+  const hasMonthDay =
+    /\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec|january|february|march|april|june|july|august|september|october|november|december)\.?\s+\d{1,2}\b/.test(n) ||
+    /\b\d{1,2}(st|nd|rd|th)\b/.test(n) ||
+    /\b\d{1,2}[\/\-]\d{1,2}\b/.test(n) ||
+    /\bon\s+the\s+\d{1,2}\b/.test(n);
+  const hasRecurrence = /\b(daily|weekly|monthly|everyday)\b|\b(every|each)\s+\w+/.test(n);
+
+  return hasClockTime || hasRelativeDay || hasWeekday || hasMonthDay || hasRecurrence;
+}
+
 export function looksLikeBulkIntent(message: string): boolean {
   const n = message.toLowerCase().trim();
   if (/^(did i|have i|do i|does|is there|was there|what|which|show|list|how many)\b/.test(n)) return false;

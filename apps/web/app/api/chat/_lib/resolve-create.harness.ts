@@ -1,0 +1,66 @@
+/**
+ * LIVE harness for the LLM create-resolver. Unlike the deterministic harness,
+ * this one HITS THE REAL NIM MODEL — it is the only way to verify that arbitrary,
+ * non-enumerated phrasings resolve to correct dates ("LLM interprets").
+ *
+ * Run (needs the NIM key in env):
+ *   NVIDIA_NIM_API_KEY=... NVIDIA_NIM_MODEL=... \
+ *     npx tsx apps/web/app/api/chat/_lib/resolve-create.harness.ts
+ *
+ * Or load it from the web app's env file:
+ *   node --env-file=apps/web/.env.local \
+ *     --import tsx apps/web/app/api/chat/_lib/resolve-create.harness.ts
+ *
+ * Eyeball that each resolved date matches the intent. There is no PASS/FAIL
+ * assertion because "correct" is a human judgement against the anchor date.
+ */
+
+import { resolveCreateWithLLM } from "./nim";
+import { isValidFutureIsoDate } from "./datetime";
+
+const TZ = "Asia/Kolkata";
+
+// Deliberately NOT in any regex/alias table — the whole point of the LLM path.
+const PHRASINGS = [
+  "remind me to pay the jewel loan by the 20th",
+  "ping me end of next week about taxes",
+  "rent on the first",
+  "after lunch tomorrow, call the plumber",
+  "dentist the day before my trip starts on the 25th",
+  "every other monday, team retro",        // bi-weekly — see how it degrades
+  "submit the report two days before month end",
+  "water the plants every morning",
+  "follow up with Sam first thing next working day",
+  "book flights sometime this weekend",
+  "gym session tonight",
+  "pay electricity bill mid next month",
+  "remind me about mom's birthday on the 3rd at noon",
+  "stand-up in 45 minutes",
+  "renew passport in three weeks",
+];
+
+async function main() {
+  if (!process.env.NVIDIA_NIM_API_KEY) {
+    console.error("⚠ NVIDIA_NIM_API_KEY not set — cannot run the live LLM harness.");
+    console.error("  Set it in env (or use --env-file=apps/web/.env.local) and re-run.");
+    process.exit(2);
+  }
+  const nowMs = Date.now();
+  console.log(`anchor now = ${new Intl.DateTimeFormat("en-US", { dateStyle: "full", timeStyle: "short", timeZone: TZ }).format(nowMs)} (${TZ})\n`);
+
+  for (const msg of PHRASINGS) {
+    const r = await resolveCreateWithLLM(msg, { timeZone: TZ, nowMs });
+    if (!r) {
+      console.log(`✗ "${msg}"\n    → null (LLM unavailable / failed)\n`);
+      continue;
+    }
+    const when = r.dueAt
+      ? `${new Intl.DateTimeFormat("en-US", { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", timeZone: TZ }).format(new Date(r.dueAt))}` +
+        (isValidFutureIsoDate(r.dueAt) ? "" : "  ⚠ NOT A VALID FUTURE DATE (would be rejected)")
+      : "(no date)";
+    console.log(`• "${msg}"`);
+    console.log(`    title="${r.title ?? ""}"  due=${when}  explicitTime=${r.hasExplicitTime}  recurrence=${r.recurrence}\n`);
+  }
+}
+
+void main();

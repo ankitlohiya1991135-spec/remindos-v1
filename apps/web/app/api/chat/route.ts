@@ -1,5 +1,5 @@
 import { auth } from "@clerk/nextjs/server";
-import { buildLifeOsContextBlock, buildListRemindersReply, classifyReminderIntent, filterToday, findReminderByFuzzyMatch, findRemindersByName, answerNamedReminderQuery, inferListScopeFromMessage, isCompoundReminderQuestion, looksLikeCreateIntent, filterRemindersByListScope, describeReminderForChat, rankTasks, tryGroundedReminderAnswer, type LifeDomain, type ReminderItem, type TaskItem } from "@repo/reminder";
+import { buildLifeOsContextBlock, buildListRemindersReply, classifyReminderIntent, filterToday, findReminderByFuzzyMatch, findRemindersByName, answerNamedReminderQuery, inferListScopeFromMessage, isCompoundReminderQuestion, looksLikeCreateIntent, looksLikeImplicitCreate, filterRemindersByListScope, describeReminderForChat, rankTasks, tryGroundedReminderAnswer, type LifeDomain, type ReminderItem, type TaskItem } from "@repo/reminder";
 import { api } from "@repo/db/convex/api";
 import { NextResponse } from "next/server";
 import { getConvexClient } from "../../../lib/server/convex-client";
@@ -11,9 +11,9 @@ import { getChatHistory } from "../../../lib/server/chat-history";
 
 import type { ReminderAgentAction, ReminderAgentResponse } from "./_lib/types";
 import { systemPrompt } from "./_lib/prompt";
-import { hasExplicitTime, hasTodayHint, hasTomorrowHint, hasDayAfterTomorrowHint, getCalendarDateInTimeZone, addDaysToCalendarDate, calendarDateTimeToIso, parseDateTimeFromInput, isValidFutureIsoDate } from "./_lib/datetime";
+import { hasExplicitTime, hasTodayHint, hasTomorrowHint, hasDayAfterTomorrowHint, getCalendarDateInTimeZone, addDaysToCalendarDate, calendarDateTimeToIso, parseDateTimeFromInput, parseCalendarDateFromInput, isValidFutureIsoDate } from "./_lib/datetime";
 import { formatDueInUserZone, mapAgentScopeToListScope, fallbackDeterministicReply } from "./_lib/format";
-import { safeAgentResponse } from "./_lib/nim";
+import { safeAgentResponse, resolveCreateWithLLM } from "./_lib/nim";
 import { parseLifeDomain, loadRemindersForChat, loadTasksForChat, loadUserWiki, filterRemindersForLLM, saveMessageServerSide, looksLikeConfirmation, findTargetReminder, normalizeClientTimeZone, suggestDomainTime, loadProfileForSuggestion } from "./_lib/data";
 import { extractTitleFromCreateInput, extractPriorityFromInput, extractDomainFromInput, extractRecurrenceFromInput, titleIncludesTarget, resolveTargetFromHistory, extractNewValueFromEdit, extractPriorityFromEdit, extractDomainFromEdit, taskGate, looksLikeCreateTaskIntent, looksLikeListTasksIntent, looksLikeMarkTaskDoneIntent, looksLikeDeleteTaskIntent, looksLikeEditTaskIntent, extractTargetFromTaskMessage, extractTargetFromTaskEdit, extractEditTaskField, extractTitleFromTaskInput } from "./_lib/extract";
 import { tryBulk, tryMarkDone, tryDelete, tryReschedule, tryEdit, trySnoozeRecovery, trySnooze, type ChatContext } from "./_lib/handlers";
@@ -502,53 +502,83 @@ export async function POST(request: Request) {
     // If taskGate matched but no task classifier matched, fall through to reminder paths / LLM
   }
 
-  if (looksLikeCreateIntent(message)) {
-    const title = extractTitleFromCreateInput(message);
-    const dueAt = parseDateTimeFromInput(message, timeZone);
-    const resolvedTitle = title || DEFAULT_CHAT_REMINDER_TITLE;
+  if (looksLikeCreateIntent(message) || looksLikeImplicitCreate(message)) {
+    const deterministicTitle = extractTitleFromCreateInput(message);
+    const deterministicDueAt = parseDateTimeFromInput(message, timeZone);
+    const domain = extractDomainFromInput(message);
+    const priority = extractPriorityFromInput(message);
 
-    if (dueAt && isValidFutureIsoDate(dueAt)) {
-      // FLAW-2: enrich with metadata extracted from the message
+    let title = deterministicTitle || DEFAULT_CHAT_REMINDER_TITLE;
+    let recurrence = extractRecurrenceFromInput(message);
+    let explicitDate = parseCalendarDateFromInput(message, timeZone);
+
+    // ── Date resolution: "LLM interprets, deterministic validates" ─────────────
+    // 1. An explicit clock time the deterministic parser locked in always wins —
+    //    it's instant and timezone-correct.
+    // 2. Otherwise, when the deterministic parsers found NO date signal at all, we
+    //    let the LLM interpret ANY phrasing ("the day before my trip", "by the
+    //    20th", "end of next week") and then VALIDATE its date before trusting it.
+    //    The LLM is best-effort: on any failure (no key / timeout / invalid date)
+    //    we fall straight back to deterministic behaviour — zero regression.
+    let createDueAt: string | null =
+      deterministicDueAt && hasExplicitTime(message) && isValidFutureIsoDate(deterministicDueAt)
+        ? deterministicDueAt
+        : null;
+
+    const haveDeterministicDate =
+      !!explicitDate || hasTodayHint(message) || hasTomorrowHint(message) || hasDayAfterTomorrowHint(message);
+
+    if (!createDueAt && !haveDeterministicDate) {
+      const llm = await resolveCreateWithLLM(message, { timeZone });
+      if (llm) {
+        if (!deterministicTitle && llm.title) title = llm.title;
+        if (!recurrence && llm.recurrence && llm.recurrence !== "none") recurrence = llm.recurrence;
+        if (llm.dueAt && isValidFutureIsoDate(llm.dueAt)) {
+          if (llm.hasExplicitTime) {
+            createDueAt = llm.dueAt; // validated LLM time → create directly
+          } else {
+            // LLM resolved a DATE but no clock time → seed the time suggestion with it.
+            try {
+              explicitDate = getCalendarDateInTimeZone(new Date(llm.dueAt), timeZone);
+            } catch {
+              /* keep deterministic explicitDate */
+            }
+          }
+        }
+      }
+    }
+
+    // ── Confident date + time → create immediately ─────────────────────────────
+    if (createDueAt && isValidFutureIsoDate(createDueAt)) {
       const response: ReminderAgentResponse = {
-        reply: `Reminder "${resolvedTitle}" created for ${formatDueInUserZone(dueAt, timeZone)}.`,
-        action: {
-          type: "create_reminder",
-          title: resolvedTitle,
-          dueAt,
-          priority: extractPriorityFromInput(message),
-          domain: extractDomainFromInput(message),
-          recurrence: extractRecurrenceFromInput(message),
-        },
+        reply: `Reminder "${title}" created for ${formatDueInUserZone(createDueAt, timeZone)}.`,
+        action: { type: "create_reminder", title, dueAt: createDueAt, priority, domain, recurrence },
       };
       void saveMessageServerSide(userId, "user", message);
       void saveMessageServerSide(userId, "assistant", response.reply);
       return NextResponse.json(response);
     }
 
-    // Gap 8: no time provided → suggest based on profile/domain instead of plain "please give time"
-    const domain = extractDomainFromInput(message);
-    const priority = extractPriorityFromInput(message);
-    const recurrence = extractRecurrenceFromInput(message);
+    // ── No explicit time → suggest a time + show the Yes button ─────────────────
+    // Seeded with the best date we have: LLM-resolved date > deterministic date >
+    // today/day-after hint > tomorrow. We only ever suggest the TIME, never
+    // override a date the user actually gave.
     const { profile, domainHourPatterns } = await loadProfileForSuggestion(userId);
-    const suggested = suggestDomainTime(domain, resolvedTitle, profile, domainHourPatterns);
-
-    // Pick the best available day (respect explicit hint in message; default to tomorrow)
+    const suggested = suggestDomainTime(domain, title, profile, domainHourPatterns);
     const now = new Date();
     const todayCal = getCalendarDateInTimeZone(now, timeZone);
-    let suggestDay = addDaysToCalendarDate(todayCal, 1); // default: tomorrow
-    if (hasDayAfterTomorrowHint(message)) {
-      suggestDay = addDaysToCalendarDate(todayCal, 2);
-    } else if (hasTodayHint(message)) {
-      // User explicitly said "today" — ALWAYS stay on today.
-      // (Old code bumped to tomorrow when the profile-default time had already
-      // passed, which was wrong — the user said TODAY.)
-      suggestDay = todayCal;
+    let suggestDay = explicitDate ?? addDaysToCalendarDate(todayCal, 1); // default: tomorrow
+    if (!explicitDate) {
+      if (hasDayAfterTomorrowHint(message)) {
+        suggestDay = addDaysToCalendarDate(todayCal, 2);
+      } else if (hasTodayHint(message)) {
+        suggestDay = todayCal;
+      }
     }
     const rawSuggestedDueAt = calendarDateTimeToIso(suggestDay, suggested, timeZone);
 
-    // Safety: if the computed suggestion is still in the past (e.g., "today" + a
-    // profile default of 9 AM but it's already 11 AM), nudge forward to 1 h from
-    // now rounded up to the nearest 15-minute mark so the reminder is always future.
+    // Safety: if the suggestion is still in the past, nudge to 1 h from now rounded
+    // up to the nearest 15-minute mark so the reminder is always in the future.
     const suggestedDueAt = new Date(rawSuggestedDueAt).getTime() > now.getTime()
       ? rawSuggestedDueAt
       : (() => {
@@ -560,10 +590,10 @@ export async function POST(request: Request) {
     const timeLabel = formatDueInUserZone(suggestedDueAt, timeZone);
 
     const response: ReminderAgentResponse = {
-      reply: `I can create "${resolvedTitle}". Based on ${suggested.basis}, I suggest **${timeLabel}**. Reply **yes** to confirm, or tell me a different time.`,
+      reply: `I can create "${title}". Based on ${suggested.basis}, I suggest **${timeLabel}**. Tap **Yes** to confirm, or tell me a different time.`,
       action: {
         type: "clarify",
-        title: resolvedTitle,
+        title,
         suggestedDueAt,
         priority,
         domain,

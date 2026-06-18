@@ -22,7 +22,7 @@ import { ChatPanelHeader } from "./chat-panel-header";
 import { StructuredMessage } from "./structured-message";
 import { ReminderChatCard } from "./reminder-chat-card";
 import { briefingSectionLabel, chatReplyLabel, loadingTexts } from "./dashboard-utils";
-import type { ChatMessage, AgentAction, PendingCreateDraft, ReminderListTab } from "./dashboard-types";
+import type { ChatMessage, AgentAction, PendingCreateDraft, PendingTimeSuggestion, ReminderListTab } from "./dashboard-types";
 import type { SnapshotCounts } from "./reminder-list-overlay";
 import type { TaskRow } from "./task-panels";
 
@@ -62,6 +62,7 @@ export interface ChatPanelProps {
   onSetFollowUpQuestions: Dispatch<SetStateAction<FollowUpQuestion[]>>;
   onChatSubmit: (event: FormEvent<HTMLFormElement>) => void;
   pendingCreateDraft: PendingCreateDraft | null;
+  pendingTimeSuggestion: PendingTimeSuggestion | null;
   quickSubmitTextRef: RefObject<string | null>;
   editingMessageId: string | null;
   replyTarget: ChatMessage | null;
@@ -104,6 +105,7 @@ export function ChatPanel({
   onSetFollowUpQuestions,
   onChatSubmit,
   pendingCreateDraft,
+  pendingTimeSuggestion,
   quickSubmitTextRef,
   editingMessageId,
   replyTarget,
@@ -548,6 +550,55 @@ export function ChatPanel({
           style={{ background: "#1a1625" }}
         >
           <div className="mx-auto max-w-4xl">
+            {pendingTimeSuggestion ? (
+              <div className="mb-3 rounded-2xl border border-blue-300 bg-blue-50 px-3 py-3 dark:border-blue-500/40 dark:bg-blue-500/10">
+                <p className="text-[10px] font-semibold uppercase tracking-[0.18em] text-blue-600 dark:text-blue-300">
+                  Create this reminder?
+                </p>
+                <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-slate-100">
+                  “{pendingTimeSuggestion.title}”
+                </p>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  {new Date(pendingTimeSuggestion.suggestedDueAt).toLocaleString(undefined, {
+                    weekday: "short",
+                    month: "short",
+                    day: "numeric",
+                    hour: "numeric",
+                    minute: "2-digit",
+                  })}
+                  {pendingTimeSuggestion.recurrence && pendingTimeSuggestion.recurrence !== "none"
+                    ? ` · repeats ${pendingTimeSuggestion.recurrence}`
+                    : ""}
+                </p>
+                <div className="mt-2.5 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    data-testid="confirm-create-reminder"
+                    disabled={isLoading || (briefingStreaming && !editingMessageId)}
+                    onClick={() => {
+                      quickSubmitTextRef.current = "yes";
+                      requestAnimationFrame(() => {
+                        chatFormRef.current?.requestSubmit();
+                      });
+                    }}
+                    className="min-h-[2.5rem] rounded-full bg-blue-600 px-5 py-2 text-xs font-semibold text-white transition hover:bg-blue-500 active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50"
+                  >
+                    ✓ Yes, create
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isLoading}
+                    onClick={() => {
+                      onSetInput("");
+                      composerTextareaRef.current?.focus();
+                    }}
+                    className="min-h-[2.5rem] rounded-full border border-slate-300 px-4 py-2 text-xs font-medium text-slate-700 transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50 dark:border-slate-600 dark:text-slate-200 dark:hover:bg-slate-800"
+                  >
+                    Pick another time
+                  </button>
+                </div>
+              </div>
+            ) : null}
             {pendingCreateDraft?.step === "task" ? (
               <div className="mb-3 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-900/60">
                 <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-500 dark:text-slate-400">
