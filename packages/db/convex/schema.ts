@@ -269,6 +269,7 @@ const adminBroadcasts = defineTable({
     v.literal("active_today"),
     v.literal("active_7d"),
     v.literal("admins_only"),
+    v.literal("single_user"),
   ),
   /** Number of `notifications` rows actually inserted at send-time. */
   recipientCount: v.number(),

@@ -157,6 +157,20 @@ self.addEventListener("push", (event) => {
     );
     return;
   }
+
+  // ── Generic fallback (admin_reminder, admin_broadcast, future types) ──────────
+  // Any payload carrying a title/body still renders, so new server-side
+  // notification types don't silently disappear because the SW lacks a case.
+  {
+    const title = payload.title || "RemindOS";
+    const body  = payload.body  || "You have a new update.";
+    showNotif(event, title, body,
+      payload.tag || ("notif-" + (type || "generic")),
+      { type: type || "generic", reminderId: payload.reminderId },
+      [{ action: "open", title: "Open" }]
+    );
+    return;
+  }
 });
 
 // ── notification click handler ─────────────────────────────────────────────────

@@ -715,7 +715,10 @@ export async function POST(request: Request) {
     }
   }
 
-  const listScopeFromMessage = inferListScopeFromMessage(message);
+  // Precedence guard (#2): the broad list-scope path only runs for reminder-related
+  // prompts (classifier said create/mutate/info), never for "other" general chat —
+  // so a catch-all scope can't hijack a message that belongs to the LLM.
+  const listScopeFromMessage = promptCategory !== "other" ? inferListScopeFromMessage(message) : null;
   if (listScopeFromMessage && !isCompoundReminderQuestion(message)) {
     let reply: string;
     let listedIds: string[];
@@ -744,7 +747,10 @@ export async function POST(request: Request) {
   // "what time is the dentist", "more details on gym reminder").
   // tryGroundedReminderAnswer uses fuzzy title matching — handles typos and no "reminder" keyword.
   // Runs BEFORE LLM so these never hit NVIDIA when a deterministic answer exists.
-  if (!isCompoundReminderQuestion(message)) {
+  // Precedence guard (#2): skipped for "other" general chat so the greedy fuzzy
+  // matcher can't answer about the wrong reminder (e.g. parroting a previously
+  // listed item when the user is just chatting) — those go to the LLM instead.
+  if (!isCompoundReminderQuestion(message) && promptCategory !== "other") {
     const grounded = tryGroundedReminderAnswer(message, reminders, new Date(), displayOptions);
     if (grounded) {
       void saveMessageServerSide(userId, "user", message);

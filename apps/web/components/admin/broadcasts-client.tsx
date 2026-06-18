@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type {
+  AdminListedUser,
   BroadcastListItem,
   SendBroadcastRequest,
 } from "@repo/admin/types";
@@ -11,11 +12,21 @@ const SEGMENTS: Array<{
   label: string;
   caution?: boolean;
 }> = [
+  { value: "single_user", label: "Specific user" },
   { value: "active_today", label: "Active today" },
   { value: "active_7d", label: "Active this week" },
   { value: "admins_only", label: "Staff only" },
   { value: "all", label: "ALL users", caution: true },
 ];
+
+function userLabel(u: AdminListedUser): string {
+  return (
+    [u.firstName, u.lastName].filter(Boolean).join(" ") ||
+    u.username ||
+    u.email ||
+    u.id
+  );
+}
 
 function formatDateTime(ts: number | null): string {
   if (!ts) return "—";
@@ -41,6 +52,9 @@ export function BroadcastsClient({
   const [body, setBody] = useState("");
   const [segment, setSegment] =
     useState<SendBroadcastRequest["segment"]>("active_7d");
+  const [recipientUserId, setRecipientUserId] = useState("");
+  const [users, setUsers] = useState<AdminListedUser[]>([]);
+  const [usersLoading, setUsersLoading] = useState(false);
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [sentNotice, setSentNotice] = useState<string | null>(null);
@@ -67,9 +81,34 @@ export function BroadcastsClient({
     void refetch();
   }, [refetch]);
 
+  // Lazily load the user list the first time "Specific user" is chosen.
+  const loadUsers = useCallback(async () => {
+    if (users.length > 0 || usersLoading) return;
+    setUsersLoading(true);
+    try {
+      const res = await fetch("/api/admin/users", { cache: "no-store" });
+      if (res.ok) {
+        const data = (await res.json()) as { users: AdminListedUser[] };
+        setUsers(data.users ?? []);
+      }
+    } catch {
+      /* non-fatal — the admin can switch segments */
+    } finally {
+      setUsersLoading(false);
+    }
+  }, [users.length, usersLoading]);
+
+  useEffect(() => {
+    if (segment === "single_user") void loadUsers();
+  }, [segment, loadUsers]);
+
   const canSend = useMemo(
-    () => title.trim().length > 0 && body.trim().length > 0 && !sending,
-    [title, body, sending],
+    () =>
+      title.trim().length > 0 &&
+      body.trim().length > 0 &&
+      !sending &&
+      (segment !== "single_user" || recipientUserId.length > 0),
+    [title, body, sending, segment, recipientUserId],
   );
 
   const handleSend = async (e: React.FormEvent) => {
@@ -92,6 +131,7 @@ export function BroadcastsClient({
           title: title.trim(),
           body: body.trim(),
           segment,
+          ...(segment === "single_user" ? { recipientUserId } : {}),
         } satisfies SendBroadcastRequest),
       });
       if (!res.ok) {
@@ -174,6 +214,23 @@ export function BroadcastsClient({
               <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-amber-700 dark:bg-amber-900/40 dark:text-amber-300">
                 ⚠ messages everyone
               </span>
+            )}
+            {segment === "single_user" && (
+              <select
+                value={recipientUserId}
+                onChange={(e) => setRecipientUserId(e.target.value)}
+                className="min-w-[14rem] max-w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900"
+              >
+                <option value="">
+                  {usersLoading ? "Loading users…" : "Select a user…"}
+                </option>
+                {users.map((u) => (
+                  <option key={u.id} value={u.id}>
+                    {userLabel(u)}
+                    {u.email ? ` (${u.email})` : ""}
+                  </option>
+                ))}
+              </select>
             )}
             <button
               type="submit"

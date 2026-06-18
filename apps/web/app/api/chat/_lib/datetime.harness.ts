@@ -9,6 +9,7 @@
 import { parseDateTimeFromInput, parseCalendarDateFromInput, findWeekday, WEEKDAY_ALIASES } from "./datetime";
 import { extractRecurrenceFromInput, extractTitleFromCreateInput } from "./extract";
 import { looksLikeCreateIntent, looksLikeImplicitCreate } from "@repo/reminder";
+import { classifyPromptDeterministic } from "./classify";
 
 const WD = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
 let failures = 0;
@@ -114,6 +115,48 @@ for (const m of [
   "how are you",
 ]) {
   check(`NOT create: "${m}"`, !detect(m), "false-positive create");
+}
+
+// ── 10. [#1] Natural mutation phrasings must classify as "mutate" (route to the right task) ──
+for (const m of [
+  "ticked off gym",
+  "i did the dishes",
+  "knocked it out",
+  "gym is done",
+  "got the report done",
+  "mark gym done",
+  "done with gym",
+  "get rid of the dentist reminder",
+  "scrap that reminder",
+  "take gym off my list",
+  "delete dentist",
+  "remove the meeting",
+  "push it back",
+  "give me more time",
+  "snooze gym",
+  "bump that out",
+]) {
+  check(`mutate: "${m}"`, classifyPromptDeterministic(m) === "mutate", `got "${classifyPromptDeterministic(m)}"`);
+}
+
+// ── 11. [#1] Questions / future-intent must NOT be misread as a mutation ──
+for (const m of [
+  "is the gym done?",
+  "i need to finish the report",
+  "what did i complete today",
+  "did i delete the dentist one",
+]) {
+  check(`NOT mutate: "${m}"`, classifyPromptDeterministic(m) !== "mutate", `got "${classifyPromptDeterministic(m)}"`);
+}
+
+// ── 12. [#2] Precedence guard relies on correct classification ──
+// Detail/list queries must be "info" (so the deterministic answer handlers still run),
+// general chat must be "other" (so the greedy handlers are skipped → LLM).
+for (const m of ["tell me about gym", "details on the dentist reminder", "what's overdue", "show me my reminders"]) {
+  check(`info: "${m}"`, classifyPromptDeterministic(m) === "info", `got "${classifyPromptDeterministic(m)}"`);
+}
+for (const m of ["how are you doing today", "what's the weather like", "tell me a joke", "thanks for the help"]) {
+  check(`other: "${m}"`, classifyPromptDeterministic(m) === "other", `got "${classifyPromptDeterministic(m)}"`);
 }
 
 // ── Report ──

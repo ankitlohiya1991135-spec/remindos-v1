@@ -161,6 +161,7 @@ export type {
   OrgCostOverview,
   SendBroadcastRequest,
   SendDirectMessageRequest,
+  CreateUserReminderRequest,
   UpdateAdminNoteRequest,
 } from "./audit";
 export { AUDIT_ACTIONS, isAuditAction } from "./audit";

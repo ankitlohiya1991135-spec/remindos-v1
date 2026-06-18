@@ -16,7 +16,7 @@ import { getConvexClient } from "../../../../lib/server/convex-client";
 
 const MAX_TITLE = 120;
 const MAX_BODY = 1000;
-const VALID_SEGMENTS = ["all", "active_today", "active_7d", "admins_only"] as const;
+const VALID_SEGMENTS = ["all", "active_today", "active_7d", "admins_only", "single_user"] as const;
 
 function jsonError(payload: AdminApiError, status: number) {
   return NextResponse.json(payload, { status });
@@ -144,9 +144,27 @@ export async function POST(request: Request) {
     );
   }
 
+  // Single-user targeting: the recipient is supplied directly, not resolved
+  // from a segment. Validate the userId exists in Clerk before sending.
+  if (body.segment === "single_user") {
+    const recipientUserId = (body.recipientUserId ?? "").trim();
+    if (!recipientUserId) {
+      return jsonError({ error: "recipientUserId is required for single_user", code: "BAD_REQUEST" }, 400);
+    }
+    try {
+      const client = await clerkClient();
+      await client.users.getUser(recipientUserId);
+    } catch {
+      return jsonError({ error: "Recipient user not found", code: "BAD_REQUEST" }, 404);
+    }
+  }
+
   try {
-    // 1. Resolve recipients via Clerk + activity stats.
-    const recipientIds = await resolveRecipients(body.segment);
+    // 1. Resolve recipients: a single explicit user, or a segment via Clerk + activity.
+    const recipientIds =
+      body.segment === "single_user"
+        ? [(body.recipientUserId ?? "").trim()]
+        : await resolveRecipients(body.segment);
 
     if (recipientIds.length === 0) {
       return jsonError(

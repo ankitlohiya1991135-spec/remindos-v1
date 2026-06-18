@@ -438,6 +438,7 @@ const broadcastSegment = v.union(
   v.literal("active_today"),
   v.literal("active_7d"),
   v.literal("admins_only"),
+  v.literal("single_user"),
 );
 
 /**

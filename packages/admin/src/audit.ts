@@ -21,6 +21,7 @@ export const AUDIT_ACTIONS = [
   "BROADCAST_RECALLED",
   // direct messages and notes
   "USER_DM_SENT",
+  "USER_REMINDER_CREATED",
   "ADMIN_NOTE_CREATED",
   "ADMIN_NOTE_EDITED",
   "ADMIN_NOTE_DELETED",
@@ -64,7 +65,7 @@ export interface BroadcastListItem {
   senderRole: "admin";
   title: string;
   body: string;
-  segment: "all" | "active_today" | "active_7d" | "admins_only";
+  segment: "all" | "active_today" | "active_7d" | "admins_only" | "single_user";
   recipientCount: number;
   recalledAt: number | null;
   recalledBy: string | null;
@@ -77,6 +78,19 @@ export interface SendBroadcastRequest {
   title: string;
   body: string;
   segment: BroadcastListItem["segment"];
+  /** Required when segment === "single_user": the one recipient's Clerk userId. */
+  recipientUserId?: string;
+}
+
+/** Body shape for `POST /api/admin/users/[userId]/reminder` (admin creates a reminder for a user). */
+export interface CreateUserReminderRequest {
+  title: string;
+  /** Epoch milliseconds for the due time. */
+  dueAt: number;
+  notes?: string;
+  priority?: number;
+  domain?: "health" | "finance" | "career" | "hobby" | "fun";
+  recurrence?: "none" | "daily" | "weekly" | "monthly";
 }
 
 /** Admin note row forwarded to the user-detail page. */

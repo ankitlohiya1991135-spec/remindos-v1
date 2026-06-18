@@ -5,6 +5,7 @@ import { USER_ROLES, type UserRole } from "@repo/admin/types";
 import type { AdminUserActivity } from "@repo/admin/types";
 import { AdminNotesPanel } from "./admin-notes-panel";
 import { AdminDmPanel } from "./admin-dm-panel";
+import { AdminCreateReminderPanel } from "./admin-create-reminder-panel";
 import { broadcastUserMetadataChanged } from "../../lib/user-metadata-events";
 
 interface DetailUser {
@@ -233,6 +234,9 @@ export function AdminUserDetailClient({ userId }: { userId: string }) {
       <p className="text-[11px] text-slate-400">
         Token estimates count chat message text only. Real upstream usage is higher because each turn also includes wiki + digest context.
       </p>
+
+      {/* Create reminder for user */}
+      <AdminCreateReminderPanel userId={user.id} />
 
       {/* Direct message + internal notes */}
       <div className="grid gap-4 lg:grid-cols-2">

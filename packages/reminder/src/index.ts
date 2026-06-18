@@ -403,6 +403,10 @@ export function looksLikeSnoozeIntent(message: string): boolean {
   if (/\bsnooze\b/.test(n)) return true;
   if (/\b(remind me again|remind me later)\b/.test(n)) return true;
   if (/\b(push|delay|postpone)\b.{0,25}\b(by|for)\s+\d/.test(n)) return true;
+  // Broadened natural phrasings ("push it back", "bump that out", "give me more time").
+  if (/\b(push|bump|kick)\s+(it|that|this)\s+(back|out|later)\b/.test(n)) return true;
+  if (/\bgive me (a bit |some )?more time\b/.test(n)) return true;
+  if (/\bnot (ready|now)\b.{0,20}\b(later|tomorrow|remind)\b/.test(n)) return true;
   return false;
 }
 
@@ -418,6 +422,17 @@ export function looksLikeMarkDoneIntent(message: string): boolean {
   if (/^(complete|finish|finished)\s+(?:the\s+|my\s+)?(?:reminder\s+(?:for\s+)?)?(\w)/i.test(n)) return true;
   if (/\bi('?ve| have)\s+(done|completed|finished)\b/i.test(n)) return true;
   if (/\bcheck\s*(ed)?\s*off\b/i.test(n)) return true;
+  // Broadened natural phrasings ("ticked off gym", "knocked it out", "i did the
+  // dishes", "gym is done", "got the report done"). Guarded so questions
+  // ("is the gym done?") and future intent ("i need to finish X") don't match.
+  if (/\b(tick|cross)\s*(ed|ing)?\s*off\b/i.test(n)) return true;
+  if (/\bknocked\s+(it|that|them)\s+out\b/i.test(n)) return true;
+  if (/\bi\s+(just\s+)?(did|finished|completed)\s+(?:the\s+|my\s+)?\w/i.test(n)) return true;
+  if (/\bgot\s+(?:it|that|the\s+\w+|my\s+\w+)\s+done\b/i.test(n)) return true;
+  if (
+    !/^(is|are|was|were|do|does|did|has|have|can|could|will|would|should)\b/.test(n) &&
+    /\b(is|are)\s+(done|complete|completed|finished)\b/.test(n)
+  ) return true;
   return false;
 }
 
@@ -428,6 +443,11 @@ export function looksLikeDeleteIntent(message: string): boolean {
   if (/\b(already\s+deleted|check if|look up)\b/.test(n)) return false;
   // Explicit delete commands
   if (/\b(delete|remove|cancel|dismiss|drop|trash|erase)\s+(?:the\s+|my\s+|this\s+|that\s+)?(?:reminder\s+(?:for\s+)?)?(\w)/i.test(n)) return true;
+  // Broadened natural phrasings ("get rid of the dentist one", "scrap that",
+  // "take gym off my list", "clear the meeting reminder").
+  if (/\bget(?:ting)?\s+rid\s+of\b/i.test(n)) return true;
+  if (/\b(scrap|wipe|clear)\s+(?:the\s+|my\s+|this\s+|that\s+)?(?:reminder\s+(?:for\s+)?)?\w/i.test(n)) return true;
+  if (/\btake\s+(?:the\s+|my\s+)?.{0,30}\boff\s+(?:my\s+)?(?:list|reminders?)\b/i.test(n)) return true;
   return false;
 }
 
@@ -477,7 +497,17 @@ export function classifyReminderIntent(message: string): ReminderIntent {
   if (/\b(plan|planning|schedule my day|organize my day|how should i plan)\b/.test(n)) {
     return "planning_query";
   }
-  if (/\b(list|show|which|what|give me|reminders|due today|due tomorrow|upcoming)\b/.test(n)) {
+  // Direct list cues — unambiguously about reminders.
+  if (/\b(reminders?|due\s+today|due\s+tomorrow|upcoming|overdue|pending|scheduled)\b/.test(n)) {
+    return "list_reminders";
+  }
+  // Generic interrogatives ("what / which / show / give me / list / anything") only
+  // count as a list query when paired with a reminder/time cue — so non-reminder
+  // chat like "what's the weather like" isn't mislabeled as a reminder list.
+  if (
+    /\b(list|show|which|what|give me|anything)\b/.test(n) &&
+    /\b(today|tomorrow|tonight|this\s+week|week|weekend|missed|left|to\s*do|todo|on my (list|plate|agenda)|do i have)\b/.test(n)
+  ) {
     return "list_reminders";
   }
   return "ambiguous";
