@@ -100,7 +100,7 @@ export function extractTitleFromCreateInput(input: string) {
     .replace(/\b(by|in)\s+the\s+(morning|afternoon|evening|night)\b/gi, " ")
     .replace(/\bby\s+(morning|afternoon|evening|night|noon|midnight)\b/gi, " ")
     .replace(
-      /\b(today|tomorrow|tomorow|tommarow|tmrw|day after tomorrow|after tomorrow|आज|कल|उद्या|परसों|परवा|at|on|by|noon|midnight|every|in|बजे|वाजता|वाजले|सुबह|सकाळी|दोपहर|दुपारी|शाम|सायंकाळी|रात|sunday|monday|tuesday|wednesday|thursday|friday|saturday|january|february|march|april|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)\b/gi,
+      /\b(today|tonight|tomorrow|tomorow|tommarow|tmrw|yesterday|day after tomorrow|after tomorrow|आज|कल|उद्या|परसों|परवा|at|on|by|noon|midnight|every|in|बजे|वाजता|वाजले|सुबह|सकाळी|दोपहर|दुपारी|शाम|सायंकाळी|रात|sunday|monday|tuesday|wednesday|thursday|friday|saturday|january|february|march|april|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)\b/gi,
       " "
     )
     // Bare "at N" / "at N:MM" clock references ("pick up kids at 4").
@@ -132,6 +132,11 @@ export function extractTitleFromCreateInput(input: string) {
     // Trailing ", remind me" ("meeting with the client at 3, remind me" → "meeting with the client").
     .replace(/[\s,]*\b(?:please\s+)?remind me\b\.?\s*$/i, "")
     .replace(/\s*\b(by|on|at|of|for|to)\s*$/i, "")
+    // Leading DANGLING time-of-day ("the night for yoga" → "for yoga") — only when
+    // followed by a preposition or end, so an adjective+noun title ("evening walk")
+    // is preserved.
+    .replace(/^\s*(the\s+)?(morning|afternoon|evening|night|tonight)\s+(?=(for|about|to|at|on)\b)/i, "")
+    .replace(/^\s*(the\s+)?(morning|afternoon|evening|night|tonight)\s*$/i, "")
     // Leading leftover connector ("for standup" → "standup", "about gym" → "gym").
     .replace(/^\s*(for|about|to)\s+/i, "")
     .replace(/^[\s.,;:!?–—-]+|[\s.,;:!?–—-]+$/g, "")

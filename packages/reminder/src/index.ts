@@ -363,8 +363,11 @@ export function looksLikeImplicitCreate(message: string): boolean {
     /\b\d{1,2}[\/\-]\d{1,2}\b/.test(n) ||
     /\bon\s+the\s+\d{1,2}\b/.test(n);
   const hasRecurrence = /\b(daily|weekly|monthly|everyday)\b|\b(every|each)\s+\w+/.test(n);
+  // Time-of-day words count as a time cue ("remind me in the afternoon for yoga",
+  // "call mom by evening") — these resolve to a concrete hour downstream.
+  const hasTimeOfDay = /\b(this\s+|in\s+the\s+|by\s+)?(morning|afternoon|evening|night|tonight)\b/.test(n);
 
-  return hasClockTime || hasRelativeDay || hasWeekday || hasMonthDay || hasRecurrence;
+  return hasClockTime || hasRelativeDay || hasWeekday || hasMonthDay || hasRecurrence || hasTimeOfDay;
 }
 
 export function looksLikeBulkIntent(message: string): boolean {

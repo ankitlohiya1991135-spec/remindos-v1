@@ -208,6 +208,66 @@ for (const [input, title] of [
   check(`[#2] title "${input}" → "${title}"`, extractTitleFromCreateInput(input) === title, `got "${extractTitleFromCreateInput(input)}"`);
 }
 
+// ── 15. [GUARDRAIL] The exact phrasings Manas reported — every one must CREATE,
+//        with a clean title, and resolve to the correct day/time. Locks the
+//        "it should just understand any phrasing" requirement against regression.
+const isCreate = (m: string) => looksLikeCreateIntent(m) || looksLikeImplicitCreate(m);
+function dowOfIso(iso: string): number {
+  return ["sun", "mon", "tue", "wed", "thu", "fri", "sat"].indexOf(
+    new Intl.DateTimeFormat("en-US", { weekday: "short", timeZone: TZ }).format(new Date(iso)).toLowerCase(),
+  );
+}
+
+// (a) Each of these must be recognized as a create (never a list/no-op).
+for (const m of [
+  "Create a reminder for dentist appointment on Friday",
+  "Create a reminder for dentist appointment on next Friday",
+  "Remind me in 2 hours to check the oven",
+  "Remind me after 30 minutes to drink water",
+  "Set a reminder 1 hour from now for standup",
+  "Remind me on Monday to submit the report",
+  "Make sure I remember to call John by evening",
+  "I need to remember to water the plants tonight",
+  "Note this down — review PR before EOD",
+  "I have a meeting with the client at 3, remind me",
+  "Remind me tonight to check emails",
+  "Remind me in the afternoon for yoga",
+  "Remind me to drink water in 30 minutes",
+  "Remind me on 25/06 to pay rent",
+  "Remind me on June 25th for anniversary",
+  "Remind me next week Thursday for review",
+  "Remind me day after tomorrow for interview",
+]) {
+  check(`[guardrail] creates: "${m}"`, isCreate(m), "NOT detected as create");
+}
+
+// (b) Clean titles (no "Remind me", date words, or stray numbers).
+for (const [m, t] of [
+  ["Create a reminder for dentist appointment on Friday", "dentist appointment"],
+  ["Remind me in 2 hours to check the oven", "check the oven"],
+  ["Remind me after 30 minutes to drink water", "drink water"],
+  ["Remind me on Monday to submit the report", "submit the report"],
+  ["Make sure I remember to call John by evening", "call John"],
+  ["Remind me in the afternoon for yoga", "yoga"],
+  ["Remind me on 25/06 to pay rent", "pay rent"],
+  ["Remind me day after tomorrow for interview", "interview"],
+] as const) {
+  check(`[guardrail] title "${m}" → "${t}"`, extractTitleFromCreateInput(m) === t, `got "${extractTitleFromCreateInput(m)}"`);
+}
+
+// (c) "Friday"/"next Friday" resolve to a Friday in the future (whatever the date).
+for (const m of ["meeting on Friday at 5pm", "meeting on next Friday at 5pm"]) {
+  const iso = parseDateTimeFromInput(m, TZ);
+  check(`[guardrail] "${m}" → a future Friday`, typeof iso === "string" && dowOfIso(iso) === 5 && new Date(iso).getTime() > Date.now(), String(iso));
+}
+
+// (d) "in 30 minutes" → today, ~30 min from now (relative, not a fixed time).
+{
+  const iso = parseDateTimeFromInput("drink water in 30 minutes", TZ);
+  const delta = iso ? (new Date(iso).getTime() - Date.now()) / 60000 : -1;
+  check("[guardrail] 'in 30 minutes' ≈ now + 30m", delta > 25 && delta < 35, `${Math.round(delta)} min`);
+}
+
 // ── Report ──
 if (failures === 0) { console.log("✓ ALL PASS"); process.exit(0); }
 else { console.error(`\n✗ ${failures} FAILURE(S)`); process.exit(1); }
