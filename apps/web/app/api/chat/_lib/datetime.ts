@@ -11,7 +11,9 @@ export function hasExplicitTime(input: string) {
     || /\b(noon|midnight)\b/i.test(input)
     || /\b(morning|afternoon|evening|night|tonight)\b/i.test(input)
     || /\bat\s+\d{1,2}\b(?!\s*[:.]?\d)/i.test(input)
-    || /\bin\s+\d+\s*(hour|hr|minute|min)s?\b/i.test(input);
+    // Any relative offset ("in 2 hours", "in next one hour", "an hour from now",
+    // "half an hour") counts as an explicit time → create now, never ask "when?".
+    || parseRelativeOffset(input) !== null;
 }
 
 export function hasTodayHint(input: string) {
@@ -236,22 +238,58 @@ export function parseWeekdayTarget(input: string, timeZone?: string): string | n
   return calendarDateTimeToIso(targetDay, time, timeZone);
 }
 
-/** "in 2 hours", "after 30 minutes", "3 days from now", "an hour from now" → ISO string */
+// Word → number for relative offsets ("in next one hour", "half an hour", "couple of days").
+const NUM_WORDS: Record<string, number> = {
+  a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6,
+  seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12,
+  half: 0.5, couple: 2, few: 3, several: 3,
+};
+const NUM = "(\\d+(?:\\.\\d+)?|a|an|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|half|couple|few|several)";
+const UNIT = "(hours?|hrs?|minutes?|mins?|days?|weeks?)";
+function numVal(w: string): number {
+  return /^\d/.test(w) ? parseFloat(w) : (NUM_WORDS[w] ?? NaN);
+}
+function unitMs(unit: string): number {
+  if (/^(hour|hr)/.test(unit)) return 3_600_000;
+  if (/^(minute|min)/.test(unit)) return 60_000;
+  if (/^day/.test(unit)) return 86_400_000;
+  if (/^week/.test(unit)) return 7 * 86_400_000;
+  return 0;
+}
+
+/**
+ * Resolve ANY "N units from now" phrasing → an absolute ISO timestamp. Handles
+ * digits AND words, and the many ways people say it: "in 2 hours", "after 30
+ * minutes", "in next one hour", "within the next 2 days", "an hour from now",
+ * "3 days later", "half an hour", "couple of hours". This is always TODAY-anchored
+ * (now + offset) so the system never has to ask "when?" for a relative time.
+ */
 export function parseRelativeOffset(input: string): string | null {
-  const n = input.toLowerCase();
-  // "in N units" / "after N units"  OR  "N units from now". Also accept "an"/"a" as 1.
-  const match =
-    n.match(/\b(?:in|after)\s+(\d+(?:\.\d+)?|an?)\s*(hour|hr|minute|min|day|week)s?\b/) ??
-    n.match(/\b(\d+(?:\.\d+)?|an?)\s*(hour|hr|minute|min|day|week)s?\s+from\s+now\b/);
-  if (!match) return null;
-  const amount = /^an?$/.test(match[1]!) ? 1 : parseFloat(match[1]!);
-  const unit = match[2]!;
+  // "a couple/few/several of X" → drop the article so "couple"=2 etc. is the number.
+  const n = input.toLowerCase().replace(/\b(?:a|an)\s+(couple|few|several)\b/g, "$1");
+  const lead = "(?:in|after|within)\\s+(?:the\\s+)?(?:next\\s+|coming\\s+)?";
+
+  // "half an hour/day" → 0.5
+  let m = n.match(new RegExp(`\\bhalf\\s+an?\\s+(hour|day|week)\\b`));
+  if (m) {
+    const ms = 0.5 * unitMs(m[1]!);
+    return ms ? new Date(Date.now() + ms).toISOString() : null;
+  }
+
+  let amount = NaN;
+  let unit = "";
+  // in/after/within (the/next/coming) NUM (of) UNIT  — "in next one hour", "within 2 days"
+  m = n.match(new RegExp(`\\b${lead}${NUM}\\s*(?:of\\s+)?${UNIT}\\b`));
+  if (m) { amount = numVal(m[1]!); unit = m[2]!; }
+  // next/coming NUM UNIT  — "next 2 hours", "coming one week"
+  if (!m) { m = n.match(new RegExp(`\\b(?:next|coming)\\s+${NUM}\\s*${UNIT}\\b`)); if (m) { amount = numVal(m[1]!); unit = m[2]!; } }
+  // NUM UNIT from now / later  — "3 days from now", "an hour later"
+  if (!m) { m = n.match(new RegExp(`\\b${NUM}\\s*${UNIT}\\s+(?:from\\s+now|later)\\b`)); if (m) { amount = numVal(m[1]!); unit = m[2]!; } }
+  // in/within (the/next/coming) UNIT  — no number → 1 ("in the next hour", "within the hour")
+  if (!m) { m = n.match(new RegExp(`\\b(?:in|within)\\s+(?:the\\s+)?(?:next\\s+|coming\\s+)?${UNIT}\\b`)); if (m) { amount = 1; unit = m[1]!; } }
+
   if (!Number.isFinite(amount) || amount <= 0 || amount > 8760) return null;
-  const ms =
-    /^(hour|hr)/.test(unit) ? amount * 3_600_000 :
-    /^(minute|min)/.test(unit) ? amount * 60_000 :
-    /^day/.test(unit) ? amount * 86_400_000 :
-    /^week/.test(unit) ? amount * 7 * 86_400_000 : 0;
+  const ms = amount * unitMs(unit);
   if (!ms) return null;
   return new Date(Date.now() + ms).toISOString();
 }

@@ -268,6 +268,28 @@ for (const m of ["meeting on Friday at 5pm", "meeting on next Friday at 5pm"]) {
   check("[guardrail] 'in 30 minutes' ≈ now + 30m", delta > 25 && delta < 35, `${Math.round(delta)} min`);
 }
 
+// ── 16. [GUARDRAIL] Relative offsets must resolve to now+offset (TODAY) and never
+//        ask "when?" — "in next one hour", "half an hour", "a couple of days"… ──
+import { hasExplicitTime } from "./datetime";
+const relCases: { input: string; minutes: number }[] = [
+  { input: "drink water in next one hour", minutes: 60 },
+  { input: "drink water in 30 minutes", minutes: 30 },
+  { input: "call mom in 2 hours", minutes: 120 },
+  { input: "check oven in half an hour", minutes: 30 },
+  { input: "stretch in the next hour", minutes: 60 },
+  { input: "relax within the next 2 hours", minutes: 120 },
+  { input: "standup an hour from now", minutes: 60 },
+  { input: "review pr 3 days later", minutes: 3 * 24 * 60 },
+  { input: "follow up with sam in a couple of days", minutes: 2 * 24 * 60 },
+];
+for (const c of relCases) {
+  const iso = parseDateTimeFromInput(c.input, TZ);
+  const delta = iso ? (new Date(iso).getTime() - Date.now()) / 60000 : -1;
+  check(`[rel] "${c.input}" ≈ now+${c.minutes}m`, Math.abs(delta - c.minutes) < 2, `${Math.round(delta)}m`);
+  // Must count as an explicit time → create now, NOT route to "ask when?".
+  check(`[rel] "${c.input}" is explicit time (no clarify)`, hasExplicitTime(c.input), "treated as no-time");
+}
+
 // ── Report ──
 if (failures === 0) { console.log("✓ ALL PASS"); process.exit(0); }
 else { console.error(`\n✗ ${failures} FAILURE(S)`); process.exit(1); }

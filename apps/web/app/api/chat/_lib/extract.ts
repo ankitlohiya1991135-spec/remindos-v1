@@ -12,6 +12,8 @@ export function extractTitleFromCreateInput(input: string) {
     /\bremind me\b.*?\b(to|about)\s+/i,
     /\bremind myself\s+.*?\b(to|about)\s+/i,
     /\b(can|could|please)\s+(you\s+)?remind\s+me\b.*?\b(to|about)\s+/i,
+    /\bping\s+me\b.*?\b(to|about)\s+/i,
+    /\b(alert|notify)\s+me\b.*?\b(to|about)\s+/i,
     /\bmake sure (?:i|that i)\s+(?:remember|remind)(?:\s+myself)?(?:\s+(?:to|about))?\s+/i,
     /\bmake sure (?:i|that i)\s+/i,
     /^note\s*[:\-—]\s*/i,
@@ -99,15 +101,20 @@ export function extractTitleFromCreateInput(input: string) {
     .replace(/\btonight\b/gi, " ")
     .replace(/\b(by|in)\s+the\s+(morning|afternoon|evening|night)\b/gi, " ")
     .replace(/\bby\s+(morning|afternoon|evening|night|noon|midnight)\b/gi, " ")
+    // Relative offsets in every phrasing — removed BEFORE the generic date-word
+    // strip below deletes "in"/"within" and orphans the rest ("in next one hour",
+    // "in the next hour", "within 2 days", "an hour from now", "half an hour",
+    // "a couple of days").
+    .replace(/\b(?:a|an)\s+(couple|few|several)\b/gi, "$1")
+    .replace(/\bhalf\s+an?\s+(?:hour|day|week)\b/gi, " ")
+    .replace(/\b(?:in|after|within|next|coming)\s+(?:the\s+)?(?:next\s+|coming\s+)?(?:\d+(?:\.\d+)?|an?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|half|couple|few|several)\s*(?:of\s+)?(?:hours?|hrs?|minutes?|mins?|days?|weeks?)\b/gi, " ")
+    .replace(/\b(?:\d+(?:\.\d+)?|an?|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|half|couple|few|several)\s*(?:of\s+)?(?:hours?|hrs?|minutes?|mins?|days?|weeks?)\s+(?:from\s+now|later)\b/gi, " ")
+    .replace(/\b(?:in|within)\s+(?:the\s+)?(?:next\s+|coming\s+)?(?:hours?|days?|weeks?)\b/gi, " ")
+    .replace(/\bfrom\s+now\b/gi, " ")
     .replace(
       /\b(today|tonight|tomorrow|tomorow|tommarow|tmrw|yesterday|day after tomorrow|after tomorrow|आज|कल|उद्या|परसों|परवा|at|on|by|noon|midnight|every|in|बजे|वाजता|वाजले|सुबह|सकाळी|दोपहर|दुपारी|शाम|सायंकाळी|रात|sunday|monday|tuesday|wednesday|thursday|friday|saturday|january|february|march|april|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)\b/gi,
       " "
     )
-    // Bare "at N" / "at N:MM" clock references ("pick up kids at 4").
-    .replace(/\bat\s+\d{1,2}(?::\d{2})?\b/gi, " ")
-    .replace(/\b(?:in|after)\s+\d+\s*(hour|hr|minute|min|day|week)s?\b/gi, " ")
-    .replace(/\b\d+\s*(hour|hr|minute|min|day|week)s?\s+from\s+now\b/gi, " ")
-    .replace(/\bfrom\s+now\b/gi, " ")
     .replace(/\b\d+\s*(hour|hr|minute|min|day|week)s?\b/gi, " ")
     .replace(/\b\d{1,2}(?:[:.]\d{2})?\s?([ap]\.?m\.?)\b/gi, " ")
     .replace(/\b\d{1,2}[:.]\d{2}\b/g, " ")
