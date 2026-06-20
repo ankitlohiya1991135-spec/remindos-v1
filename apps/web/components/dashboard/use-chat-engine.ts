@@ -7,7 +7,7 @@
  * Extracted from dashboard-workspace.tsx to reduce file size.
  */
 
-import { type FormEvent, type Dispatch, type SetStateAction, type MutableRefObject } from "react";
+import { useRef, type FormEvent, type Dispatch, type SetStateAction, type MutableRefObject } from "react";
 import {
   tryGroundedReminderAnswer,
   looksLikeMarkDoneIntent,
@@ -119,6 +119,10 @@ export function useChatEngine(params: UseChatEngineParams) {
   // Suppress unused variable warning for messages (used via messagesRef)
   void messages;
 
+  // Smart-create one-round clarify: holds the original request while we wait for
+  // the user's answer to the single clarifying question. Cleared on next submit.
+  const pendingClarifyRef = useRef<{ originalMessage: string } | null>(null);
+
   function pendingTaskChoices() {
     return tasks.filter((t) => t.status === "pending").slice(0, 8);
   }
@@ -218,6 +222,42 @@ export function useChatEngine(params: UseChatEngineParams) {
         } catch {
           showShareToast("Could not save the reminder. Please try again.");
         }
+      })();
+      return;
+    }
+
+    // ── Smart create: a bounded series ("daily until my exam ends") → create each occurrence ──
+    if (action.type === "create_reminder_series" && action.title && action.seriesDueAts?.length) {
+      setPendingCreateDraft(null);
+      setPendingTimeSuggestion(null);
+      const title = action.title;
+      const dueAts = action.seriesDueAts;
+      const recurrence = (["none", "daily", "weekly", "monthly"] as const).includes(
+        action.recurrence as "none" | "daily" | "weekly" | "monthly",
+      )
+        ? action.recurrence
+        : "none";
+      void (async () => {
+        let ok = 0;
+        for (const iso of dueAts) {
+          try {
+            const res = await fetch("/api/reminders", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ title, dueAt: new Date(iso).getTime(), recurrence, priority: 3 }),
+            });
+            if (res.ok) ok++;
+          } catch {
+            /* keep going — partial success is still useful */
+          }
+        }
+        await refreshReminders();
+        if (ok > 0) playReminderSuccessAnimation();
+        showShareToast(
+          ok === dueAts.length
+            ? `Added ${ok} reminders for "${title}".`
+            : `Added ${ok} of ${dueAts.length} reminders for "${title}".`,
+        );
       })();
       return;
     }
@@ -572,6 +612,15 @@ export function useChatEngine(params: UseChatEngineParams) {
     }
 
     if (action.type === "clarify") {
+      // Smart-create clarify: the server asked ONE question (e.g. "when does your
+      // exam start and end?"). Remember the original request so the next message
+      // is sent as the answer (single round — cleared on next submit).
+      if (action.clarifyForReminder?.originalMessage) {
+        pendingClarifyRef.current = action.clarifyForReminder;
+        setPendingCreateDraft(null);
+        setPendingDisambig(null);
+        return;
+      }
       // Disambiguation clarify: user was asked "which one?" for any CRUD op.
       // Store full context so the next reply resolves the correct reminder
       // instead of accidentally starting the create-reminder wizard.
@@ -1099,6 +1148,11 @@ export function useChatEngine(params: UseChatEngineParams) {
         setPendingConfirmAction(null);
         setPendingTimeSuggestion(null);
 
+        // One-round smart-create clarify: send (and clear) the pending original
+        // request so this message is treated as the answer.
+        const clarifySnapshot = pendingClarifyRef.current;
+        pendingClarifyRef.current = null;
+
         const response = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -1117,6 +1171,7 @@ export function useChatEngine(params: UseChatEngineParams) {
             ...clientTimeZonePayload(),
             ...(responseReplyPayload ? { replyContext: responseReplyPayload } : {}),
             ...(pendingActionSnapshot ? { pendingAction: pendingActionSnapshot } : {}),
+            ...(clarifySnapshot ? { pendingClarify: clarifySnapshot } : {}),
             ...(recentListedIds.length > 0 ? { recentListedIds } : {}),
           }),
         });

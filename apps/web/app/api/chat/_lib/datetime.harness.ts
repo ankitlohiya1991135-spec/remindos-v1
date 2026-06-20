@@ -159,6 +159,55 @@ for (const m of ["how are you doing today", "what's the weather like", "tell me 
   check(`other: "${m}"`, classifyPromptDeterministic(m) === "other", `got "${classifyPromptDeterministic(m)}"`);
 }
 
+// ── 13. [#1-dominant] "remind me <time> to <action>" creates + clean title ──
+const detect2 = (m: string) => looksLikeCreateIntent(m) || looksLikeImplicitCreate(m);
+const createTitle: { input: string; title: string }[] = [
+  { input: "Remind me in 2 hours to check the oven", title: "check the oven" },
+  { input: "Remind me after 30 minutes to drink water", title: "drink water" },
+  { input: "Set a reminder 1 hour from now for standup", title: "standup" },
+  { input: "Remind me on Monday to submit the report", title: "submit the report" },
+  { input: "Make sure I remember to call John", title: "call John" },
+  { input: "Note this down — review PR before EOD", title: "review PR before EOD" },
+  { input: "Remind me tomorrow at 2 PM to call John", title: "call John" },
+];
+for (const c of createTitle) {
+  check(`[#1] creates: "${c.input}"`, detect2(c.input), "not detected as create");
+  const t = extractTitleFromCreateInput(c.input);
+  check(`[#1] title "${c.input}" → "${c.title}"`, t === c.title, `got "${t}"`);
+}
+// relative offsets resolve to a real future time
+for (const m of ["Remind me in 2 hours to check the oven", "Remind me after 30 minutes to drink water", "1 hour from now standup"]) {
+  const iso = parseDateTimeFromInput(m, TZ);
+  check(`[#1] offset resolves: "${m}"`, typeof iso === "string" && new Date(iso).getTime() > Date.now(), String(iso));
+}
+
+// ── 14. [#2] time-of-day words + bare hour resolve to the right time ──
+function hourOfIso(iso: string): number {
+  return parseInt(new Intl.DateTimeFormat("en-US", { hour: "2-digit", hour12: false, timeZone: TZ }).format(new Date(iso)), 10);
+}
+const timeCases: { input: string; hour: number }[] = [
+  { input: "Remind me to sleep early tonight", hour: 21 },
+  { input: "Remind me tonight to check emails", hour: 21 },
+  { input: "call John by night", hour: 21 },
+  { input: "in the evening for yoga", hour: 19 },
+  { input: "team meeting tomorrow at 3", hour: 15 },   // bare hour 3 → 3 PM
+  { input: "standup at 9 tomorrow", hour: 9 },          // bare hour 9 → 9 AM
+  { input: "call dentist at 5", hour: 17 },             // bare hour 5 → 5 PM
+  { input: "lunch at 1 tomorrow", hour: 13 },           // bare hour 1 → 1 PM
+];
+for (const c of timeCases) {
+  const iso = parseDateTimeFromInput(c.input, TZ);
+  check(`[#2] "${c.input}" → ${c.hour}:00`, typeof iso === "string" && hourOfIso(iso) === c.hour, `got ${iso ? hourOfIso(iso) + ":00" : "none"}`);
+}
+// titles drop the time words
+for (const [input, title] of [
+  ["I have a meeting with the client tomorrow at 3, remind me", "meeting with the client"],
+  ["remind me in the evening for yoga", "yoga"],
+  ["Remind me to sleep early tonight", "sleep early"],
+] as const) {
+  check(`[#2] title "${input}" → "${title}"`, extractTitleFromCreateInput(input) === title, `got "${extractTitleFromCreateInput(input)}"`);
+}
+
 // ── Report ──
 if (failures === 0) { console.log("✓ ALL PASS"); process.exit(0); }
 else { console.error(`\n✗ ${failures} FAILURE(S)`); process.exit(1); }

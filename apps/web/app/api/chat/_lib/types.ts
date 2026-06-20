@@ -4,6 +4,7 @@ import type { LifeDomain } from "@repo/reminder";
 
 export type ReminderAgentActionType =
   | "create_reminder"
+  | "create_reminder_series"
   | "list_reminders"
   | "mark_done"
   | "delete_reminder"
@@ -66,6 +67,11 @@ export interface ReminderAgentAction {
   /** When true, the client must NOT execute this mutation — it renders a
    *  prefilled editable card and the user commits via Save (human-in-the-loop). */
   preview?: boolean;
+  /** Only on create_reminder_series: the pre-generated occurrence due times (ISO). */
+  seriesDueAts?: string[];
+  /** Only on clarify (smart create): echoed back so the user's next message is
+   *  treated as the answer to this one question (single round, then fall back). */
+  clarifyForReminder?: { originalMessage: string };
 }
 
 export interface ReminderAgentResponse {

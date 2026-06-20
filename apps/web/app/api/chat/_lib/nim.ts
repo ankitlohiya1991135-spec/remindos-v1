@@ -100,6 +100,118 @@ export async function resolveCreateWithLLM(
   }
 }
 
+/**
+ * Deep analysis of a reminder request that may be CONDITIONAL or a RANGE
+ * ("remind me to revise daily until my exam is over", "every morning this week",
+ * "for the next 10 days at 9pm").
+ *
+ * Returns one of:
+ *  - { kind: "single" }  — a normal one-off (delegate to the simple flow).
+ *  - { kind: "series" }  — a bounded recurring request with resolved start/end.
+ *  - { kind: "clarify" } — the model is NOT confident (missing dates/times); it
+ *      asks ONE natural question. The caller asks the user and re-analyzes.
+ *
+ * Best-effort: returns null on any failure so the caller falls back to the
+ * deterministic create flow. The LLM interprets; the caller VALIDATES (dates via
+ * isValidFutureIsoDate, count via the series cap) before acting.
+ */
+export type ReminderAnalysis =
+  | { kind: "single" }
+  | {
+      kind: "series";
+      title: string;
+      seriesStart: string; // ISO of first occurrence (with the clock time baked in)
+      seriesEnd: string; // ISO of the last day to include
+      recurrence: "daily" | "weekly" | "monthly";
+    }
+  | { kind: "clarify"; question: string };
+
+export async function analyzeReminderRequest(
+  message: string,
+  opts: { timeZone?: string; nowMs?: number; priorContext?: string; timeoutMs?: number } = {},
+): Promise<ReminderAnalysis | null> {
+  const apiKey = process.env.NVIDIA_NIM_API_KEY;
+  if (!apiKey) return null;
+  const model = process.env.NVIDIA_NIM_MODEL ?? NIM_DEFAULT_MODEL;
+  const now = opts.nowMs ? new Date(opts.nowMs) : new Date();
+  const tz = opts.timeZone ?? "UTC";
+
+  let anchor: string;
+  try {
+    anchor = new Intl.DateTimeFormat("en-US", {
+      weekday: "long", year: "numeric", month: "long", day: "numeric",
+      hour: "2-digit", minute: "2-digit", hour12: true, timeZone: tz,
+    }).format(now);
+  } catch {
+    anchor = now.toISOString();
+  }
+
+  const system =
+    `You analyse a reminder request and reply with STRICT JSON only. ` +
+    `Current date & time: ${anchor} (timezone ${tz}). ` +
+    `Decide the kind:\n` +
+    `- "single": an ordinary one-off or simple recurring reminder with a clear time → {"kind":"single"}.\n` +
+    `- "series": a BOUNDED repeating reminder where you can resolve BOTH ends and a time ` +
+    `(e.g. "every morning until friday", "daily for 10 days at 9pm") → ` +
+    `{"kind":"series","title":string,"seriesStart":ISO-8601,"seriesEnd":ISO-8601,"recurrence":"daily"|"weekly"|"monthly"}. ` +
+    `seriesStart includes the clock time; seriesEnd is the last day to include.\n` +
+    `- "clarify": the request is conditional or a range but you are MISSING the start, end, or time ` +
+    `(e.g. "remind me daily until my exam is over" — you don't know the exam dates) → ` +
+    `{"kind":"clarify","question":string}. Ask ONE short, friendly question for exactly what's missing.\n` +
+    `Resolve all relative dates against the current date. Never invent dates you don't have — ask instead. ` +
+    `Title is the action only, no date/time words.`;
+
+  const userContent = opts.priorContext
+    ? `Earlier request: ${opts.priorContext}\nUser's answer: ${message}`
+    : message;
+
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? 9000);
+    const res = await fetch(`${NIM_BASE_URL}/chat/completions`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${apiKey}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model,
+        temperature: 0.1,
+        max_tokens: 260,
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: userContent },
+        ],
+      }),
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+    if (!res.ok) return null;
+    const data = (await res.json()) as { choices?: Array<{ message?: { content?: string } }> };
+    const obj = JSON.parse(extractJsonObject(data.choices?.[0]?.message?.content ?? "")) as Record<string, unknown>;
+    const kind = obj.kind;
+    if (kind === "single") return { kind: "single" };
+    if (kind === "clarify" && typeof obj.question === "string" && obj.question.trim()) {
+      return { kind: "clarify", question: obj.question.trim() };
+    }
+    if (
+      kind === "series" &&
+      typeof obj.title === "string" &&
+      typeof obj.seriesStart === "string" &&
+      typeof obj.seriesEnd === "string" &&
+      (obj.recurrence === "daily" || obj.recurrence === "weekly" || obj.recurrence === "monthly")
+    ) {
+      return {
+        kind: "series",
+        title: obj.title.trim() || "Reminder",
+        seriesStart: obj.seriesStart,
+        seriesEnd: obj.seriesEnd,
+        recurrence: obj.recurrence,
+      };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 // ─── JSON parsing ─────────────────────────────────────────────────────────────
 
 export function extractJsonObject(text: string): string {

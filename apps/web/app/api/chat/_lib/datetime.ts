@@ -9,12 +9,13 @@ export function hasExplicitTime(input: string) {
     || /(?:^|\s)\d{1,2}\s*(?:बजे|वाजता|वाजले)(?=\s|$|[,.!?])/i.test(normalized)
     || /(?:^|\s)(सुबह|सकाळी|दोपहर|दुपारी|शाम|सायंकाळी|रात)(?=\s|$|[,.!?])/i.test(normalized)
     || /\b(noon|midnight)\b/i.test(input)
-    || /\b(morning|afternoon|evening|night)\b/i.test(input)
+    || /\b(morning|afternoon|evening|night|tonight)\b/i.test(input)
+    || /\bat\s+\d{1,2}\b(?!\s*[:.]?\d)/i.test(input)
     || /\bin\s+\d+\s*(hour|hr|minute|min)s?\b/i.test(input);
 }
 
 export function hasTodayHint(input: string) {
-  return /\btoday\b/i.test(input) || /(^|\s)आज(?=\s|$|[,.!?])/i.test(input);
+  return /\b(today|tonight)\b/i.test(input) || /(^|\s)आज(?=\s|$|[,.!?])/i.test(input);
 }
 
 export function hasTomorrowHint(input: string) {
@@ -53,6 +54,19 @@ export function parseTimeFromInput(input: string) {
     return { hour, minute };
   }
 
+  // Bare hour after "at" with no am/pm ("meeting at 3", "standup at 9"). Checked
+  // BEFORE the regional matcher (which would otherwise grab the lone digit and
+  // bail). Ambiguous, so pick the most likely: 1–6 → afternoon/evening (PM),
+  // 7–12 → as-is (AM / noon). The user can adjust on the editable card.
+  const bareHour = input.match(/\bat\s+(\d{1,2})\b(?!\s*[:.]?\d)/i);
+  if (bareHour) {
+    let h = Number.parseInt(bareHour[1] ?? "-1", 10);
+    if (h >= 1 && h <= 12) {
+      if (h >= 1 && h <= 6) h += 12;
+      return { hour: h, minute: 0 };
+    }
+  }
+
   const regionalMatch = normalized.match(
     /(?:^|\s)(\d{1,2})(?:[:.]\s*(\d{2}))?\s*(?:बजे|वाजता|वाजले)?\s*(सुबह|सकाळी|दोपहर|दुपारी|शाम|सायंकाळी|रात)?(?=\s|$|[,.!?])/i,
   );
@@ -76,6 +90,7 @@ export function parseTimeFromInput(input: string) {
   if (/\bmidnight\b/i.test(input)) return { hour: 0, minute: 0 };
   if (/(?:^|\s)(दोपहर|दुपारी)(?=\s|$|[,.!?])/i.test(normalized)) return { hour: 12, minute: 0 };
   if (/(?:^|\s)(आधी रात|मध्यरात्र)(?=\s|$|[,.!?])/i.test(normalized)) return { hour: 0, minute: 0 };
+  if (/\btonight\b/i.test(input)) return { hour: 21, minute: 0 };
   if (/\bmorning\b/i.test(input)) return { hour: 9, minute: 0 };
   if (/\bafternoon\b/i.test(input)) return { hour: 14, minute: 0 };
   if (/\bevening\b/i.test(input)) return { hour: 19, minute: 0 };
@@ -221,11 +236,15 @@ export function parseWeekdayTarget(input: string, timeZone?: string): string | n
   return calendarDateTimeToIso(targetDay, time, timeZone);
 }
 
-/** "in 2 hours", "in 30 minutes", "in 3 days" → ISO string */
+/** "in 2 hours", "after 30 minutes", "3 days from now", "an hour from now" → ISO string */
 export function parseRelativeOffset(input: string): string | null {
-  const match = input.toLowerCase().match(/\bin\s+(\d+(?:\.\d+)?)\s*(hour|hr|minute|min|day|week)s?\b/);
+  const n = input.toLowerCase();
+  // "in N units" / "after N units"  OR  "N units from now". Also accept "an"/"a" as 1.
+  const match =
+    n.match(/\b(?:in|after)\s+(\d+(?:\.\d+)?|an?)\s*(hour|hr|minute|min|day|week)s?\b/) ??
+    n.match(/\b(\d+(?:\.\d+)?|an?)\s*(hour|hr|minute|min|day|week)s?\s+from\s+now\b/);
   if (!match) return null;
-  const amount = parseFloat(match[1]!);
+  const amount = /^an?$/.test(match[1]!) ? 1 : parseFloat(match[1]!);
   const unit = match[2]!;
   if (!Number.isFinite(amount) || amount <= 0 || amount > 8760) return null;
   const ms =
@@ -396,4 +415,38 @@ export function parseDateTimeFromInput(input: string, timeZone?: string) {
 export function isValidFutureIsoDate(value: string) {
   const date = new Date(value);
   return Number.isFinite(date.getTime()) && date.getTime() > Date.now() - 60 * 1000;
+}
+
+/**
+ * Expand a bounded recurring request ("daily until my exam ends", "every day this
+ * week at 8am") into a concrete list of dueAt timestamps — one reminder per
+ * occurrence. We PRE-GENERATE the series so each row fires on the existing
+ * due-notification cron (no new recurring-fire infra needed).
+ *
+ * `startMs` is the first occurrence (already at the right clock time), `endMs` the
+ * inclusive end of the window. Capped so an open-ended request can't create
+ * thousands of rows.
+ */
+export function expandRecurringSeries(
+  startMs: number,
+  endMs: number,
+  recurrence: "daily" | "weekly" | "monthly",
+  cap = 60,
+): number[] {
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs < startMs) return [];
+  const out: number[] = [];
+  let cur = startMs;
+  let guard = 0;
+  while (cur <= endMs && out.length < cap && guard < 5000) {
+    out.push(cur);
+    if (recurrence === "daily") cur += 86_400_000;
+    else if (recurrence === "weekly") cur += 7 * 86_400_000;
+    else {
+      const d = new Date(cur);
+      d.setUTCMonth(d.getUTCMonth() + 1);
+      cur = d.getTime();
+    }
+    guard++;
+  }
+  return out;
 }

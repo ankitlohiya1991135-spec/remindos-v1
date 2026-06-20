@@ -62,6 +62,7 @@ export interface ChatMessage {
 export interface AgentAction {
   type:
     | "create_reminder"
+    | "create_reminder_series"
     | "list_reminders"
     | "mark_done"
     | "delete_reminder"
@@ -119,6 +120,10 @@ export interface AgentAction {
   pendingValue?: string;
   /** Only on clarify (snooze disambiguation): snooze delay in minutes */
   pendingDelayMinutes?: number;
+  /** Only on create_reminder_series: the pre-generated occurrence due times (ISO). */
+  seriesDueAts?: string[];
+  /** Only on clarify (smart create): echoed back so the next user message is the answer. */
+  clarifyForReminder?: { originalMessage: string };
 }
 
 export interface AgentResponse {

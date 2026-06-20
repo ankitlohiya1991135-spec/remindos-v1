@@ -15,8 +15,8 @@
  * assertion because "correct" is a human judgement against the anchor date.
  */
 
-import { resolveCreateWithLLM } from "./nim";
-import { isValidFutureIsoDate } from "./datetime";
+import { resolveCreateWithLLM, analyzeReminderRequest } from "./nim";
+import { isValidFutureIsoDate, expandRecurringSeries } from "./datetime";
 
 const TZ = "Asia/Kolkata";
 
@@ -60,6 +60,26 @@ async function main() {
       : "(no date)";
     console.log(`• "${msg}"`);
     console.log(`    title="${r.title ?? ""}"  due=${when}  explicitTime=${r.hasExplicitTime}  recurrence=${r.recurrence}\n`);
+  }
+
+  // ── Smart analyzer: conditional / range / clarify ──
+  console.log("\n===== analyzeReminderRequest (series / clarify) =====\n");
+  const reqs = [
+    "remind me to revise daily until my exam is over",   // expect clarify (no dates)
+    "remind me every morning for the next 5 days to meditate", // expect series
+    "remind me every day this week at 9pm to take medicine",   // expect series
+    "remind me to call the bank tomorrow at 3pm",        // expect single
+  ];
+  for (const msg of reqs) {
+    const a = await analyzeReminderRequest(msg, { timeZone: TZ, nowMs });
+    if (!a) { console.log(`✗ "${msg}" → null\n`); continue; }
+    if (a.kind === "clarify") { console.log(`• "${msg}"\n    CLARIFY → "${a.question}"\n`); continue; }
+    if (a.kind === "series") {
+      const n = expandRecurringSeries(new Date(a.seriesStart).getTime(), new Date(a.seriesEnd).getTime(), a.recurrence).length;
+      console.log(`• "${msg}"\n    SERIES → "${a.title}" ${a.recurrence}  ${a.seriesStart} → ${a.seriesEnd}  (${n} reminders)\n`);
+      continue;
+    }
+    console.log(`• "${msg}"\n    SINGLE (delegates to simple flow)\n`);
   }
 }
 

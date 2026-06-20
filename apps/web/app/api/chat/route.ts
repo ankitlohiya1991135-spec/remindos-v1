@@ -11,9 +11,9 @@ import { getChatHistory } from "../../../lib/server/chat-history";
 
 import type { ReminderAgentAction, ReminderAgentResponse } from "./_lib/types";
 import { systemPrompt } from "./_lib/prompt";
-import { hasExplicitTime, hasTodayHint, hasTomorrowHint, hasDayAfterTomorrowHint, getCalendarDateInTimeZone, addDaysToCalendarDate, calendarDateTimeToIso, parseDateTimeFromInput, parseCalendarDateFromInput, isValidFutureIsoDate } from "./_lib/datetime";
+import { hasExplicitTime, hasTodayHint, hasTomorrowHint, hasDayAfterTomorrowHint, getCalendarDateInTimeZone, addDaysToCalendarDate, calendarDateTimeToIso, parseDateTimeFromInput, parseCalendarDateFromInput, isValidFutureIsoDate, expandRecurringSeries } from "./_lib/datetime";
 import { formatDueInUserZone, mapAgentScopeToListScope, fallbackDeterministicReply } from "./_lib/format";
-import { safeAgentResponse, resolveCreateWithLLM } from "./_lib/nim";
+import { safeAgentResponse, resolveCreateWithLLM, analyzeReminderRequest, type ReminderAnalysis } from "./_lib/nim";
 import { parseLifeDomain, loadRemindersForChat, loadTasksForChat, loadUserWiki, filterRemindersForLLM, saveMessageServerSide, looksLikeConfirmation, findTargetReminder, normalizeClientTimeZone, suggestDomainTime, loadProfileForSuggestion } from "./_lib/data";
 import { extractTitleFromCreateInput, extractPriorityFromInput, extractDomainFromInput, extractRecurrenceFromInput, titleIncludesTarget, resolveTargetFromHistory, extractNewValueFromEdit, extractPriorityFromEdit, extractDomainFromEdit, taskGate, looksLikeCreateTaskIntent, looksLikeListTasksIntent, looksLikeMarkTaskDoneIntent, looksLikeDeleteTaskIntent, looksLikeEditTaskIntent, extractTargetFromTaskMessage, extractTargetFromTaskEdit, extractEditTaskField, extractTitleFromTaskInput } from "./_lib/extract";
 import { tryBulk, tryMarkDone, tryDelete, tryReschedule, tryEdit, trySnoozeRecovery, trySnooze, type ChatContext } from "./_lib/handlers";
@@ -41,6 +41,46 @@ function isRateLimited(userId: string): boolean {
   if (entry.count >= RATE_LIMIT_MAX) return true;
   entry.count++;
   return false;
+}
+
+/** Cap on how many reminders one "until X"/range request may pre-generate. */
+const SERIES_CAP = 60;
+/** Cues that a create request is a bounded/conditional range needing deep analysis. */
+const RANGE_CUE = /\b(until|till|untill|upto|up to|through|throughout|during|for the next|for \d+\s*(day|days|week|weeks|month|months)|each day until|every day until|till my|until my)\b/i;
+
+/**
+ * Turn a smart-create LLM analysis into a chat response, or null to fall back to
+ * the ordinary create flow. Handles the "series" (pre-generate occurrences) and
+ * "clarify" (ask one question) kinds; "single"/invalid → null.
+ */
+function buildSmartCreateResponse(
+  analysis: ReminderAnalysis | null,
+  originalMessage: string,
+): ReminderAgentResponse | null {
+  if (!analysis) return null;
+
+  if (analysis.kind === "clarify") {
+    return {
+      reply: analysis.question,
+      action: { type: "clarify", clarifyForReminder: { originalMessage } },
+    };
+  }
+
+  if (analysis.kind === "series") {
+    const startMs = new Date(analysis.seriesStart).getTime();
+    const endMs = new Date(analysis.seriesEnd).getTime();
+    if (!Number.isFinite(startMs) || !Number.isFinite(endMs)) return null;
+    const dueAts = expandRecurringSeries(startMs, endMs, analysis.recurrence, SERIES_CAP)
+      .filter((ms) => ms > Date.now() - 60_000)
+      .map((ms) => new Date(ms).toISOString());
+    if (dueAts.length === 0) return null;
+    return {
+      reply: `Setting up "${analysis.title}" — ${dueAts.length} reminder${dueAts.length !== 1 ? "s" : ""} (${analysis.recurrence}). Tap Save to add them all.`,
+      action: { type: "create_reminder_series", title: analysis.title, recurrence: analysis.recurrence, seriesDueAts: dueAts },
+    };
+  }
+
+  return null;
 }
 
 // ─── POST handler ─────────────────────────────────────────────────────────────
@@ -78,6 +118,8 @@ export async function POST(request: Request) {
       newLinkedTaskId?: string | null;
     };
     recentListedIds?: string[];
+    /** Echoed back when the previous turn asked one smart-create clarifying question. */
+    pendingClarify?: { originalMessage: string };
   };
   const timeZone = normalizeClientTimeZone(body.timeZone);
   const message = body.message?.trim();
@@ -500,6 +542,54 @@ export async function POST(request: Request) {
       }
     }
     // If taskGate matched but no task classifier matched, fall through to reminder paths / LLM
+  }
+
+  // ── Smart create: bounded / conditional reminders ("remind me daily until my
+  //    exam is over", "every morning for the next 10 days") + one-round clarify ──
+  //    The LLM deeply interprets the request; if it can't resolve the range it asks
+  //    ONE question. Best-effort: if the LLM is unavailable it simply falls through
+  //    to the ordinary create flow (zero regression).
+  const isClarifyAnswer = !!body.pendingClarify?.originalMessage;
+  if (isClarifyAnswer || (looksLikeCreateIntent(message) && RANGE_CUE.test(message))) {
+    const original = body.pendingClarify?.originalMessage ?? message;
+    const analysis = await analyzeReminderRequest(message, {
+      timeZone,
+      priorContext: isClarifyAnswer ? original : undefined,
+    });
+
+    if (analysis?.kind === "series") {
+      const resp = buildSmartCreateResponse(analysis, original);
+      if (resp) {
+        void saveMessageServerSide(userId, "user", effectiveMessage);
+        void saveMessageServerSide(userId, "assistant", resp.reply);
+        return NextResponse.json(resp);
+      }
+    }
+    // Ask ONE clarifying question — but only on the first turn (never re-ask).
+    if (analysis?.kind === "clarify" && !isClarifyAnswer) {
+      const resp = buildSmartCreateResponse(analysis, original)!;
+      void saveMessageServerSide(userId, "user", effectiveMessage);
+      void saveMessageServerSide(userId, "assistant", resp.reply);
+      return NextResponse.json(resp);
+    }
+    // Answer turn that didn't resolve to a series → make a single reminder using
+    // the original's title + the date/time the user just supplied. One round only.
+    if (isClarifyAnswer) {
+      const title = extractTitleFromCreateInput(original) || DEFAULT_CHAT_REMINDER_TITLE;
+      const dueAt =
+        parseDateTimeFromInput(message, timeZone) ?? parseDateTimeFromInput(`${original} ${message}`, timeZone);
+      if (dueAt && isValidFutureIsoDate(dueAt)) {
+        const resp: ReminderAgentResponse = {
+          reply: `Reminder "${title}" created for ${formatDueInUserZone(dueAt, timeZone)}.`,
+          action: { type: "create_reminder", title, dueAt, recurrence: extractRecurrenceFromInput(`${original} ${message}`) },
+        };
+        void saveMessageServerSide(userId, "user", effectiveMessage);
+        void saveMessageServerSide(userId, "assistant", resp.reply);
+        return NextResponse.json(resp);
+      }
+      // Still unresolved after one round — hand to the ordinary flow on the original.
+    }
+    // Otherwise fall through to the ordinary create flow below.
   }
 
   if (looksLikeCreateIntent(message) || looksLikeImplicitCreate(message)) {

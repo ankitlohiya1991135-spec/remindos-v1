@@ -279,6 +279,17 @@ export function looksLikeCreateIntent(message: string): boolean {
   if (/\b(already\s+(set|have|created|scheduled)|check if|look up)\s+a?\s*reminder\b/.test(n)) return false;
   // Original patterns
   if (/\bremind me to\b/.test(n)) return true;
+  // "remind me <in 2 hours / on monday / at 5 / tomorrow> to|about <action>" — the
+  // time/date sits BETWEEN "remind me" and "to", so the contiguous check above
+  // misses it. This is the grammar of a reminder, not an enumerated phrase.
+  if (/\bremind me\b[\s\S]{0,40}?\b(to|about|that)\b/.test(n)) return true;
+  // "make sure i remember/remind … to …", "make sure i call john tonight"
+  if (/\bmake sure (?:i|that i)\s+(?:remember|remind|don'?t forget)\b/.test(n)) return true;
+  // "note this down", "note: …", "jot down …", "make a note …"
+  if (/\bnote (?:this|that|it)? ?down\b/.test(n)) return true;
+  if (/^note\s*[:\-—]/.test(n)) return true;
+  if (/\bjot (?:this|that|it)? ?down\b/.test(n)) return true;
+  if (/\bmake a note\b/.test(n)) return true;
   if (/\b(create|add|set|make|schedule)\s+(a\s+|an\s+|the\s+|my\s+)?reminder\b/.test(n)) return true;
   // "create a meeting reminder" / "add gym reminder" — modifier word between article and "reminder"
   if (/\b(create|add|set|make|schedule)\s+(a\s+|an\s+|the\s+|my\s+)?(?:new\s+)?\w+\s+reminder\b/.test(n)) return true;

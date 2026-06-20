@@ -6,16 +6,26 @@ export function extractTitleFromCreateInput(input: string) {
 
   // Ordered prefix patterns — strip the intent phrase, keep the subject/action after it
   const prefixPatterns: RegExp[] = [
-    /\bremind me to\s+/i,
-    /\bremind myself\s+(to|about)\s+/i,
+    // General "remind me <in 2 hours / on monday / at 5 / tomorrow> to|about <action>" —
+    // non-greedy up to the FIRST to/about, so the whole lead-in (incl. the time
+    // phrase) is removed and only the action survives.
+    /\bremind me\b.*?\b(to|about)\s+/i,
+    /\bremind myself\s+.*?\b(to|about)\s+/i,
+    /\b(can|could|please)\s+(you\s+)?remind\s+me\b.*?\b(to|about)\s+/i,
+    /\bmake sure (?:i|that i)\s+(?:remember|remind)(?:\s+myself)?(?:\s+(?:to|about))?\s+/i,
+    /\bmake sure (?:i|that i)\s+/i,
+    /^note\s*[:\-—]\s*/i,
+    /\bnote (?:this|that|it)? ?down\b[\s:\-—]*/i,
+    /\bjot (?:this|that|it)? ?down\b[\s:\-—]*/i,
     /\bdon'?t\s+forget\s+to\s+/i,
     /\bi\s+(need|must|have|should|want)\s+to\s+remember\s+to\s+/i,
-    /\b(can|could|please)\s+(you\s+)?remind\s+me\s+(to|about)\s+/i,
     /\bping\s+me\s+(at|about|for|when)\s+/i,
     /\b(alert|notify)\s+me\s+(at|about|for|when|to)\s+/i,
     /\bput\s+(a\s+)?reminder\s+(for|to|about)\s+/i,
     /\bi\s+have\s+(a\s+|an\s+)?/i,
     /\b(याद\s+दिलाना|याद\s+कराना|याद\s+रखना|रिमाइंडर\s+लगाओ)\s+/i,
+    // Last-resort lead-ins with no "to" ("remind me, gym at 6").
+    /\bremind me\b[\s,]+/i,
   ];
 
   let stripped = false;
@@ -82,13 +92,22 @@ export function extractTitleFromCreateInput(input: string) {
       /\b(next|this|coming)\s+(?=today|tomorrow|tomorow|tommarow|tmrw|monday|tuesday|wednesday|thursday|friday|saturday|sunday|week|month|year|morning|afternoon|evening|night|noon|midnight)\b/gi,
       " "
     )
+    // Time expressions that must be removed BEFORE the generic date-word strip
+    // below deletes the word "at"/"by" and orphans the rest ("meeting at 3" must
+    // not leave a stray "3"; "call by night" must not keep "night").
+    .replace(/\bat\s+\d{1,2}\b(?!\s*[:.]?\d)/gi, " ")
+    .replace(/\btonight\b/gi, " ")
+    .replace(/\b(by|in)\s+the\s+(morning|afternoon|evening|night)\b/gi, " ")
+    .replace(/\bby\s+(morning|afternoon|evening|night|noon|midnight)\b/gi, " ")
     .replace(
       /\b(today|tomorrow|tomorow|tommarow|tmrw|day after tomorrow|after tomorrow|आज|कल|उद्या|परसों|परवा|at|on|by|noon|midnight|every|in|बजे|वाजता|वाजले|सुबह|सकाळी|दोपहर|दुपारी|शाम|सायंकाळी|रात|sunday|monday|tuesday|wednesday|thursday|friday|saturday|january|february|march|april|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)\b/gi,
       " "
     )
     // Bare "at N" / "at N:MM" clock references ("pick up kids at 4").
     .replace(/\bat\s+\d{1,2}(?::\d{2})?\b/gi, " ")
-    .replace(/\bin\s+\d+\s*(hour|hr|minute|min|day|week)s?\b/gi, " ")
+    .replace(/\b(?:in|after)\s+\d+\s*(hour|hr|minute|min|day|week)s?\b/gi, " ")
+    .replace(/\b\d+\s*(hour|hr|minute|min|day|week)s?\s+from\s+now\b/gi, " ")
+    .replace(/\bfrom\s+now\b/gi, " ")
     .replace(/\b\d+\s*(hour|hr|minute|min|day|week)s?\b/gi, " ")
     .replace(/\b\d{1,2}(?:[:.]\d{2})?\s?([ap]\.?m\.?)\b/gi, " ")
     .replace(/\b\d{1,2}[:.]\d{2}\b/g, " ")
@@ -110,7 +129,11 @@ export function extractTitleFromCreateInput(input: string) {
   // punctuation left behind by stripping ("call santosh ." → "call santosh",
   // "pay the loan by" → "pay the loan").
   titled = titled
+    // Trailing ", remind me" ("meeting with the client at 3, remind me" → "meeting with the client").
+    .replace(/[\s,]*\b(?:please\s+)?remind me\b\.?\s*$/i, "")
     .replace(/\s*\b(by|on|at|of|for|to)\s*$/i, "")
+    // Leading leftover connector ("for standup" → "standup", "about gym" → "gym").
+    .replace(/^\s*(for|about|to)\s+/i, "")
     .replace(/^[\s.,;:!?–—-]+|[\s.,;:!?–—-]+$/g, "")
     .replace(/\s+/g, " ")
     .trim();
