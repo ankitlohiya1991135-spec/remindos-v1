@@ -122,6 +122,9 @@ export function useChatEngine(params: UseChatEngineParams) {
   // Smart-create one-round clarify: holds the original request while we wait for
   // the user's answer to the single clarifying question. Cleared on next submit.
   const pendingClarifyRef = useRef<{ originalMessage: string } | null>(null);
+  // Conversational edit/cancel: the ID of the last created reminder, so the user
+  // can say "actually make it 6 PM" or "cancel that" immediately after creation.
+  const lastCreatedIdRef = useRef<string | null>(null);
 
   function pendingTaskChoices() {
     return tasks.filter((t) => t.status === "pending").slice(0, 8);
@@ -208,6 +211,7 @@ export function useChatEngine(params: UseChatEngineParams) {
           // Inject an interactive card for the newly created reminder
           const createdId = String(data.reminder?._id ?? "");
           if (createdId) {
+            lastCreatedIdRef.current = createdId;
             setMessages((prev) => [
               ...prev,
               {
@@ -1152,6 +1156,9 @@ export function useChatEngine(params: UseChatEngineParams) {
         // request so this message is treated as the answer.
         const clarifySnapshot = pendingClarifyRef.current;
         pendingClarifyRef.current = null;
+        // Conversational edit/cancel: send (and clear) the last created reminder ID.
+        const lastCreatedIdSnapshot = lastCreatedIdRef.current;
+        lastCreatedIdRef.current = null;
 
         const response = await fetch("/api/chat", {
           method: "POST",
@@ -1173,6 +1180,7 @@ export function useChatEngine(params: UseChatEngineParams) {
             ...(pendingActionSnapshot ? { pendingAction: pendingActionSnapshot } : {}),
             ...(clarifySnapshot ? { pendingClarify: clarifySnapshot } : {}),
             ...(recentListedIds.length > 0 ? { recentListedIds } : {}),
+            ...(lastCreatedIdSnapshot ? { lastCreatedId: lastCreatedIdSnapshot } : {}),
           }),
         });
 

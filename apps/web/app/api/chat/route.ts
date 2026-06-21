@@ -11,7 +11,7 @@ import { getChatHistory } from "../../../lib/server/chat-history";
 
 import type { ReminderAgentAction, ReminderAgentResponse } from "./_lib/types";
 import { systemPrompt } from "./_lib/prompt";
-import { hasExplicitTime, hasTodayHint, hasTomorrowHint, hasDayAfterTomorrowHint, getCalendarDateInTimeZone, addDaysToCalendarDate, calendarDateTimeToIso, parseDateTimeFromInput, parseCalendarDateFromInput, isValidFutureIsoDate, expandRecurringSeries } from "./_lib/datetime";
+import { hasExplicitTime, hasTodayHint, hasTomorrowHint, hasDayAfterTomorrowHint, getCalendarDateInTimeZone, addDaysToCalendarDate, calendarDateTimeToIso, parseDateTimeFromInput, parseCalendarDateFromInput, isValidFutureIsoDate, expandRecurringSeries, parseEveryInterval, extractClockTimes, expandByDays } from "./_lib/datetime";
 import { formatDueInUserZone, mapAgentScopeToListScope, fallbackDeterministicReply } from "./_lib/format";
 import { safeAgentResponse, resolveCreateWithLLM, analyzeReminderRequest, type ReminderAnalysis } from "./_lib/nim";
 import { parseLifeDomain, loadRemindersForChat, loadTasksForChat, loadUserWiki, filterRemindersForLLM, saveMessageServerSide, looksLikeConfirmation, findTargetReminder, normalizeClientTimeZone, suggestDomainTime, loadProfileForSuggestion } from "./_lib/data";
@@ -120,6 +120,8 @@ export async function POST(request: Request) {
     recentListedIds?: string[];
     /** Echoed back when the previous turn asked one smart-create clarifying question. */
     pendingClarify?: { originalMessage: string };
+    /** Reminder ID of the most recently created reminder — enables conversational edit/cancel. */
+    lastCreatedId?: string;
   };
   const timeZone = normalizeClientTimeZone(body.timeZone);
   const message = body.message?.trim();
@@ -544,6 +546,37 @@ export async function POST(request: Request) {
     // If taskGate matched but no task classifier matched, fall through to reminder paths / LLM
   }
 
+  // ── Conversational edit/cancel: "Actually make it 6 PM" / "cancel that" ────
+  //    Fires when the user's last turn created a reminder and they're correcting it.
+  //    Requires the client to send back lastCreatedId for the just-created reminder.
+  if (body.lastCreatedId) {
+    const n = message.toLowerCase();
+    const isCancel = /\b(cancel|delete|remove|forget it|never mind|nevermind|scrap it|ignore that|skip that|don'?t (create|set|add) that)\b/.test(n);
+    const isEdit = /\b(actually|wait|no wait|change it|make it|update it|set it to|change to|move it to|reschedule)\b/.test(n);
+    if (isCancel) {
+      const resp: ReminderAgentResponse = {
+        reply: "Done — I've cancelled that reminder.",
+        action: { type: "delete_reminder", targetId: body.lastCreatedId },
+      };
+      void saveMessageServerSide(userId, "user", message);
+      void saveMessageServerSide(userId, "assistant", resp.reply);
+      return NextResponse.json(resp);
+    }
+    if (isEdit) {
+      const newDueAt = parseDateTimeFromInput(message, timeZone);
+      if (newDueAt && isValidFutureIsoDate(newDueAt)) {
+        const resp: ReminderAgentResponse = {
+          reply: `Updated — rescheduled to ${formatDueInUserZone(newDueAt, timeZone)}.`,
+          action: { type: "reschedule_reminder", targetId: body.lastCreatedId, dueAt: newDueAt },
+        };
+        void saveMessageServerSide(userId, "user", message);
+        void saveMessageServerSide(userId, "assistant", resp.reply);
+        return NextResponse.json(resp);
+      }
+    }
+    // Unrecognised follow-up with lastCreatedId — fall through normally.
+  }
+
   // ── Smart create: bounded / conditional reminders ("remind me daily until my
   //    exam is over", "every morning for the next 10 days") + one-round clarify ──
   //    The LLM deeply interprets the request; if it can't resolve the range it asks
@@ -598,6 +631,79 @@ export async function POST(request: Request) {
     const domain = extractDomainFromInput(message);
     const priority = extractPriorityFromInput(message);
 
+    // ── "every N days / every other day" fast path ─────────────────────────────
+    // Deterministic — no LLM needed. Generates 30 occurrences starting from the
+    // first future occurrence of the given time (or smart-suggested time).
+    const everyInterval = parseEveryInterval(message);
+    if (everyInterval) {
+      const ivTitle = deterministicTitle || DEFAULT_CHAT_REMINDER_TITLE;
+      const { profile: ivProfile, domainHourPatterns: ivHourPat } = await loadProfileForSuggestion(userId);
+      const ivSuggested = suggestDomainTime(domain, ivTitle, ivProfile, ivHourPat);
+      const ivNow = new Date();
+      const ivTodayCal = getCalendarDateInTimeZone(ivNow, timeZone);
+      let ivStartIso: string;
+      if (deterministicDueAt && hasExplicitTime(message)) {
+        const ms = new Date(deterministicDueAt).getTime();
+        ivStartIso = ms > ivNow.getTime()
+          ? deterministicDueAt
+          : new Date(ms + 86_400_000).toISOString();
+      } else {
+        ivStartIso = calendarDateTimeToIso(ivTodayCal, ivSuggested, timeZone);
+        if (new Date(ivStartIso).getTime() <= ivNow.getTime()) {
+          ivStartIso = calendarDateTimeToIso(addDaysToCalendarDate(ivTodayCal, 1), ivSuggested, timeZone);
+        }
+      }
+      const { stepDays } = everyInterval;
+      const ivDueAts = expandByDays(new Date(ivStartIso).getTime(), stepDays, 30)
+        .map((ms) => new Date(ms).toISOString());
+      const ivLabel = stepDays === 2 ? "every other day" : `every ${stepDays} days`;
+      const ivReply = `Setting up "${ivTitle}" — ${ivDueAts.length} reminders (${ivLabel}, starting ${formatDueInUserZone(ivStartIso, timeZone)}).`;
+      const ivResp: ReminderAgentResponse = {
+        reply: ivReply,
+        action: { type: "create_reminder_series", title: ivTitle, priority, domain, seriesDueAts: ivDueAts },
+      };
+      void saveMessageServerSide(userId, "user", message);
+      void saveMessageServerSide(userId, "assistant", ivReply);
+      return NextResponse.json(ivResp);
+    }
+
+    // ── "twice a day / multiple explicit times" fast path ──────────────────────
+    // E.g. "remind me at 8 AM and 8 PM to take medicine" → 2 × 14 = 28 reminders.
+    const MULTI_TIME_CUE = /\b(twice\s+a\s+day|two\s+times\s+a\s+day|2\s+times\s+a\s+day|thrice\s+a\s+day|three\s+times\s+a\s+day)\b/i;
+    const EXPLICIT_TWO_TIMES = /\b\d{1,2}\s*(?:am|pm)(?:.*?\band\b.*?\b\d{1,2}\s*(?:am|pm))+/i;
+    const clockTimes = extractClockTimes(message);
+    if (clockTimes.length >= 2 && (MULTI_TIME_CUE.test(message) || EXPLICIT_TWO_TIMES.test(message))) {
+      const mtTitle = deterministicTitle || DEFAULT_CHAT_REMINDER_TITLE;
+      const mtNow = new Date();
+      const mtTodayCal = getCalendarDateInTimeZone(mtNow, timeZone);
+      const DAYS = 14;
+      const mtDueAts: string[] = [];
+      for (let d = 0; d < DAYS; d++) {
+        const day = addDaysToCalendarDate(mtTodayCal, d);
+        for (const t of clockTimes) {
+          const iso = calendarDateTimeToIso(day, { hour: t.hour, minute: t.minute }, timeZone);
+          if (new Date(iso).getTime() > mtNow.getTime() - 60_000) mtDueAts.push(iso);
+        }
+      }
+      if (mtDueAts.length > 0) {
+        const timeLabels = clockTimes
+          .map((t) => {
+            const h12 = t.hour % 12 || 12;
+            const m = t.minute ? `:${String(t.minute).padStart(2, "0")}` : "";
+            return `${h12}${m} ${t.hour >= 12 ? "PM" : "AM"}`;
+          })
+          .join(" & ");
+        const mtReply = `Setting up "${mtTitle}" at ${timeLabels} daily — ${mtDueAts.length} reminders over ${DAYS} days.`;
+        const mtResp: ReminderAgentResponse = {
+          reply: mtReply,
+          action: { type: "create_reminder_series", title: mtTitle, priority, domain, seriesDueAts: mtDueAts },
+        };
+        void saveMessageServerSide(userId, "user", message);
+        void saveMessageServerSide(userId, "assistant", mtReply);
+        return NextResponse.json(mtResp);
+      }
+    }
+
     let title = deterministicTitle || DEFAULT_CHAT_REMINDER_TITLE;
     let recurrence = extractRecurrenceFromInput(message);
     let explicitDate = parseCalendarDateFromInput(message, timeZone);
@@ -638,10 +744,51 @@ export async function POST(request: Request) {
       }
     }
 
+    // ── Past-date warning: user asked for "yesterday" or a past time ───────────
+    // When the message explicitly mentions "yesterday" or "last [day]" and we
+    // have no valid future date, detect it and bump to tomorrow + tell the user.
+    if (!createDueAt && /\b(yesterday|last night)\b/i.test(message) && deterministicDueAt) {
+      const pastMs = new Date(deterministicDueAt).getTime();
+      if (Number.isFinite(pastMs)) {
+        const bumpedMs = pastMs + 86_400_000;
+        const bumpedIso = new Date(bumpedMs).toISOString();
+        if (isValidFutureIsoDate(bumpedIso)) {
+          createDueAt = bumpedIso;
+        }
+      }
+    }
+
     // ── Confident date + time → create immediately ─────────────────────────────
     if (createDueAt && isValidFutureIsoDate(createDueAt)) {
+      // Conflict detection: warn if an existing reminder is within ±5 minutes.
+      const CONFLICT_WINDOW_MS = 5 * 60 * 1000;
+      const createMs = new Date(createDueAt).getTime();
+      const conflicting = reminders.find(
+        (r) => r.dueAt && Math.abs(new Date(r.dueAt).getTime() - createMs) <= CONFLICT_WINDOW_MS,
+      );
+      if (conflicting) {
+        const conflictResp: ReminderAgentResponse = {
+          reply: `You already have **"${conflicting.title}"** scheduled around that time (${formatDueInUserZone(conflicting.dueAt!, timeZone)}). Want me to create this anyway, or pick a different time?`,
+          action: {
+            type: "clarify",
+            title,
+            suggestedDueAt: createDueAt,
+            priority,
+            domain,
+            recurrence,
+          },
+        };
+        void saveMessageServerSide(userId, "user", message);
+        void saveMessageServerSide(userId, "assistant", conflictResp.reply);
+        return NextResponse.json(conflictResp);
+      }
+
+      const wasPastDate = /\b(yesterday|last night)\b/i.test(message);
+      const createReply = wasPastDate
+        ? `That time has already passed — I've set **"${title}"** for ${formatDueInUserZone(createDueAt, timeZone)} instead.`
+        : `Reminder "${title}" created for ${formatDueInUserZone(createDueAt, timeZone)}.`;
       const response: ReminderAgentResponse = {
-        reply: `Reminder "${title}" created for ${formatDueInUserZone(createDueAt, timeZone)}.`,
+        reply: createReply,
         action: { type: "create_reminder", title, dueAt: createDueAt, priority, domain, recurrence },
       };
       void saveMessageServerSide(userId, "user", message);

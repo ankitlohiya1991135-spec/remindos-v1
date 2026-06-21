@@ -465,6 +465,48 @@ export function isValidFutureIsoDate(value: string) {
  * inclusive end of the window. Capped so an open-ended request can't create
  * thousands of rows.
  */
+/**
+ * Parse a CUSTOM interval ("every 3 days", "every other day", "every 2 weeks").
+ * Returns the step in days, or null if it's a plain daily/weekly/monthly (handled
+ * elsewhere) or not an interval at all.
+ */
+export function parseEveryInterval(input: string): { stepDays: number } | null {
+  const n = input.toLowerCase();
+  if (/\bevery\s+(other|alternate)\s+day\b/.test(n)) return { stepDays: 2 };
+  const WORD: Record<string, number> = { two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
+  const m = n.match(/\bevery\s+(\d+|two|three|four|five|six|seven|eight|nine|ten)\s*(day|week|month)s?\b/);
+  if (!m) return null;
+  const k = /^\d/.test(m[1]!) ? parseInt(m[1]!, 10) : (WORD[m[1]!] ?? 0);
+  if (k < 1) return null;
+  if (k === 1) return null; // "every 1 day" == daily → let the normal recurrence handle it
+  const unit = m[2]!;
+  return { stepDays: unit === "week" ? k * 7 : unit === "month" ? k * 30 : k };
+}
+
+/** Every explicit clock time in a message ("8 AM and 8 PM" → [{8,0},{20,0}]). */
+export function extractClockTimes(input: string): { hour: number; minute: number }[] {
+  const out: { hour: number; minute: number }[] = [];
+  const re = /\b(\d{1,2})(?:[:.](\d{2}))?\s*([ap])\.?m\.?\b/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(input)) !== null) {
+    const raw = parseInt(m[1]!, 10);
+    if (raw < 1 || raw > 12) continue;
+    let h = raw % 12;
+    if (/p/i.test(m[3]!)) h += 12;
+    const min = m[2] ? parseInt(m[2], 10) : 0;
+    if (min >= 0 && min <= 59) out.push({ hour: h, minute: min });
+  }
+  return out;
+}
+
+/** Step a start timestamp forward by a fixed number of days, capped. */
+export function expandByDays(startMs: number, stepDays: number, count: number, cap = 30): number[] {
+  const out: number[] = [];
+  const n = Math.min(count, cap);
+  for (let i = 0; i < n; i++) out.push(startMs + i * stepDays * 86_400_000);
+  return out;
+}
+
 export function expandRecurringSeries(
   startMs: number,
   endMs: number,
