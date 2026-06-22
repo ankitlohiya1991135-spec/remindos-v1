@@ -12,6 +12,8 @@ import {
   tryGroundedReminderAnswer,
   looksLikeMarkDoneIntent,
   looksLikeDeleteIntent,
+  looksLikeRescheduleIntent,
+  looksLikeEditIntent,
   type ReminderItem,
 } from "@repo/reminder";
 import type { TaskRow } from "./task-panels";
@@ -641,6 +643,13 @@ export function useChatEngine(params: UseChatEngineParams) {
         setPendingCreateDraft(null);
         return;
       }
+      // "Which reminder should I reschedule/edit?" with no candidates yet — server
+      // is waiting for the user to name one. Never trigger the create wizard here.
+      if (action.pendingOp === "reschedule" || action.pendingOp === "edit" ||
+          action.pendingOp === "mark_done" || action.pendingOp === "delete" || action.pendingOp === "snooze") {
+        setPendingCreateDraft(null);
+        return;
+      }
 
       // Gap 8: if the server included a time suggestion, store it for confirmation on next turn.
       // Fix: don't activate BOTH wizard and suggestion simultaneously — pick suggestion path only,
@@ -860,15 +869,17 @@ export function useChatEngine(params: UseChatEngineParams) {
         }
 
         // ── Create-wizard escape hatch ──────────────────────────────────────────
-        // CRUD intent (mark done / delete) while in a structured step means the
-        // user wants to do something else. Clear the draft and let the message
-        // fall through to normal processing. The title step is exempt because any
-        // text is a valid reminder title there.
+        // Any CRUD intent (done / delete / reschedule / edit) while in a structured
+        // step means the user pivoted to a different task. Clear the draft and let
+        // the message fall through to normal processing. Title step is exempt because
+        // any text is a valid reminder title there.
         const skipWizardForCrud =
           pendingCreateDraft !== null &&
           pendingCreateDraft.step !== "title" &&
           (looksLikeMarkDoneIntent(messageText.trim()) ||
-            looksLikeDeleteIntent(messageText.trim()));
+            looksLikeDeleteIntent(messageText.trim()) ||
+            looksLikeRescheduleIntent(messageText.trim()) ||
+            looksLikeEditIntent(messageText.trim()));
         if (skipWizardForCrud) setPendingCreateDraft(null);
 
         if (pendingCreateDraft && !skipWizardForCrud) {

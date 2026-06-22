@@ -408,6 +408,17 @@ export function parseCalendarDateFromInput(
 
 export function parseDateTimeFromInput(input: string, timeZone?: string) {
   const now = new Date();
+  // "from 6 PM to 7 PM" / "from Monday to Friday" — strip the source half so
+  // the parser resolves the DESTINATION (what the user wants), not the source.
+  // Only strip when both sides look like times/dates, not for "from now on".
+  const fromToTimeMatch = input.match(
+    /\bfrom\s+\d{1,2}(?:[:.]\d{2})?\s*(?:am|pm)\b.*?\bto\s+(\d{1,2}(?:[:.]\d{2})?\s*(?:am|pm)\b.*)/i,
+  );
+  if (fromToTimeMatch) {
+    input = input.replace(
+      /\bfrom\s+\d{1,2}(?:[:.]\d{2})?\s*(?:am|pm)\b/i, " ",
+    );
+  }
   let day = getCalendarDateInTimeZone(now, timeZone);
   if (hasDayAfterTomorrowHint(input)) {
     day = addDaysToCalendarDate(day, 2);

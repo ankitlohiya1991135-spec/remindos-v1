@@ -199,12 +199,16 @@ export function normalizeForMatch(s: string): string {
   return s.toLowerCase().replace(/[\s\-_]+/g, "");
 }
 
-/** True if `rawTarget` appears in `title` under normalised comparison. */
+/** True if `rawTarget` appears in `title` under normalised comparison.
+ *  Also matches in reverse: if the user says "dentist appointment" and the
+ *  reminder is titled "dentist", the title is a prefix/suffix of the target. */
 export function titleIncludesTarget(title: string, rawTarget: string): boolean {
-  return (
-    title.toLowerCase().includes(rawTarget.toLowerCase()) ||
-    normalizeForMatch(title).includes(normalizeForMatch(rawTarget))
-  );
+  const t = title.toLowerCase();
+  const r = rawTarget.toLowerCase();
+  if (t.includes(r) || r.includes(t)) return true;
+  const nt = normalizeForMatch(title);
+  const nr = normalizeForMatch(rawTarget);
+  return nt.includes(nr) || nr.includes(nt);
 }
 
 // ─── Gap 2: deterministic target extraction for mark-done / delete ────────────

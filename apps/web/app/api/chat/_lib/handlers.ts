@@ -4,6 +4,7 @@
 import {
   looksLikeBulkIntent, looksLikeMarkDoneIntent, looksLikeDeleteIntent,
   looksLikeRescheduleIntent, looksLikeEditIntent, looksLikeSnoozeIntent,
+  findReminderByFuzzyMatch,
   type ReminderItem, type TaskItem, type LifeDomain,
 } from "@repo/reminder";
 import type { ReplyContextPayload } from "../../../../lib/chat-reply-context";
@@ -232,13 +233,12 @@ export async function tryReschedule(ctx: ChatContext): Promise<ReminderAgentResp
         (r) => r.status === "pending" && titleIncludesTarget(r.title, rawTarget),
       );
       if (matches.length === 1) target = matches[0];
-      // Ambiguous → ask which one (only when we have a concrete time to carry
-      // forward; otherwise fall through to the generic clarify below).
-      if (matches.length > 1 && validDueAt) {
+      // Multiple exact matches → ask which one, carrying the time forward.
+      if (matches.length > 1) {
         const sample = matches.slice(0, 2).map((r) => `"${r.title}" at ${formatDueInUserZone(r.dueAt, timeZone)}`);
         const r: ReminderAgentResponse = {
           reply: `Which one do you mean — ${sample.join(" or ")}?`,
-          action: { type: "clarify", pendingOp: "reschedule", candidateIds: matches.map((m) => m.id), pendingDueAt: validDueAt },
+          action: { type: "clarify", pendingOp: "reschedule", candidateIds: matches.map((m) => m.id), ...(validDueAt ? { pendingDueAt: validDueAt } : {}) },
         };
         void saveMessageServerSide(userId, "user", effectiveMessage);
         void saveMessageServerSide(userId, "assistant", r.reply);
@@ -249,6 +249,12 @@ export async function tryReschedule(ctx: ChatContext): Promise<ReminderAgentResp
     // Pronoun ("reschedule it to tomorrow") → resolve from the last assistant turn.
     if (!target && isPronoun) {
       target = resolveTargetFromHistory(history, reminders.filter((r) => r.status === "pending"));
+    }
+
+    // Fuzzy-match fallback: if exact/partial title match failed, try token overlap.
+    if (!target && rawTarget) {
+      const fuzzyId = findReminderByFuzzyMatch(rawTarget, reminders);
+      if (fuzzyId) target = reminders.find((r) => r.id === fuzzyId);
     }
 
     if (target) {
@@ -272,10 +278,16 @@ export async function tryReschedule(ctx: ChatContext): Promise<ReminderAgentResp
       return r;
     }
 
-    // No specific reminder could be identified — ask which one.
+    // No specific reminder found — ask which one.
+    // Use pendingOp: "reschedule" so the client treats the reply as a
+    // reschedule disambiguation, NOT as a create-reminder wizard trigger.
+    const pendingReminders = reminders.filter((r) => r.status === "pending");
+    const sample = pendingReminders.slice(0, 3).map((r) => `"${r.title}"`).join(", ");
     const r: ReminderAgentResponse = {
-      reply: "Which reminder should I reschedule?",
-      action: { type: "clarify" },
+      reply: pendingReminders.length > 0
+        ? `Which reminder should I reschedule? You have: ${sample}${pendingReminders.length > 3 ? ` and ${pendingReminders.length - 3} more` : ""}.`
+        : "Which reminder should I reschedule? You don't have any pending reminders right now.",
+      action: { type: "clarify", pendingOp: "reschedule", ...(validDueAt ? { pendingDueAt: validDueAt } : {}) },
     };
     void saveMessageServerSide(userId, "user", message);
     void saveMessageServerSide(userId, "assistant", r.reply);
