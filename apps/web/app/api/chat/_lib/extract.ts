@@ -211,6 +211,90 @@ export function titleIncludesTarget(title: string, rawTarget: string): boolean {
   return nt.includes(nr) || nr.includes(nt);
 }
 
+const MATCH_FILLER = new Set([
+  "my", "the", "a", "an", "it", "that", "this",
+  "for", "about", "of", "on", "at", "to", "by", "in",
+  "and", "or", "with", "from",
+  "reminder", "reminders",
+  // Generic appointment-type nouns that appear in both query and many titles —
+  // the specific word (doctor, dentist, gym) is always the differentiator.
+  "appointment", "appointments",
+]);
+
+/**
+ * Central scored matcher for all update operations (reschedule, edit, mark_done, delete, snooze).
+ *
+ * Strategies (cumulative):
+ *   1. Exact case-insensitive title match → +100
+ *   2. Bidirectional substring (title ⊂ target OR target ⊂ title, ≥2 chars) → +50
+ *   3. Token overlap: meaningful words (≥3 chars, non-filler) shared between title and target → +15 (≥5-char tokens) or +8
+ *   4. Prefix match: one token starts with another (≥4 chars) → +4
+ *
+ * Returns match=undefined when ambiguous (multiple high-scoring candidates);
+ * in that case candidates holds all scoring reminders for disambiguation.
+ */
+export function resolveReminderForUpdate(
+  rawTarget: string,
+  reminders: ReminderItem[],
+): { match: ReminderItem | undefined; candidates: ReminderItem[] } {
+  const pending = reminders.filter((r) => r.status === "pending");
+  if (!pending.length || !rawTarget.trim()) return { match: undefined, candidates: [] };
+
+  const target = rawTarget.toLowerCase().trim();
+  const targetTokens = target
+    .split(/\W+/)
+    .filter((w) => w.length >= 3 && !MATCH_FILLER.has(w));
+  const targetSet = new Set(targetTokens);
+
+  const scored = pending
+    .map((r) => {
+      const titleLower = r.title.toLowerCase();
+      const titleTokens = titleLower
+        .split(/\W+/)
+        .filter((w) => w.length >= 3 && !MATCH_FILLER.has(w));
+
+      let score = 0;
+
+      if (titleLower === target) {
+        score += 100;
+      } else if (titleLower.length >= 2 && (titleLower.includes(target) || target.includes(titleLower))) {
+        score += 50;
+      }
+
+      for (const tt of titleTokens) {
+        if (targetSet.has(tt)) {
+          score += tt.length >= 5 ? 15 : 8;
+        } else {
+          for (const tgt of targetTokens) {
+            if (
+              tt !== tgt &&
+              (tt.startsWith(tgt) || tgt.startsWith(tt)) &&
+              Math.min(tt.length, tgt.length) >= 4
+            ) {
+              score += 4;
+              break;
+            }
+          }
+        }
+      }
+
+      return { r, score };
+    })
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score);
+
+  if (!scored.length) return { match: undefined, candidates: [] };
+
+  const best = scored[0]!;
+  const second = scored[1];
+  const isUnambiguous = !second || best.score >= second.score * 1.5;
+
+  return {
+    match: isUnambiguous ? best.r : undefined,
+    candidates: scored.map((s) => s.r),
+  };
+}
+
 // ─── Gap 2: deterministic target extraction for mark-done / delete ────────────
 
 export function extractTargetFromMarkDone(message: string): string {

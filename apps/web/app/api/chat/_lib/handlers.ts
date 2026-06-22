@@ -4,7 +4,6 @@
 import {
   looksLikeBulkIntent, looksLikeMarkDoneIntent, looksLikeDeleteIntent,
   looksLikeRescheduleIntent, looksLikeEditIntent, looksLikeSnoozeIntent,
-  findReminderByFuzzyMatch,
   type ReminderItem, type TaskItem, type LifeDomain,
 } from "@repo/reminder";
 import type { ReplyContextPayload } from "../../../../lib/chat-reply-context";
@@ -14,6 +13,7 @@ import { parseDateTimeFromInput, isValidFutureIsoDate } from "./datetime";
 import {
   resolveByOrdinal, extractTargetFromMarkDone, extractTargetFromDelete, extractTargetFromReschedule,
   titleIncludesTarget, targetHasMeaningfulContent, resolveTargetFromHistory, PRONOUN_TARGETS,
+  resolveReminderForUpdate,
   extractBulkOperation, extractBulkTargets, extractSnoozeDelayMinutes, extractTargetFromSnooze,
   extractEditField, extractNewValueFromEdit, extractTargetFromEdit, extractPriorityFromEdit,
   extractDomainFromEdit, extractRecurrenceFromEdit, extractTaskLinkIntent,
@@ -104,30 +104,27 @@ export async function tryMarkDone(ctx: ChatContext): Promise<ReminderAgentRespon
     }
     const rawTarget = extractTargetFromMarkDone(message);
     if (rawTarget.length >= 2) {
-      const matches = reminders.filter(
-        (r) => r.status === "pending" && titleIncludesTarget(r.title, rawTarget),
-      );
-      if (matches.length === 1) {
-        const target = matches[0]!;
+      const { match, candidates } = resolveReminderForUpdate(rawTarget, reminders);
+      if (match) {
         const r: ReminderAgentResponse = {
-          reply: `Are you sure you want to mark "${target.title}" — ${formatDueInUserZone(target.dueAt, timeZone)} as done — tap Done on the card below.`,
-          action: { type: "mark_done", preview: true, targetId: target.id, targetTitle: target.title },
+          reply: `Are you sure you want to mark "${match.title}" — ${formatDueInUserZone(match.dueAt, timeZone)} as done — tap Done on the card below.`,
+          action: { type: "mark_done", preview: true, targetId: match.id, targetTitle: match.title },
         };
         void saveMessageServerSide(userId, "user", effectiveMessage);
         void saveMessageServerSide(userId, "assistant", r.reply);
         return r;
       }
-      if (matches.length > 1) {
-        const sample = matches.slice(0, 2).map((r) => `"${r.title}" at ${formatDueInUserZone(r.dueAt, timeZone)}`);
+      if (candidates.length > 1) {
+        const sample = candidates.slice(0, 2).map((r) => `"${r.title}" at ${formatDueInUserZone(r.dueAt, timeZone)}`);
         const r: ReminderAgentResponse = {
           reply: `Which one do you mean — ${sample.join(" or ")}?`,
-          action: { type: "clarify", pendingOp: "mark_done", candidateIds: matches.map((m) => m.id) },
+          action: { type: "clarify", pendingOp: "mark_done", candidateIds: candidates.map((m) => m.id) },
         };
         void saveMessageServerSide(userId, "user", effectiveMessage);
         void saveMessageServerSide(userId, "assistant", r.reply);
         return r;
       }
-      // Zero matches — fall through to LLM
+      // Zero candidates — fall through to LLM
     }
     // Phase 1C: pronoun resolution — "mark it done" with no extractable title
     if (rawTarget.length < 2 || PRONOUN_TARGETS.has(rawTarget.toLowerCase())) {
@@ -163,30 +160,27 @@ export async function tryDelete(ctx: ChatContext): Promise<ReminderAgentResponse
     }
     const rawTarget = extractTargetFromDelete(message);
     if (rawTarget.length >= 2) {
-      const matches = reminders.filter(
-        (r) => r.status === "pending" && titleIncludesTarget(r.title, rawTarget),
-      );
-      if (matches.length === 1) {
-        const target = matches[0]!;
+      const { match, candidates } = resolveReminderForUpdate(rawTarget, reminders);
+      if (match) {
         const r: ReminderAgentResponse = {
-          reply: `Are you sure you want to delete "${target.title}" — ${formatDueInUserZone(target.dueAt, timeZone)} — tap Delete on the card below.`,
-          action: { type: "delete_reminder", preview: true, targetId: target.id, targetTitle: target.title },
+          reply: `Are you sure you want to delete "${match.title}" — ${formatDueInUserZone(match.dueAt, timeZone)} — tap Delete on the card below.`,
+          action: { type: "delete_reminder", preview: true, targetId: match.id, targetTitle: match.title },
         };
         void saveMessageServerSide(userId, "user", effectiveMessage);
         void saveMessageServerSide(userId, "assistant", r.reply);
         return r;
       }
-      if (matches.length > 1) {
-        const sample = matches.slice(0, 2).map((r) => `"${r.title}" at ${formatDueInUserZone(r.dueAt, timeZone)}`);
+      if (candidates.length > 1) {
+        const sample = candidates.slice(0, 2).map((r) => `"${r.title}" at ${formatDueInUserZone(r.dueAt, timeZone)}`);
         const r: ReminderAgentResponse = {
           reply: `Which one do you mean — ${sample.join(" or ")}?`,
-          action: { type: "clarify", pendingOp: "delete", candidateIds: matches.map((m) => m.id) },
+          action: { type: "clarify", pendingOp: "delete", candidateIds: candidates.map((m) => m.id) },
         };
         void saveMessageServerSide(userId, "user", effectiveMessage);
         void saveMessageServerSide(userId, "assistant", r.reply);
         return r;
       }
-      // Zero matches — fall through to LLM
+      // Zero candidates — fall through to LLM
     }
     // Phase 1C: pronoun resolution — "delete it" / "remove that"
     if (rawTarget.length < 2 || PRONOUN_TARGETS.has(rawTarget.toLowerCase())) {
@@ -229,16 +223,14 @@ export async function tryReschedule(ctx: ChatContext): Promise<ReminderAgentResp
     let target: ReminderItem | undefined = ordinalTarget ?? undefined;
 
     if (!target && !isPronoun) {
-      const matches = reminders.filter(
-        (r) => r.status === "pending" && titleIncludesTarget(r.title, rawTarget),
-      );
-      if (matches.length === 1) target = matches[0];
-      // Multiple exact matches → ask which one, carrying the time forward.
-      if (matches.length > 1) {
-        const sample = matches.slice(0, 2).map((r) => `"${r.title}" at ${formatDueInUserZone(r.dueAt, timeZone)}`);
+      const { match, candidates } = resolveReminderForUpdate(rawTarget, reminders);
+      if (match) {
+        target = match;
+      } else if (candidates.length > 1) {
+        const sample = candidates.slice(0, 2).map((r) => `"${r.title}" at ${formatDueInUserZone(r.dueAt, timeZone)}`);
         const r: ReminderAgentResponse = {
           reply: `Which one do you mean — ${sample.join(" or ")}?`,
-          action: { type: "clarify", pendingOp: "reschedule", candidateIds: matches.map((m) => m.id), ...(validDueAt ? { pendingDueAt: validDueAt } : {}) },
+          action: { type: "clarify", pendingOp: "reschedule", candidateIds: candidates.map((m) => m.id), ...(validDueAt ? { pendingDueAt: validDueAt } : {}) },
         };
         void saveMessageServerSide(userId, "user", effectiveMessage);
         void saveMessageServerSide(userId, "assistant", r.reply);
@@ -249,12 +241,6 @@ export async function tryReschedule(ctx: ChatContext): Promise<ReminderAgentResp
     // Pronoun ("reschedule it to tomorrow") → resolve from the last assistant turn.
     if (!target && isPronoun) {
       target = resolveTargetFromHistory(history, reminders.filter((r) => r.status === "pending"));
-    }
-
-    // Fuzzy-match fallback: if exact/partial title match failed, try token overlap.
-    if (!target && rawTarget) {
-      const fuzzyId = findReminderByFuzzyMatch(rawTarget, reminders);
-      if (fuzzyId) target = reminders.find((r) => r.id === fuzzyId);
     }
 
     if (target) {
@@ -473,20 +459,17 @@ export async function tryEdit(ctx: ChatContext): Promise<ReminderAgentResponse |
     const isPronoun = !rawTarget || rawTarget.length < 2 || PRONOUN_TARGETS.has(rawTarget.toLowerCase());
 
     if (!isPronoun) {
-      const matches = reminders.filter(
-        (r) => r.status === "pending" && titleIncludesTarget(r.title, rawTarget),
-      );
-      if (matches.length === 1) {
-        const target = matches[0]!;
+      const { match, candidates } = resolveReminderForUpdate(rawTarget, reminders);
+      if (match) {
         const payload = buildEditActionPayload();
         const preview = buildEditPreview();
         const r: ReminderAgentResponse = {
-          reply: `here's "${target.title}" — review the change (${preview}) and tap save.`,
+          reply: `here's "${match.title}" — review the change (${preview}) and tap save.`,
           action: {
             type: "edit_reminder",
             preview: true,
-            targetId: target.id,
-            targetTitle: target.title,
+            targetId: match.id,
+            targetTitle: match.title,
             ...payload,
           },
         };
@@ -494,14 +477,14 @@ export async function tryEdit(ctx: ChatContext): Promise<ReminderAgentResponse |
         void saveMessageServerSide(userId, "assistant", r.reply);
         return r;
       }
-      if (matches.length > 1) {
-        const sample = matches.slice(0, 2).map((r) => `"${r.title}"`);
+      if (candidates.length > 1) {
+        const sample = candidates.slice(0, 2).map((r) => `"${r.title}"`);
         const r: ReminderAgentResponse = {
           reply: `Which one do you mean — ${sample.join(" or ")}?`,
           action: {
             type: "clarify",
             pendingOp: "edit",
-            candidateIds: matches.map((m) => m.id),
+            candidateIds: candidates.map((m) => m.id),
             pendingField: field,
             pendingValue: resolvedNewValue ?? String(resolvedPriority ?? resolvedDomain ?? resolvedRecurrence ?? ""),
           },
@@ -510,7 +493,7 @@ export async function tryEdit(ctx: ChatContext): Promise<ReminderAgentResponse |
         void saveMessageServerSide(userId, "assistant", r.reply);
         return r;
       }
-      // Zero matches — fall through to LLM
+      // Zero candidates — fall through to LLM
     }
     // Phase 1C: pronoun resolution for edit — "rename it" / "change its priority"
     if (isPronoun) {
@@ -604,16 +587,14 @@ export async function trySnooze(ctx: ChatContext): Promise<ReminderAgentResponse
     let target: ReminderItem | undefined = ordinalSnoozeTarget ?? undefined;
 
     if (!target && !isPronoun) {
-      const matches = reminders.filter(
-        (r) => r.status === "pending" && titleIncludesTarget(r.title, rawTarget),
-      );
-      if (matches.length === 1) {
-        target = matches[0];
-      } else if (matches.length > 1) {
-        const sample = matches.slice(0, 2).map((r) => `"${r.title}"`);
+      const { match, candidates } = resolveReminderForUpdate(rawTarget, reminders);
+      if (match) {
+        target = match;
+      } else if (candidates.length > 1) {
+        const sample = candidates.slice(0, 2).map((r) => `"${r.title}"`);
         const r: ReminderAgentResponse = {
           reply: `Which one do you mean — ${sample.join(" or ")}?`,
-          action: { type: "clarify", pendingOp: "snooze", candidateIds: matches.map((m) => m.id), pendingDelayMinutes: delayMinutes },
+          action: { type: "clarify", pendingOp: "snooze", candidateIds: candidates.map((m) => m.id), pendingDelayMinutes: delayMinutes },
         };
         void saveMessageServerSide(userId, "user", effectiveMessage);
         void saveMessageServerSide(userId, "assistant", r.reply);
