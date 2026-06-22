@@ -144,12 +144,63 @@ export function useChatEngine(params: UseChatEngineParams) {
     ].join("\n");
   }
 
+  function buildDisambigCardMeta(
+    op: string | undefined,
+    match: ReminderItem,
+    action: AgentAction,
+  ): import("./dashboard-types").ChatMessageMeta {
+    const base = { kind: "reminder_card" as const, reminderIds: [match.id], totalListedCount: 1 };
+    if (op === "reschedule") {
+      return { ...base, cardMode: "reschedule" as const, ...(action.pendingDueAt ? { cardPrefill: { dueAt: action.pendingDueAt } } : {}) };
+    }
+    if (op === "snooze" && action.pendingDelayMinutes) {
+      const dueAt = new Date(Date.now() + action.pendingDelayMinutes * 60_000).toISOString();
+      return { ...base, cardMode: "reschedule" as const, cardPrefill: { dueAt } };
+    }
+    if (op === "edit" && action.pendingField) {
+      const cp: import("./dashboard-types").ChatMessageMeta["cardPrefill"] = {};
+      const v = action.pendingValue ?? "";
+      if (action.pendingField === "title") cp.title = v;
+      else if (action.pendingField === "notes") cp.notes = v;
+      else if (action.pendingField === "priority") cp.priority = parseInt(v, 10) || 3;
+      else if (action.pendingField === "domain") cp.domain = v || null;
+      else if (action.pendingField === "recurrence") cp.recurrence = (v as "none" | "daily" | "weekly" | "monthly") || "none";
+      return { ...base, cardMode: "edit" as const, cardPrefill: cp };
+    }
+    return base;
+  }
+
   function applyAction(action: AgentAction) {
     // Operation PREVIEWS are never executed by the system. The client renders a
     // prefilled editable card (micro front-end) and the user commits via Save —
     // keeping every chat mutation human-in-the-loop. The card's Save dispatches a
     // NON-preview action back through applyAction, which then executes normally.
     if (action.preview) return;
+
+    // ── Picker selection: user tapped a candidate in the DisambigPickerCard ──
+    if (action.type === "resolve_disambig" && action.targetId) {
+      const match = reminders.find((r) => r.id === action.targetId);
+      if (!match) return;
+      setPendingDisambig(null);
+      const cardMeta = buildDisambigCardMeta(action.pendingOp, match, action);
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: "assistant" as const,
+          content: `here's "${match.title}" — review and save (nothing's changed yet).`,
+          createdAt: new Date().toISOString(),
+        },
+        {
+          id: crypto.randomUUID(),
+          role: "assistant" as const,
+          content: "",
+          createdAt: new Date().toISOString(),
+          meta: cardMeta,
+        },
+      ]);
+      return;
+    }
 
     // Clear stale pending state for every action type except pending_confirm (which sets it)
     // This prevents a stale "yes" from firing a previously abandoned confirmation.
@@ -628,8 +679,7 @@ export function useChatEngine(params: UseChatEngineParams) {
         return;
       }
       // Disambiguation clarify: user was asked "which one?" for any CRUD op.
-      // Store full context so the next reply resolves the correct reminder
-      // instead of accidentally starting the create-reminder wizard.
+      // Show a visual picker card AND store state for the text fallback path.
       if (action.pendingOp && action.candidateIds?.length) {
         if (action.pendingOp === "reschedule" && action.pendingDueAt) {
           setPendingDisambig({ op: "reschedule", candidateIds: action.candidateIds, pendingDueAt: action.pendingDueAt });
@@ -640,6 +690,25 @@ export function useChatEngine(params: UseChatEngineParams) {
         } else if (action.pendingOp === "mark_done" || action.pendingOp === "delete") {
           setPendingDisambig({ op: action.pendingOp, candidateIds: action.candidateIds });
         }
+        // Inject a tappable picker card so the user doesn't have to type a name.
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: "assistant" as const,
+            content: "",
+            createdAt: new Date().toISOString(),
+            meta: {
+              kind: "disambig_picker" as const,
+              disambigCandidateIds: action.candidateIds,
+              disambigOp: action.pendingOp,
+              ...(action.pendingDueAt ? { disambigPendingDueAt: action.pendingDueAt } : {}),
+              ...(action.pendingField ? { disambigPendingField: action.pendingField } : {}),
+              ...(action.pendingValue != null ? { disambigPendingValue: action.pendingValue } : {}),
+              ...(action.pendingDelayMinutes != null ? { disambigPendingDelayMinutes: action.pendingDelayMinutes } : {}),
+            },
+          },
+        ]);
         setPendingCreateDraft(null);
         return;
       }

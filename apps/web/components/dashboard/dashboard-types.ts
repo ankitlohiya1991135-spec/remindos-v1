@@ -20,7 +20,7 @@ export interface ChatReplyToRef {
 }
 
 export interface ChatMessageMeta {
-  kind?: "due_reminder" | "briefing" | "opening_summary" | "reminder_card";
+  kind?: "due_reminder" | "briefing" | "opening_summary" | "reminder_card" | "disambig_picker";
   /** Which slice of the session briefing this bubble is (split messages). */
   briefingSection?: BriefingSection;
   reminderId?: string;
@@ -47,6 +47,15 @@ export interface ChatMessageMeta {
     domain?: string | null;
     recurrence?: "none" | "daily" | "weekly" | "monthly";
   };
+  /** For kind === "disambig_picker": the ambiguous candidate reminder IDs to display. */
+  disambigCandidateIds?: string[];
+  /** Which CRUD operation is pending after the user picks. */
+  disambigOp?: "mark_done" | "delete" | "reschedule" | "edit" | "snooze";
+  /** Carried-forward context per op — mirrors PendingDisambig fields. */
+  disambigPendingDueAt?: string;
+  disambigPendingField?: "title" | "notes" | "priority" | "domain" | "recurrence" | "linkedTaskId";
+  disambigPendingValue?: string;
+  disambigPendingDelayMinutes?: number;
 }
 
 export interface ChatMessage {
@@ -73,6 +82,9 @@ export interface AgentAction {
     | "clarify"
     | "pending_confirm"
     | "unknown"
+    /** Fired by DisambigPickerCard when the user taps a candidate reminder.
+     *  Carries targetId (selected) + pendingOp + any op-specific context. */
+    | "resolve_disambig"
     // ─── Task CRUD ─────────────────────────────────────────────────────────
     | "create_task"
     | "list_tasks"

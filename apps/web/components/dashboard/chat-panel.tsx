@@ -21,6 +21,7 @@ import { ChatBubbleShell } from "./chat-bubble-shell";
 import { ChatPanelHeader } from "./chat-panel-header";
 import { StructuredMessage } from "./structured-message";
 import { ReminderChatCard } from "./reminder-chat-card";
+import { DisambigPickerCard } from "./disambig-picker-card";
 import { briefingSectionLabel, chatReplyLabel, loadingTexts } from "./dashboard-utils";
 import type { ChatMessage, AgentAction, PendingCreateDraft, PendingTimeSuggestion, ReminderListTab } from "./dashboard-types";
 import type { SnapshotCounts } from "./reminder-list-overlay";
@@ -205,6 +206,19 @@ export function ChatPanel({
                 onSetInput(message.content);
                 onSetReplyTarget(null);
               };
+
+              // ── Disambiguation picker — tappable candidate list ───────────────
+              if (message.meta?.kind === "disambig_picker" && message.meta.disambigCandidateIds?.length) {
+                return (
+                  <div key={message.id}>
+                    <DisambigPickerCard
+                      meta={message.meta}
+                      reminders={reminders}
+                      onAction={onCardAction}
+                    />
+                  </div>
+                );
+              }
 
               // ── Reminder card messages — rendered as standalone cards ─────────
               if (message.meta?.kind === "reminder_card" && message.meta.reminderIds?.length) {
