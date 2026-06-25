@@ -30,7 +30,8 @@ export type NotificationType =
   | "time_anchor" // externalize time without pressure (time blindness)
   | "win_celebration" // dopamine + counter the "i'm lazy" shame spiral
   | "overwhelm_rescue" // reduce visible load + reassure (rare)
-  | "evening_soft_close"; // break the end-of-day shame spiral
+  | "evening_soft_close" // break the end-of-day shame spiral
+  | "accountability_nudge"; // backlog has grown large — acknowledge it without shame (tier 2+, deduped separately)
 
 export const ALL_TYPES: NotificationType[] = [
   "morning_launch",
@@ -39,6 +40,7 @@ export const ALL_TYPES: NotificationType[] = [
   "win_celebration",
   "overwhelm_rescue",
   "evening_soft_close",
+  "accountability_nudge",
 ];
 
 // ── Data-richness tiers ─────────────────────────────────────────────────────
@@ -162,6 +164,7 @@ export interface CopyContext {
   peakWindowLabel?: string | null; // e.g. "before 11am"  (Tier 3)
   addedRepeatedly?: boolean; // user re-added this a couple times (Tier 2+)
   streakDays?: number; // consecutive active days (celebrate only)
+  topDomain?: string | null; // life domain with the most pending reminders (accountability_nudge, Tier 3)
 
   /** Optional seed so a given (user, slot) is stable within a tick but varies across sends. */
   seed?: number;
@@ -299,6 +302,30 @@ function eveningSoftClose(ctx: CopyContext, pick: ReturnType<typeof mkPick>): Co
   ]);
 }
 
+/**
+ * The backlog has grown large but isn't a full "overwhelm" moment (that's
+ * overwhelm_rescue, gated on overdueCount >= 5). This acknowledges a sizable
+ * pending count plainly — no guilt, no "why haven't you" — just naming what's
+ * true and reframing that clearing one thing is enough. Caller is responsible
+ * for its own dedup cadence (it repeats far more easily than a one-off rescue).
+ */
+function accountabilityNudge(ctx: CopyContext, pick: ReturnType<typeof mkPick>): Copy {
+  const name = firstName(ctx.displayName);
+  const count = ctx.pendingCount;
+  if (ctx.tier < 2 || count < 8) {
+    return pick<Copy>([
+      { title: "a few waiting 🌿", body: "no pressure — when you're ready, even one helps." },
+      { title: "whenever you're ready 🤍", body: "a handful are sitting there. pick whichever feels easiest." },
+    ]);
+  }
+  const domainNote = ctx.topDomain ? ` a good chunk of them are ${ctx.topDomain}.` : "";
+  return pick<Copy>([
+    { title: `${count} pending${name} 🌿`, body: `that's a real backlog now.${domainNote} you don't need to clear them all today — just pick one and let the rest wait.` },
+    { title: "let's chip away 🌱", body: `${count} reminders are stacked up.${domainNote} starting with just one counts more than it feels like.` },
+    { title: `${count} waiting for you 🤍`, body: "the list got long. that's okay — it's not about clearing it all at once, just moving one thing forward." },
+  ]);
+}
+
 const GENERATORS: Record<NotificationType, (ctx: CopyContext, pick: ReturnType<typeof mkPick>) => Copy> = {
   morning_launch: morningLaunch,
   just_start: justStart,
@@ -306,6 +333,7 @@ const GENERATORS: Record<NotificationType, (ctx: CopyContext, pick: ReturnType<t
   win_celebration: winCelebration,
   overwhelm_rescue: overwhelmRescue,
   evening_soft_close: eveningSoftClose,
+  accountability_nudge: accountabilityNudge,
 };
 
 /**

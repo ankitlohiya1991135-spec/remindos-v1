@@ -33,6 +33,11 @@ const INACTIVITY_THRESHOLD_MS = Number(process.env.SMART_NUDGE_INACTIVITY_HOURS 
 const DEDUP_WINDOW_MS          = 12 * 60 * 60_000;  // at most ~1 gentle nudge per 12 h — clarity over clutter
 const QUIET_START_HOUR         = 22;                 // 10 PM local time
 const QUIET_END_HOUR           = 8;                  // 8  AM local time
+// Accountability nudges repeat the same "you've got a backlog" idea, so they need
+// a much longer cooldown than the general smart-nudge cadence — otherwise the user
+// gets "no, this notification again" fatigue. Deduped separately from DEDUP_WINDOW_MS.
+const ACCOUNTABILITY_DEDUP_WINDOW_MS = 24 * 60 * 60_000;
+const ACCOUNTABILITY_PENDING_THRESHOLD = 8;
 
 // ── quiet-hours helper ─────────────────────────────────────────────────────────
 
@@ -87,6 +92,29 @@ async function recordSmartNudge(
   });
 }
 
+async function alreadySentAccountabilityNudge(
+  client: ReturnType<typeof getConvexClient>,
+  userId: string,
+): Promise<boolean> {
+  const rows = await client.query(api.pushNotificationLogs.listRecentForUser, {
+    userId,
+    type: "accountability_nudge",
+    sinceMs: ACCOUNTABILITY_DEDUP_WINDOW_MS,
+  });
+  return rows.length > 0;
+}
+
+async function recordAccountabilityNudge(
+  client: ReturnType<typeof getConvexClient>,
+  userId: string,
+) {
+  await client.mutation(api.pushNotificationLogs.logSent, {
+    userId,
+    type: "accountability_nudge",
+    sentAt: Date.now(),
+  });
+}
+
 // ── message template engine ────────────────────────────────────────────────────
 
 interface NudgeContext {
@@ -102,9 +130,13 @@ interface NudgeContext {
   hasNoPending: boolean;  // true when user has zero pending reminders/tasks
   tier?: Tier;            // data-richness tier (1=cold start … 3=rich). Defaults to 1 (safest).
   doneToday?: number;     // completions today (for evening soft-close copy)
+  /** True when the backlog is large enough AND the accountability_nudge dedup
+   *  window has cleared — caller (the cron) owns that dedup check. */
+  accountabilityEligible?: boolean;
 }
 
 type Template = { title: string; body: string };
+type NudgeResult = Template & { type: NotificationType | "streak_celebration" | "all_clear" };
 
 function pick<T>(arr: T[]): T {
   // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
@@ -165,7 +197,7 @@ function allClearCopy(slot: ReturnType<typeof localTimeSlot>, displayName?: stri
  * string through the anti-surveillance validator — so a cold-start user never
  * gets a fabricated "this has been pending 3 days" claim.
  */
-export function generateSmartNudgeMessage(ctx: NudgeContext): Template {
+export function generateSmartNudgeMessage(ctx: NudgeContext): NudgeResult {
   const tier: Tier = ctx.tier ?? 1;
   const slot = localTimeSlot(ctx.localHour);
   const now = Date.now();
@@ -173,10 +205,12 @@ export function generateSmartNudgeMessage(ctx: NudgeContext): Template {
     ctx.nextDueAt && ctx.nextDueAt > now ? Math.round((ctx.nextDueAt - now) / 60_000) : null;
 
   // 1. Celebrate a real streak (tier 2+ only — needs genuine history).
-  if (tier >= 2 && ctx.streakDays >= 3) return streakCopy(ctx.streakDays, ctx.displayName);
+  if (tier >= 2 && ctx.streakDays >= 3) {
+    return { ...streakCopy(ctx.streakDays, ctx.displayName), type: "streak_celebration" };
+  }
 
   // 2. Nothing pending → warm empty-state.
-  if (ctx.hasNoPending) return allClearCopy(slot, ctx.displayName);
+  if (ctx.hasNoPending) return { ...allClearCopy(slot, ctx.displayName), type: "all_clear" };
 
   const copyCtx: CopyContext = {
     tier,
@@ -188,10 +222,20 @@ export function generateSmartNudgeMessage(ctx: NudgeContext): Template {
     overdueCount: ctx.overdueCount,
     doneToday: ctx.doneToday ?? 0,
     streakDays: ctx.streakDays,
+    topDomain: ctx.topDomain,
   };
 
   // 3. A genuinely heavy overdue load → Overwhelm Rescue (tier 2+, rare).
-  if (tier >= 2 && ctx.overdueCount >= 5) return generateNotification("overwhelm_rescue", copyCtx);
+  if (tier >= 2 && ctx.overdueCount >= 5) {
+    return { ...generateNotification("overwhelm_rescue", copyCtx), type: "overwhelm_rescue" };
+  }
+
+  // 3b. Backlog has grown large (but isn't in overwhelm territory) → name it
+  // plainly, once in a while. Eligibility + its own dedup cadence is the
+  // cron's responsibility (see ACCOUNTABILITY_DEDUP_WINDOW_MS).
+  if (tier >= 2 && ctx.accountabilityEligible) {
+    return { ...generateNotification("accountability_nudge", copyCtx), type: "accountability_nudge" };
+  }
 
   // 4. Otherwise map the moment to one of the six types.
   let type: NotificationType;
@@ -200,7 +244,7 @@ export function generateSmartNudgeMessage(ctx: NudgeContext): Template {
   else if (minutesUntilDue != null && minutesUntilDue <= 180) type = "time_anchor";
   else type = "just_start";
 
-  return generateNotification(type, copyCtx);
+  return { ...generateNotification(type, copyCtx), type };
 }
 
 // ── GET: health check + diagnostics ────────────────────────────────────────────
@@ -359,7 +403,16 @@ export async function POST(request: Request) {
           });
         } catch { /* non-critical — defaults: streak 0, tier 1 (safest) */ }
 
-        // ── 1f. Build message ───────────────────────────────────────────────────
+        // ── 1f. Accountability eligibility — large backlog, not yet in overwhelm
+        // territory (that's overdueCount >= 5), deduped on its own 24h cadence so
+        // it doesn't repeat every cycle once the backlog crosses the threshold. ──
+        const accountabilityEligible =
+          tier >= 2 &&
+          stats.overdueCount < 5 &&
+          stats.pendingCount >= ACCOUNTABILITY_PENDING_THRESHOLD &&
+          !(await alreadySentAccountabilityNudge(client, userId));
+
+        // ── 1g. Build message ───────────────────────────────────────────────────
         const localHour = (() => {
           try {
             return parseInt(
@@ -369,7 +422,7 @@ export async function POST(request: Request) {
           } catch { return new Date().getUTCHours(); }
         })();
 
-        const { title, body } = generateSmartNudgeMessage({
+        const { title, body, type: nudgeType } = generateSmartNudgeMessage({
           daysInactive,
           pendingCount:  stats.pendingCount,
           overdueCount:  stats.overdueCount,
@@ -382,6 +435,7 @@ export async function POST(request: Request) {
           hasNoPending:  stats.pendingCount === 0,
           tier,
           doneToday,
+          accountabilityEligible,
         });
 
         // ── 1f. Send push ───────────────────────────────────────────────────────
@@ -399,6 +453,9 @@ export async function POST(request: Request) {
         // subscriptions returned 401/403 due to a VAPID key mismatch).
         if (sentCount > 0) {
           await recordSmartNudge(client, userId);
+          if (nudgeType === "accountability_nudge") {
+            await recordAccountabilityNudge(client, userId);
+          }
           await client.mutation(api.notifications.create, {
             userId,
             type: "smart_nudge",

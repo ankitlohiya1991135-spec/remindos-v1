@@ -80,6 +80,31 @@ export interface UseChatEngineParams {
   showShareToast: (msg: string) => void;
 }
 
+// Soft, one-step-prior nudge when the backlog is large — never blocks creation,
+// just names what's true. Deduped via localStorage so it doesn't repeat on every
+// single reminder created while the backlog stays high ("no, this notification
+// already" fatigue is the failure mode this guards against).
+const BACKLOG_ADVISORY_THRESHOLD = 10;
+const BACKLOG_ADVISORY_COOLDOWN_MS = 12 * 60 * 60 * 1000;
+const BACKLOG_ADVISORY_STORAGE_KEY = "backlogAdvisory:lastShownAt";
+
+function maybeBuildBacklogAdvisory(pendingCount: number): ChatMessage | null {
+  if (pendingCount < BACKLOG_ADVISORY_THRESHOLD) return null;
+  try {
+    const last = Number(localStorage.getItem(BACKLOG_ADVISORY_STORAGE_KEY) ?? "0");
+    if (Date.now() - last < BACKLOG_ADVISORY_COOLDOWN_MS) return null;
+    localStorage.setItem(BACKLOG_ADVISORY_STORAGE_KEY, String(Date.now()));
+  } catch {
+    return null;
+  }
+  return {
+    id: crypto.randomUUID(),
+    role: "assistant" as const,
+    content: `by the way — you're at ${pendingCount} pending reminders now. no pressure to stop, but clearing a couple before adding more tends to feel better than letting it pile up.`,
+    createdAt: new Date().toISOString(),
+  };
+}
+
 export function useChatEngine(params: UseChatEngineParams) {
   const {
     quickSubmitTextRef,
@@ -263,6 +288,8 @@ export function useChatEngine(params: UseChatEngineParams) {
           playReminderSuccessAnimation();
           // Inject an interactive card for the newly created reminder
           const createdId = String(data.reminder?._id ?? "");
+          const pendingCountAfterCreate = reminders.filter((r) => r.status === "pending").length + 1;
+          const advisory = maybeBuildBacklogAdvisory(pendingCountAfterCreate);
           if (createdId) {
             lastCreatedIdRef.current = createdId;
             setMessages((prev) => [
@@ -274,7 +301,10 @@ export function useChatEngine(params: UseChatEngineParams) {
                 createdAt: new Date().toISOString(),
                 meta: { kind: "reminder_card" as const, reminderIds: [createdId], totalListedCount: 1 },
               },
+              ...(advisory ? [advisory] : []),
             ]);
+          } else if (advisory) {
+            setMessages((prev) => [...prev, advisory]);
           }
         } catch {
           showShareToast("Could not save the reminder. Please try again.");
@@ -315,6 +345,9 @@ export function useChatEngine(params: UseChatEngineParams) {
             ? `Added ${ok} reminders for "${title}".`
             : `Added ${ok} of ${dueAts.length} reminders for "${title}".`,
         );
+        const pendingCountAfterCreate = reminders.filter((r) => r.status === "pending").length + ok;
+        const advisory = maybeBuildBacklogAdvisory(pendingCountAfterCreate);
+        if (advisory) setMessages((prev) => [...prev, advisory]);
       })();
       return;
     }
