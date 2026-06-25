@@ -2,6 +2,7 @@ import type { Id } from "./_generated/dataModel";
 import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
+import { requireUser } from "./authz";
 
 const lifeDomain = v.union(
   v.literal("health"),
@@ -89,6 +90,7 @@ export const listForCron = query({
 export const listForUser = query({
   args: { userId: v.string() },
   handler: async (ctx, args) => {
+    await requireUser(ctx, args.userId);
     const owned = await ctx.db
       .query("reminders")
       .withIndex("by_user_dueAt", (q) => q.eq("userId", args.userId))
@@ -268,6 +270,7 @@ export const update = mutation({
     domain: v.optional(v.union(lifeDomain, v.null())),
   },
   handler: async (ctx, args) => {
+    await requireUser(ctx, args.userId);
     const access = await getReminderAccess(ctx, args.reminderId, args.userId);
     if (!access) return null;
     const current = access.reminder;
@@ -339,6 +342,7 @@ export const update = mutation({
 export const remove = mutation({
   args: { userId: v.string(), reminderId: v.id("reminders") },
   handler: async (ctx, args) => {
+    await requireUser(ctx, args.userId);
     const access = await getReminderAccess(ctx, args.reminderId, args.userId);
     if (!access) return { ok: false as const };
     const title = access.reminder.title;
