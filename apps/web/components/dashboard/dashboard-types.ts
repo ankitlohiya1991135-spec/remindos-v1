@@ -20,7 +20,7 @@ export interface ChatReplyToRef {
 }
 
 export interface ChatMessageMeta {
-  kind?: "due_reminder" | "briefing" | "opening_summary" | "reminder_card" | "disambig_picker";
+  kind?: "due_reminder" | "briefing" | "opening_summary" | "reminder_card" | "disambig_picker" | "priority_picker";
   /** Which slice of the session briefing this bubble is (split messages). */
   briefingSection?: BriefingSection;
   reminderId?: string;
@@ -56,6 +56,15 @@ export interface ChatMessageMeta {
   disambigPendingField?: "title" | "notes" | "priority" | "domain" | "recurrence" | "linkedTaskId";
   disambigPendingValue?: string;
   disambigPendingDelayMinutes?: number;
+  /** For kind === "priority_picker": the reminder payload waiting on a Critical/Medium/Chill pick. */
+  priorityPickerPayload?: {
+    title: string;
+    dueAt: string;
+    notes?: string;
+    domain?: string;
+    recurrence?: string;
+    linkedTaskId?: string;
+  };
 }
 
 export interface ChatMessage {
@@ -85,6 +94,9 @@ export interface AgentAction {
     /** Fired by DisambigPickerCard when the user taps a candidate reminder.
      *  Carries targetId (selected) + pendingOp + any op-specific context. */
     | "resolve_disambig"
+    /** Fired by PriorityPickerCard when the user taps Critical/Medium/Chill.
+     *  Carries the full create_reminder payload plus the resolved `priority`. */
+    | "resolve_priority"
     // ─── Task CRUD ─────────────────────────────────────────────────────────
     | "create_task"
     | "list_tasks"

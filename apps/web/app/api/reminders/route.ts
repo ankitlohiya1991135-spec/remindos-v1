@@ -1,7 +1,7 @@
 import { auth } from "@clerk/nextjs/server";
 import { api } from "@repo/db/convex/api";
 import { NextResponse } from "next/server";
-import { getConvexClient } from "../../../lib/server/convex-client";
+import { getAuthedConvexClient } from "../../../lib/server/convex-client";
 import { syncUserWiki } from "../../../lib/server/wiki-sync";
 import { sendWebPushToUser } from "../../../lib/server/send-web-push";
 
@@ -14,7 +14,7 @@ export async function GET() {
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   try {
-    const client = getConvexClient();
+    const client = await getAuthedConvexClient();
     const data = (await client.query(api.reminders.listForUser, { userId })) as {
       owned: Array<Record<string, unknown>>;
       shared: Array<Record<string, unknown>>;
@@ -90,7 +90,7 @@ export async function POST(request: Request) {
       : 3;
 
   try {
-    const client = getConvexClient();
+    const client = await getAuthedConvexClient();
     const result = await client.mutation(api.reminders.create, {
       userId,
       title: body.title.trim(),

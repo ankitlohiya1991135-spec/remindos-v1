@@ -153,6 +153,70 @@ export function useChatEngine(params: UseChatEngineParams) {
   // can say "actually make it 6 PM" or "cancel that" immediately after creation.
   const lastCreatedIdRef = useRef<string | null>(null);
 
+  // Actually creates the reminder — called once a priority is resolved
+  // (Critical/Medium/Chill pick). Nothing is saved before this point.
+  async function performCreateReminder(
+    payload: { title?: string; dueAt?: string; notes?: string; domain?: string; recurrence?: string; linkedTaskId?: string },
+    priority: number,
+  ) {
+    const title = payload.title!;
+    const dueAt = payload.dueAt!;
+    const validRecurrences = ["none", "daily", "weekly", "monthly"] as const;
+    const validDomains = ["health", "finance", "career", "hobby", "fun"] as const;
+    try {
+      const res = await fetch("/api/reminders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title,
+          dueAt: new Date(dueAt).getTime(),
+          notes: payload.notes?.trim() ? payload.notes : undefined,
+          recurrence: validRecurrences.includes(payload.recurrence as typeof validRecurrences[number])
+            ? payload.recurrence
+            : "none",
+          priority: priority >= 1 && priority <= 5 ? priority : 3,
+          domain: validDomains.includes(payload.domain as typeof validDomains[number])
+            ? payload.domain
+            : undefined,
+          linkedTaskId: payload.linkedTaskId?.trim() ? payload.linkedTaskId : undefined,
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        created?: boolean;
+        error?: string;
+        reminder?: { _id?: string };
+      };
+      if (!res.ok) {
+        showShareToast(data.error ?? "Could not save the reminder. Please try again.");
+        return;
+      }
+      await refreshReminders();
+      playReminderSuccessAnimation();
+      // Inject an interactive card for the newly created reminder
+      const createdId = String(data.reminder?._id ?? "");
+      const pendingCountAfterCreate = reminders.filter((r) => r.status === "pending").length + 1;
+      const advisory = maybeBuildBacklogAdvisory(pendingCountAfterCreate);
+      if (createdId) {
+        lastCreatedIdRef.current = createdId;
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: crypto.randomUUID(),
+            role: "assistant" as const,
+            content: "",
+            createdAt: new Date().toISOString(),
+            meta: { kind: "reminder_card" as const, reminderIds: [createdId], totalListedCount: 1 },
+          },
+          ...(advisory ? [advisory] : []),
+        ]);
+      } else if (advisory) {
+        setMessages((prev) => [...prev, advisory]);
+      }
+    } catch {
+      showShareToast("Could not save the reminder. Please try again.");
+    }
+  }
+
   function pendingTaskChoices() {
     return tasks.filter((t) => t.status === "pending").slice(0, 8);
   }
@@ -238,6 +302,14 @@ export function useChatEngine(params: UseChatEngineParams) {
       setRecentListedIds([]);
     }
 
+    // ── Resolve priority pick: user tapped Critical/Medium/Chill ──────────────
+    // Carries the full create payload + the resolved priority — this is the
+    // point where the reminder is actually created.
+    if (action.type === "resolve_priority" && action.title && action.dueAt) {
+      void performCreateReminder(action, action.priority ?? 3);
+      return;
+    }
+
     if (action.type === "create_reminder" && action.title && action.dueAt) {
       setPendingCreateDraft(null);
       setPendingDisambig(null);
@@ -251,65 +323,29 @@ export function useChatEngine(params: UseChatEngineParams) {
       );
       if (isDuplicate) return;
 
-      void (async () => {
-        const validRecurrences = ["none", "daily", "weekly", "monthly"] as const;
-        const validDomains = ["health", "finance", "career", "hobby", "fun"] as const;
-        try {
-          const res = await fetch("/api/reminders", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
+      // Don't save yet — show the Critical/Medium/Chill picker first. The
+      // actual creation happens in the resolve_priority branch above once
+      // the user picks a feel.
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: crypto.randomUUID(),
+          role: "assistant" as const,
+          content: "",
+          createdAt: new Date().toISOString(),
+          meta: {
+            kind: "priority_picker" as const,
+            priorityPickerPayload: {
               title,
-              dueAt: new Date(dueAt).getTime(),
-              notes: action.notes?.trim() ? action.notes : undefined,
-              recurrence: validRecurrences.includes(action.recurrence as typeof validRecurrences[number])
-                ? action.recurrence
-                : "none",
-              priority:
-                typeof action.priority === "number" && action.priority >= 1 && action.priority <= 5
-                  ? action.priority
-                  : 3,
-              domain: validDomains.includes(action.domain as typeof validDomains[number])
-                ? action.domain
-                : undefined,
-              linkedTaskId: action.linkedTaskId?.trim() ? action.linkedTaskId : undefined,
-            }),
-          });
-          const data = (await res.json().catch(() => ({}))) as {
-            created?: boolean;
-            error?: string;
-            reminder?: { _id?: string };
-          };
-          if (!res.ok) {
-            showShareToast(data.error ?? "Could not save the reminder. Please try again.");
-            return;
-          }
-          await refreshReminders();
-          playReminderSuccessAnimation();
-          // Inject an interactive card for the newly created reminder
-          const createdId = String(data.reminder?._id ?? "");
-          const pendingCountAfterCreate = reminders.filter((r) => r.status === "pending").length + 1;
-          const advisory = maybeBuildBacklogAdvisory(pendingCountAfterCreate);
-          if (createdId) {
-            lastCreatedIdRef.current = createdId;
-            setMessages((prev) => [
-              ...prev,
-              {
-                id: crypto.randomUUID(),
-                role: "assistant" as const,
-                content: "",
-                createdAt: new Date().toISOString(),
-                meta: { kind: "reminder_card" as const, reminderIds: [createdId], totalListedCount: 1 },
-              },
-              ...(advisory ? [advisory] : []),
-            ]);
-          } else if (advisory) {
-            setMessages((prev) => [...prev, advisory]);
-          }
-        } catch {
-          showShareToast("Could not save the reminder. Please try again.");
-        }
-      })();
+              dueAt,
+              notes: action.notes,
+              domain: action.domain,
+              recurrence: action.recurrence,
+              linkedTaskId: action.linkedTaskId,
+            },
+          },
+        },
+      ]);
       return;
     }
 

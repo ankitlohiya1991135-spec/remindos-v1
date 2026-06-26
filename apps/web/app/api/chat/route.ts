@@ -2,7 +2,7 @@ import { auth } from "@clerk/nextjs/server";
 import { buildLifeOsContextBlock, buildListRemindersReply, classifyReminderIntent, filterToday, findReminderByFuzzyMatch, findRemindersByName, answerNamedReminderQuery, inferListScopeFromMessage, isCompoundReminderQuestion, looksLikeCreateIntent, looksLikeImplicitCreate, filterRemindersByListScope, describeReminderForChat, rankTasks, tryGroundedReminderAnswer, type LifeDomain, type ReminderItem, type TaskItem } from "@repo/reminder";
 import { api } from "@repo/db/convex/api";
 import { NextResponse } from "next/server";
-import { getConvexClient } from "../../../lib/server/convex-client";
+import { getConvexClient, getAuthedConvexClient } from "../../../lib/server/convex-client";
 import {
   buildMessageWithReplyContext,
   type ReplyContextPayload,
@@ -1370,7 +1370,7 @@ export async function POST(request: Request) {
         const editTarget = findTargetReminder(reminders, a.targetId, a.targetTitle);
         if (editTarget) {
           try {
-            const convex = getConvexClient();
+            const convex = await getAuthedConvexClient();
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const patch: Record<string, any> = {};
             if (a.newTitle) patch.title = a.newTitle;

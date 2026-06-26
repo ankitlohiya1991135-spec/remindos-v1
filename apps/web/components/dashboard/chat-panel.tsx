@@ -22,6 +22,7 @@ import { ChatPanelHeader } from "./chat-panel-header";
 import { StructuredMessage } from "./structured-message";
 import { ReminderChatCard } from "./reminder-chat-card";
 import { DisambigPickerCard } from "./disambig-picker-card";
+import { PriorityPickerCard } from "./priority-picker-card";
 import { briefingSectionLabel, chatReplyLabel, loadingTexts } from "./dashboard-utils";
 import type { ChatMessage, AgentAction, PendingCreateDraft, PendingTimeSuggestion, ReminderListTab } from "./dashboard-types";
 import type { SnapshotCounts } from "./reminder-list-overlay";
@@ -216,6 +217,15 @@ export function ChatPanel({
                       reminders={reminders}
                       onAction={onCardAction}
                     />
+                  </div>
+                );
+              }
+
+              // ── Priority picker — Critical / Medium / Chill before creation ────
+              if (message.meta?.kind === "priority_picker" && message.meta.priorityPickerPayload) {
+                return (
+                  <div key={message.id}>
+                    <PriorityPickerCard meta={message.meta} onAction={onCardAction} />
                   </div>
                 );
               }

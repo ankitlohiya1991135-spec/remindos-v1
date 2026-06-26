@@ -3,7 +3,7 @@ import { api } from "@repo/db/convex/api";
 import { NextResponse } from "next/server";
 import { formatNameWithInitial } from "../../../../lib/actor-display";
 import { appendSystemChatMessage } from "../../../../lib/server/chat-notify";
-import { getConvexClient } from "../../../../lib/server/convex-client";
+import { getAuthedConvexClient } from "../../../../lib/server/convex-client";
 import { syncUserWiki } from "../../../../lib/server/wiki-sync";
 
 function errorMessage(err: unknown) {
@@ -66,7 +66,7 @@ export async function PATCH(
 
   let reminder: unknown;
   try {
-    const client = getConvexClient();
+    const client = await getAuthedConvexClient();
     const patch: Record<string, unknown> = { ...body };
     if (body.linkedTaskId === "") {
       patch.linkedTaskId = null;
@@ -100,7 +100,7 @@ export async function PATCH(
 
     // MISSING-3: track completion event (fire-and-forget)
     if (body.status === "done") {
-      const client = getConvexClient();
+      const client = await getAuthedConvexClient();
       client.mutation(api.userEvents.track, {
         userId,
         eventType: "reminder_completed",
@@ -132,7 +132,7 @@ export async function DELETE(
     | { ok: false }
     | { ok: true; title: string; ownerUserId: string; actorWasOwner: boolean };
   try {
-    const client = getConvexClient();
+    const client = await getAuthedConvexClient();
     result = (await client.mutation(api.reminders.remove, {
       userId,
       reminderId: parseReminderId(id),
@@ -153,7 +153,7 @@ export async function DELETE(
 
   // MISSING-3: track deletion event (fire-and-forget)
   {
-    const client = getConvexClient();
+    const client = await getAuthedConvexClient();
     client.mutation(api.userEvents.track, {
       userId,
       eventType: "reminder_deleted",
