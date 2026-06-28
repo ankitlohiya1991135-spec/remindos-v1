@@ -23,6 +23,7 @@ import {
   type CopyContext,
   type NotificationType,
 } from "../../../../lib/server/notifications/engine";
+import { generateAiNudge } from "../../../../lib/server/notifications/ai-generate";
 
 // ── constants ──────────────────────────────────────────────────────────────────
 
@@ -196,21 +197,44 @@ function allClearCopy(slot: ReturnType<typeof localTimeSlot>, displayName?: stri
  * which scales personalization to the user's data-richness tier and runs every
  * string through the anti-surveillance validator — so a cold-start user never
  * gets a fabricated "this has been pending 3 days" claim.
+ *
+ * Copy itself is now AI-generated per user (see ai-generate.ts) — every send
+ * is a fresh LLM call against that user's real signals, so two users in the
+ * same moment (e.g. both "morning_launch") get different wording instead of
+ * the same hardcoded line. The hardcoded templates in engine.ts remain as the
+ * fallback for when the LLM call fails, times out, or its output gets caught
+ * by the anti-surveillance validator.
  */
-export function generateSmartNudgeMessage(ctx: NudgeContext): NudgeResult {
+export async function generateSmartNudgeMessage(ctx: NudgeContext): Promise<NudgeResult> {
   const tier: Tier = ctx.tier ?? 1;
   const slot = localTimeSlot(ctx.localHour);
   const now = Date.now();
   const minutesUntilDue =
     ctx.nextDueAt && ctx.nextDueAt > now ? Math.round((ctx.nextDueAt - now) / 60_000) : null;
 
+  const aiCtxBase = {
+    displayName: ctx.displayName,
+    pendingCount: ctx.pendingCount,
+    overdueCount: ctx.overdueCount,
+    doneToday: ctx.doneToday ?? 0,
+    streakDays: ctx.streakDays,
+    topDomain: ctx.topDomain,
+    nextDueTitle: ctx.nextDueTitle,
+    minutesUntilDue,
+    localHour: ctx.localHour,
+  };
+
   // 1. Celebrate a real streak (tier 2+ only — needs genuine history).
   if (tier >= 2 && ctx.streakDays >= 3) {
-    return { ...streakCopy(ctx.streakDays, ctx.displayName), type: "streak_celebration" };
+    const ai = await generateAiNudge({ ...aiCtxBase, moment: "streak_celebration" });
+    return { ...(ai ?? streakCopy(ctx.streakDays, ctx.displayName)), type: "streak_celebration" };
   }
 
   // 2. Nothing pending → warm empty-state.
-  if (ctx.hasNoPending) return { ...allClearCopy(slot, ctx.displayName), type: "all_clear" };
+  if (ctx.hasNoPending) {
+    const ai = await generateAiNudge({ ...aiCtxBase, moment: "all_clear" });
+    return { ...(ai ?? allClearCopy(slot, ctx.displayName)), type: "all_clear" };
+  }
 
   const copyCtx: CopyContext = {
     tier,
@@ -227,14 +251,16 @@ export function generateSmartNudgeMessage(ctx: NudgeContext): NudgeResult {
 
   // 3. A genuinely heavy overdue load → Overwhelm Rescue (tier 2+, rare).
   if (tier >= 2 && ctx.overdueCount >= 5) {
-    return { ...generateNotification("overwhelm_rescue", copyCtx), type: "overwhelm_rescue" };
+    const ai = await generateAiNudge({ ...aiCtxBase, moment: "overwhelm_rescue" });
+    return { ...(ai ?? generateNotification("overwhelm_rescue", copyCtx)), type: "overwhelm_rescue" };
   }
 
   // 3b. Backlog has grown large (but isn't in overwhelm territory) → name it
   // plainly, once in a while. Eligibility + its own dedup cadence is the
   // cron's responsibility (see ACCOUNTABILITY_DEDUP_WINDOW_MS).
   if (tier >= 2 && ctx.accountabilityEligible) {
-    return { ...generateNotification("accountability_nudge", copyCtx), type: "accountability_nudge" };
+    const ai = await generateAiNudge({ ...aiCtxBase, moment: "accountability_nudge" });
+    return { ...(ai ?? generateNotification("accountability_nudge", copyCtx)), type: "accountability_nudge" };
   }
 
   // 4. Otherwise map the moment to one of the six types.
@@ -244,7 +270,8 @@ export function generateSmartNudgeMessage(ctx: NudgeContext): NudgeResult {
   else if (minutesUntilDue != null && minutesUntilDue <= 180) type = "time_anchor";
   else type = "just_start";
 
-  return { ...generateNotification(type, copyCtx), type };
+  const ai = await generateAiNudge({ ...aiCtxBase, moment: type });
+  return { ...(ai ?? generateNotification(type, copyCtx)), type };
 }
 
 // ── GET: health check + diagnostics ────────────────────────────────────────────
@@ -422,7 +449,7 @@ export async function POST(request: Request) {
           } catch { return new Date().getUTCHours(); }
         })();
 
-        const { title, body, type: nudgeType } = generateSmartNudgeMessage({
+        const { title, body, type: nudgeType } = await generateSmartNudgeMessage({
           daysInactive,
           pendingCount:  stats.pendingCount,
           overdueCount:  stats.overdueCount,

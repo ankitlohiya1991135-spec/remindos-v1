@@ -58,7 +58,7 @@ export async function POST() {
     nextDueTitle  = stats.nextDueTitle ?? null;
   } catch { /* non-critical */ }
 
-  const { title, body } = generateSmartNudgeMessage({
+  const { title, body } = await generateSmartNudgeMessage({
     daysInactive: 1,          // pretend user was away 1 day for a realistic message
     pendingCount,
     overdueCount,
