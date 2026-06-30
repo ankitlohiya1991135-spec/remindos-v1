@@ -171,7 +171,7 @@ export function CreateReminderOverlay({
       setCreateFormError(msg); onShowToast(msg); return;
     }
     if (reminderStars < 1 || reminderStars > 5) {
-      const msg = "Choose a priority: tap 1–5 stars.";
+      const msg = "Choose a priority: Critical, Medium, or Chill.";
       setCreateFormError(msg); onShowToast(msg); return;
     }
     setCreateFormError(null);
@@ -390,25 +390,33 @@ export function CreateReminderOverlay({
               </label>
             </div>
 
-            {/* Priority stars */}
+            {/* Priority — Critical / Medium / Chill */}
             <div>
               <p className="mb-2 text-[10px] font-bold uppercase tracking-wider text-slate-400">PRIORITY <span className="text-rose-400">*</span></p>
               <div className="flex gap-2">
-                {[1, 2, 3, 4, 5].map((n) => (
-                  <button
-                    key={n}
-                    type="button"
-                    onClick={() => setReminderStars(n)}
-                    className={`flex h-11 w-11 items-center justify-center rounded-2xl border text-xl transition ${
-                      n <= reminderStars
-                        ? "border-amber-300 bg-amber-50 text-amber-400"
-                        : "border-slate-200 bg-slate-50 text-slate-300"
-                    }`}
-                    aria-label={`${n} star${n > 1 ? "s" : ""}`}
-                  >
-                    ★
-                  </button>
-                ))}
+                {(
+                  [
+                    { key: "critical", label: "Critical", stars: 5, active: "border-red-400 bg-red-50 text-red-600", inactive: "border-slate-200 bg-slate-50 text-slate-400 hover:border-red-200" },
+                    { key: "medium", label: "Medium", stars: 3, active: "border-amber-400 bg-amber-50 text-amber-600", inactive: "border-slate-200 bg-slate-50 text-slate-400 hover:border-amber-200" },
+                    { key: "chill", label: "Chill", stars: 2, active: "border-sky-400 bg-sky-50 text-sky-600", inactive: "border-slate-200 bg-slate-50 text-slate-400 hover:border-sky-200" },
+                  ] as const
+                ).map((level) => {
+                  const isActive = reminderStars === level.stars;
+                  return (
+                    <button
+                      key={level.key}
+                      type="button"
+                      onClick={() => setReminderStars(level.stars)}
+                      className={`flex-1 rounded-2xl border px-3 py-2.5 text-center transition ${
+                        isActive ? level.active : level.inactive
+                      }`}
+                      aria-label={level.label}
+                    >
+                      <div className="text-sm font-semibold">{level.label}</div>
+                      <div className="mt-0.5 text-[11px] opacity-70">{level.stars} stars</div>
+                    </button>
+                  );
+                })}
               </div>
             </div>
 
